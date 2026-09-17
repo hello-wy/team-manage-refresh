@@ -822,10 +822,6 @@
                 <div class="workbench-toolbar-copy">
                     <h3>{% if active_page == "welfare" %}福利 Team 列表{% else %}Team 列表{% endif %}</h3>
                 </div>
-                <div class="table-section-meta">
-                    <span class="table-meta-pill">每页 {{ pagination.per_page if pagination else 20 }} 条</span>
-                    {% if pagination %}<span class="table-meta-pill">共 {{ pagination.total }} 条</span>{% endif %}
-                </div>
                 <div id="batchActions" class="batch-actions-group" style="display: none;">
                     <button type="button" id="btnBatchRefresh" class="btn btn-secondary btn-sm">
                         <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> 批量刷新
@@ -932,7 +928,7 @@
                 <th>邮箱</th>
                 <th data-default-hidden>Account ID</th>
                 <th>Team 名称</th>
-                <th>已加入成员数/总席位数</th>
+                <th title="已加入成员数 / 总席位数">成员/席位</th>
                 <th data-default-hidden>订阅计划</th>
                 <th>到期时间</th>
                 <th>设备验证</th>
@@ -954,7 +950,7 @@
                 </td>
                 <td data-label="Account ID"><span class="text-muted small">{{ team.account_id or '-' }}</span></td>
                 <td data-label="Team 名称">{{ team.team_name or '-' }}</td>
-                <td data-label="已加入成员数/总席位数">
+                <td data-label="成员/席位">
                     <span class="member-count" id="team-member-count-{{ team.id }}" title="已加入成员数 / 已购标准与高级席位合计；— 表示未知，请同步或刷新成员">
                         {{ team.joined_members if team.joined_members is not none else '—' }}/{{ team.total_seats if team.total_seats is not none else '—' }}
                     </span>

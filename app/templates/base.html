@@ -35,7 +35,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=20260918-member-layout">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260918-member-status-sync">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     {% block extra_css %}{% endblock %}
@@ -873,6 +873,8 @@ eyJ..."></textarea>
                     </form>
                 </div>
 
+
+
                 <!-- 已加入成员 -->
                 <div class="content-section" style="margin-bottom: 1.5rem;">
                     <h4 style="margin-bottom: 1rem; color: var(--success);">已加入成员</h4>
@@ -884,7 +886,7 @@ eyJ..."></textarea>
                                     <th style="width: 100px;">角色</th>
                                     <th style="width: 200px;">席位类型</th>
                                     <th style="width: 160px;">加入时间</th>
-                                    <th style="text-align: right; width: 100px;">操作</th>
+                                    <th style="text-align: right; width: 128px;">授权与操作</th>
                                 </tr>
                             </thead>
                             <tbody id="modalJoinedMembersTableBody">
@@ -905,7 +907,7 @@ eyJ..."></textarea>
                                     <th style="width: 100px;">角色</th>
                                     <th style="width: 120px;">席位类型</th>
                                     <th style="width: 160px;">邀请时间</th>
-                                    <th style="text-align: right; width: 100px;">操作</th>
+                                    <th style="text-align: right; width: 128px;">授权与操作</th>
                                 </tr>
                             </thead>
                             <tbody id="modalInvitedMembersTableBody">
@@ -917,10 +919,47 @@ eyJ..."></textarea>
             </div>
         </div>
     </div>
+    <div id="memberAuthorizationModal" class="modal-overlay" inert>
+        <div class="modal member-authorization-modal" role="dialog" aria-modal="true" aria-labelledby="memberAuthorizationTitle">
+            <div class="modal-header">
+                <h3 id="memberAuthorizationTitle">成员 ChatGPT 授权</h3>
+                <button type="button" class="modal-close" aria-label="关闭成员授权" onclick="closeMemberAuthorization()">&times;</button>
+            </div>
+            <div class="modal-body member-authorization-body">
+                    <p class="form-text">使用所选成员邮箱登录。接受邀请后，授权时请选择当前 Team 工作区。</p>
+                    <div class="member-authorization-fields">
+                        <div class="form-group">
+                            <label for="memberAuthEmail">授权成员邮箱</label>
+                            <input id="memberAuthEmail" class="form-control" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="memberAuthAccount">Team 工作区 ID</label>
+                            <input id="memberAuthAccount" class="form-control" readonly placeholder="判定后自动填充">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary" id="memberAuthGenerateBtn" onclick="generateMemberAuthorization()">获取授权链接</button>
+                    <div class="form-group">
+                        <label for="memberAuthUrl">授权链接</label>
+                        <input id="memberAuthUrl" class="form-control" readonly placeholder="获取后自动复制，链接有效期 15 分钟">
+                    </div>
+                    <div class="form-group">
+                        <label for="memberAuthCallback">完整回调 URL</label>
+                        <textarea id="memberAuthCallback" class="form-control" rows="3" placeholder="登录后粘贴完整 http://localhost:1455/auth/callback?... URL"></textarea>
+                    </div>
+                    <div class="member-authorization-actions">
+                        <button type="button" id="memberAuthParseBtn" class="btn btn-primary" onclick="parseMemberAuthorization()" disabled>解析并自动填充</button>
+                        <button type="button" id="memberAuthCheckBtn" class="btn btn-secondary" onclick="checkMemberAuthorization()">判定邀请结果</button>
+                        <button type="button" id="memberAuthExportBtn" class="btn btn-secondary" onclick="exportCurrentMemberAuthorization()" disabled>导出 sub2api JSON</button>
+                    </div>
+                    <p id="memberAuthStatus" class="member-authorization-status" role="status" aria-live="polite"></p>
+                    <small class="form-text">授权信息自动加密保存。仅已授权且已确认加入当前 Team 的成员可导出。</small>
+            </div>
+        </div>
+    </div>
     <div id="toast" class="toast"></div>
 
     <script>window.SYSTEM_UI_THEME = {{ ui_theme|default("ocean")|tojson }};</script>
-    <script src="/static/js/main.js?v=20260918-member-layout"></script>
+    <script src="/static/js/main.js?v=20260918-member-status-sync"></script>
     <script>
         lucide.createIcons();
     </script>

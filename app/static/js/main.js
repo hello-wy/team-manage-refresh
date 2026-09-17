@@ -928,6 +928,7 @@ async function checkAuthStatus() {
 function showModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
+        if (modalId === 'memberAuthorizationModal') modal.inert = false;
         modal.classList.add('show');
         document.body.style.overflow = 'hidden'; // 防止背景滚动
         document.body.classList.add('modal-open');
@@ -963,9 +964,12 @@ function resetBatchImportForm() {
 }
 
 function hideModal(modalId) {
+    if (modalId === 'manageMembersModal') closeMemberAuthorization();
+    if (modalId === 'memberAuthorizationModal') resetMemberAuthorization();
     const modal = document.getElementById(modalId);
     if (modal) {
         modal.classList.remove('show');
+        if (modalId === 'memberAuthorizationModal') modal.inert = true;
 
         const openModal = document.querySelector('.modal-overlay.show');
         if (!openModal) {
@@ -1874,6 +1878,219 @@ function downloadCodes() {
     URL.revokeObjectURL(url);
     showToast('下载成功', 'success');
 }
+// 成员授权状态只保留在当前面板，Token 始终由服务端加密保存。
+let memberAuthorizationContext = null;
+
+function closeMemberAuthorization() {
+    hideModal('memberAuthorizationModal');
+}
+
+function resetMemberAuthorization() {
+    const ctx = memberAuthorizationContext;
+    if (ctx?.pollTimer) clearTimeout(ctx.pollTimer);
+    memberAuthorizationContext = null;
+    const membersModal = document.getElementById('manageMembersModal');
+    if (membersModal) membersModal.inert = false;
+    for (const id of ['memberAuthUrl', 'memberAuthCallback']) {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    }
+    if (ctx && membersModal?.classList.contains('show')) {
+        const trigger = Array.from(membersModal.querySelectorAll('[data-member-authorize]'))
+            .find(button => button.dataset.email === ctx.email);
+        (trigger || membersModal.querySelector('.modal-close'))?.focus();
+    }
+}
+
+document.addEventListener('keydown', (event) => {
+    const modal = document.getElementById('memberAuthorizationModal');
+    if (!modal?.classList.contains('show')) return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMemberAuthorization();
+    } else if (event.key === 'Tab') {
+        const controls = Array.from(modal.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled)'))
+            .filter(element => element.getClientRects().length);
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+        }
+    }
+});
+
+function syncMemberAuthorizationButtons(ctx) {
+    if (memberAuthorizationContext !== ctx) return;
+    document.getElementById('memberAuthGenerateBtn').disabled = ctx.busy;
+    document.getElementById('memberAuthParseBtn').disabled = ctx.busy || !ctx.hasLink;
+    document.getElementById('memberAuthCheckBtn').disabled = ctx.busy;
+    document.getElementById('memberAuthExportBtn').disabled = ctx.busy || !ctx.canExport;
+}
+
+function memberAuthorizationMessage(message, isError = false, isSuccess = false) {
+    const status = document.getElementById('memberAuthStatus');
+    status.textContent = message;
+    status.classList.toggle('is-error', isError);
+    status.classList.toggle('is-success', isSuccess);
+}
+
+async function openMemberAuthorization(teamId, email) {
+    closeMemberAuthorization();
+    teamId = Number(teamId);
+    const ctx = {teamId, email, busy: false, canExport: false, hasLink: false};
+    memberAuthorizationContext = ctx;
+    document.getElementById('memberAuthEmail').value = email;
+    document.getElementById('memberAuthAccount').value = '';
+    memberAuthorizationMessage('正在检查授权与入组状态...');
+    syncMemberAuthorizationButtons(ctx);
+    showModal('memberAuthorizationModal');
+    document.querySelector('#memberAuthorizationModal .modal-close').focus();
+    document.getElementById('manageMembersModal').inert = true;
+    await requestMemberAuthorization('check', {notify: false});
+}
+
+async function requestMemberAuthorization(action, {notify = true} = {}) {
+    const ctx = memberAuthorizationContext;
+    if (!ctx || ctx.busy) return;
+    const payload = {email: ctx.email};
+    if (action === 'callback') {
+        payload.callback_url = document.getElementById('memberAuthCallback').value.trim();
+        if (!payload.callback_url) {
+            memberAuthorizationMessage('请先粘贴完整回调 URL', true);
+            return;
+        }
+    }
+    if (ctx.pollTimer) clearTimeout(ctx.pollTimer);
+    ctx.shouldPoll = false;
+    ctx.busy = true;
+    ctx.canExport = false;
+    syncMemberAuthorizationButtons(ctx);
+    memberAuthorizationMessage(action === 'callback' ? '正在解析授权并判定邀请结果...' : '正在读取...');
+    try {
+        const result = await apiCall(`/admin/teams/${ctx.teamId}/members/authorization/${action}`, {
+            method: 'POST', body: JSON.stringify(payload)
+        });
+        if (!result.success || !result.data?.success) throw new Error(result.error || result.data?.error || '操作失败');
+        const data = result.data.data;
+        // 即使授权弹窗已关闭，也更新对应 Team 行和仍打开的成员列表。
+        if (data.members_snapshot) {
+            updateTeamMemberCount(ctx.teamId, data.members_snapshot);
+            if (window.currentTeamId === ctx.teamId) await loadModalMemberList(ctx.teamId, data.members_snapshot);
+        }
+        if (data.membership === 'joined' && data.authorized && notify && !ctx.joinNotified && window.currentTeamId === ctx.teamId) {
+            showToast(`${ctx.email} 已成功加入当前 Team，成员状态和人数已更新。`, 'success', {title: '邀请已完成', duration: 6500});
+            ctx.joinNotified = true;
+        }
+        if (memberAuthorizationContext !== ctx) return;
+        if (action === 'authorize') {
+            ctx.hasLink = true;
+            document.getElementById('memberAuthUrl').value = data.authorize_url;
+            document.getElementById('memberAuthCallback').value = '';
+            const copied = await copyTextSilently(data.authorize_url);
+            if (memberAuthorizationContext !== ctx) return;
+            memberAuthorizationMessage(copied ? '授权链接已复制，请用该成员邮箱登录后粘贴完整回调 URL。' : '授权链接已生成，请复制链接并用该成员邮箱登录。');
+        } else {
+            ctx.canExport = data.can_export;
+            ctx.hasLink = data.authorization_pending;
+            document.getElementById('memberAuthEmail').value = data.email;
+            document.getElementById('memberAuthAccount').value = data.account_id;
+            const membership = {joined: '已加入', invited: '待接受邀请', absent: '不在当前 Team', unknown: '入组状态待确认'}[data.membership];
+            const joined = data.membership === 'joined';
+            ctx.shouldPoll = data.authorized && data.membership === 'invited';
+            memberAuthorizationMessage(
+                joined ? `✓ 邀请已完成 · 已加入当前 Team。${data.message}`
+                    : `${data.authorized ? '已授权' : '未授权'} · ${membership}。${ctx.shouldPoll ? '正在自动检查入组结果，无需手动刷新。' : data.message}`,
+                !joined && !ctx.shouldPoll, joined);
+            if (action === 'callback') {
+                ctx.hasLink = false;
+                document.getElementById('memberAuthCallback').value = '';
+                document.getElementById('memberAuthUrl').value = '';
+            }
+        }
+    } catch (error) {
+        if (memberAuthorizationContext === ctx) memberAuthorizationMessage(error.message || '请求失败，请重试', true);
+    } finally {
+        ctx.busy = false;
+        syncMemberAuthorizationButtons(ctx);
+        if (memberAuthorizationContext === ctx && ctx.shouldPoll) {
+            ctx.pollTimer = setTimeout(() => {
+                if (memberAuthorizationContext === ctx) requestMemberAuthorization('check');
+            }, 5000);
+        }
+    }
+}
+
+function generateMemberAuthorization() { return requestMemberAuthorization('authorize'); }
+function parseMemberAuthorization() { return requestMemberAuthorization('callback'); }
+function checkMemberAuthorization() { return requestMemberAuthorization('check'); }
+function exportCurrentMemberAuthorization() {
+    const ctx = memberAuthorizationContext;
+    if (ctx && ctx.canExport && !ctx.busy) return exportMemberSub2api(ctx.teamId, ctx.email);
+}
+
+async function exportMemberSub2api(teamId, email, button = null) {
+    const ctx = memberAuthorizationContext;
+    if (ctx?.busy) return;
+    if (ctx) { ctx.busy = true; syncMemberAuthorizationButtons(ctx); }
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/admin/teams/${teamId}/members/authorization/export`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email}), credentials: 'same-origin'
+        });
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || '导出失败，请重新授权并判定入组结果');
+        }
+        const blob = await response.blob();
+        if (window.currentTeamId !== teamId) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `sub2api-team-${teamId}-${email.replace(/[^a-zA-Z0-9@._-]/g, '_')}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('已确认入组并导出 sub2api JSON', 'success');
+    } catch (error) {
+        if (ctx && memberAuthorizationContext === ctx) {
+            ctx.canExport = false;
+            memberAuthorizationMessage(error.message, true);
+        }
+        showToast(error.message || '导出失败', 'error');
+    } finally {
+        if (ctx) { ctx.busy = false; syncMemberAuthorizationButtons(ctx); }
+        if (button) button.disabled = false;
+    }
+}
+
+function renderMemberAuthorizationActions(teamId, member) {
+    const attributes = `data-team-id="${Number(teamId)}" data-email="${escapeHtml(member.email)}"`;
+    const canExport = member.authorized && member.status === 'joined';
+    const exportHint = !member.authorized ? '请先完成成员授权' : member.status !== 'joined' ? '接受邀请并确认入组后可导出' : '导出 sub2api JSON（导出前验证入组）';
+    const removal = member.status === 'invited'
+        ? `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-warning" ${attributes} title="撤回邀请" aria-label="撤回邀请"
+            onclick="revokeInvite(Number(this.dataset.teamId), this.dataset.email, true)"><i data-lucide="undo-2" aria-hidden="true"></i></button>`
+        : member.role !== 'account-owner'
+            ? `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger" ${attributes} data-user-id="${escapeHtml(member.user_id || '')}" title="删除成员" aria-label="删除成员"
+                onclick="deleteMember(Number(this.dataset.teamId), this.dataset.userId, this.dataset.email, true)"><i data-lucide="trash-2" aria-hidden="true"></i></button>`
+            : '<span title="所有者不可删除"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" disabled aria-label="所有者不可删除"><i data-lucide="lock-keyhole" aria-hidden="true"></i></button></span>';
+    return `<div class="member-auth-actions">
+        <button type="button" class="btn btn-sm btn-icon btn-minimal btn-primary" ${attributes} data-member-authorize
+            title="${member.authorized ? '查看授权 / 判定邀请结果' : 'ChatGPT 授权'}" aria-label="ChatGPT 授权"
+            onclick="openMemberAuthorization(Number(this.dataset.teamId), this.dataset.email)"><i data-lucide="key-round" aria-hidden="true"></i></button>
+        <span title="${exportHint}"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" ${attributes} ${canExport ? '' : 'disabled'}
+            title="${exportHint}" aria-label="导出 sub2api JSON"
+            onclick="exportMemberSub2api(Number(this.dataset.teamId), this.dataset.email, this)"><i data-lucide="download" aria-hidden="true"></i></button></span>
+        ${removal}
+    </div>`;
+}
+
 // === 成员管理逻辑 ===
 let memberSeatUpdateInProgress = false;
 let memberListRequestId = 0;
@@ -1995,6 +2212,8 @@ async function saveMemberSeatType(button) {
 }
 
 async function viewMembers(teamId, teamEmail = '') {
+    closeMemberAuthorization();
+    teamId = Number(teamId);
     window.currentTeamId = teamId;
     const modal = document.getElementById('manageMembersModal');
     if (!modal) return;
@@ -2009,7 +2228,12 @@ async function viewMembers(teamId, teamEmail = '') {
     await loadModalMemberList(teamId);
 }
 
-async function loadModalMemberList(teamId) {
+function updateTeamMemberCount(teamId, data) {
+    const memberCount = document.getElementById(`team-member-count-${teamId}`);
+    if (memberCount) memberCount.textContent = `${data.joined_members ?? '—'}/${data.total_seats ?? '—'}`;
+}
+
+async function loadModalMemberList(teamId, snapshot = null) {
     const requestId = ++memberListRequestId;
     const joinedTableBody = document.getElementById('modalJoinedMembersTableBody');
     const invitedTableBody = document.getElementById('modalInvitedMembersTableBody');
@@ -2023,16 +2247,13 @@ async function loadModalMemberList(teamId) {
     if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
 
     try {
-        const result = await apiCall(`/admin/teams/${teamId}/members/list`);
+        const result = snapshot ? {success: true, data: snapshot} : await apiCall(`/admin/teams/${teamId}/members/list`);
         if (window.currentTeamId !== teamId || requestId !== memberListRequestId) return;
         if (result.success && result.data.success) {
             const allMembers = result.data.members || [];
             const joinedMembers = allMembers.filter(m => m.status === 'joined');
             const invitedMembers = allMembers.filter(m => m.status === 'invited');
-            const memberCount = document.getElementById(`team-member-count-${teamId}`);
-            if (memberCount) {
-                memberCount.textContent = `${result.data.joined_members ?? '—'}/${result.data.total_seats ?? '—'}`;
-            }
+            updateTeamMemberCount(teamId, result.data);
             memberSeatBalance = result.data.seat_balance || null;
             memberExistingEmails = new Set(allMembers.map(m => (m.email || '').toLowerCase()));
             document.getElementById('memberSeatBalanceError').textContent = memberSeatBalance?.success
@@ -2048,7 +2269,7 @@ async function loadModalMemberList(teamId) {
                 } else {
                     joinedTableBody.innerHTML = joinedMembers.map(m => `
                         <tr>
-                            <td>${escapeHtml(m.email)}</td>
+                            <td>${escapeHtml(m.email)}<small class="member-auth-badge">${m.authorized ? '已授权' : '未授权'}</small></td>
                             <td>
                                 <span class="role-badge role-${m.role === 'account-owner' ? 'account-owner' : 'member'}">
                                     ${m.role === 'account-owner' ? '所有者' : '成员'}
@@ -2057,11 +2278,7 @@ async function loadModalMemberList(teamId) {
                             <td>${renderMemberSeatControl(m)}</td>
                             <td>${formatDateTime(m.added_at)}</td>
                             <td style="text-align: right;">
-                                ${m.role !== 'account-owner' ? `
-                                    <button onclick='deleteMember(${JSON.stringify(teamId)}, ${JSON.stringify(m.user_id)}, ${JSON.stringify(m.email)}, true)' class="btn btn-sm btn-danger">
-                                        <i data-lucide="trash-2"></i> 删除
-                                    </button>
-                                ` : '<span class="text-muted">不可删除</span>'}
+                                ${renderMemberAuthorizationActions(teamId, m)}
                             </td>
                         </tr>
                     `).join('');
@@ -2077,16 +2294,14 @@ async function loadModalMemberList(teamId) {
                 } else {
                     invitedTableBody.innerHTML = invitedMembers.map(m => `
                         <tr>
-                            <td>${escapeHtml(m.email)}</td>
+                            <td>${escapeHtml(m.email)}<small class="member-auth-badge">${m.authorized ? '已授权' : '未授权'}</small></td>
                             <td>
                                 <span class="role-badge role-member">成员</span>
                             </td>
                             <td>${renderMemberSeatType(m.seat_type)}</td>
                             <td>${formatDateTime(m.added_at)}</td>
                             <td style="text-align: right;">
-                                <button onclick='revokeInvite(${JSON.stringify(teamId)}, ${JSON.stringify(m.email)}, true)' class="btn btn-sm btn-warning">
-                                    <i data-lucide="undo"></i> 撤回
-                                </button>
+                                ${renderMemberAuthorizationActions(teamId, m)}
                             </td>
                         </tr>
                     `).join('');

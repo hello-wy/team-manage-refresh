@@ -43,11 +43,29 @@ class Team(Base):
     team_accounts = relationship("TeamAccount", back_populates="team", cascade="all, delete-orphan")
     redemption_records = relationship("RedemptionRecord", back_populates="team", cascade="all, delete-orphan")
     email_mappings = relationship("TeamEmailMapping", back_populates="team", cascade="all, delete-orphan")
+    member_authorizations = relationship("MemberAuthorization", back_populates="team", cascade="all, delete-orphan")
 
     # 索引
     __table_args__ = (
         Index("idx_status", "status"),
     )
+
+
+class MemberAuthorization(Base):
+    """每个 Team 成员独立的 OAuth 凭证与一次性授权会话。"""
+    __tablename__ = "member_authorizations"
+
+    id = Column(Integer, primary_key=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(String(100), nullable=False)
+    email = Column(String(255), nullable=False)
+    credentials_encrypted = Column(Text)
+    authorized_at = Column(DateTime)
+    oauth_state = Column(String(100))
+    verifier_encrypted = Column(Text)
+    oauth_expires_at = Column(DateTime)
+    team = relationship("Team", back_populates="member_authorizations")
+    __table_args__ = (Index("idx_member_authorization", "team_id", "email", unique=True),)
 
 
 class TeamSeatHold(Base):

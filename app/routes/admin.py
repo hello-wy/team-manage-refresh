@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.database import AsyncSessionLocal, get_db
 from app.dependencies.auth import require_admin
@@ -28,6 +28,7 @@ from app.services.settings import (
     DEFAULT_UI_STYLE,
 )
 from app.services.cliproxyapi import cliproxyapi_service
+from app.services.member_authorization import MemberAuthorizationService, MemberAuthorizationError
 from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
@@ -42,6 +43,7 @@ router = APIRouter(
 
 # 服务实例
 team_service = TeamService()
+member_authorization_service = MemberAuthorizationService(team_service)
 redemption_service = RedemptionService()
 
 
@@ -133,6 +135,22 @@ class OAuthCallbackParseRequest(BaseModel):
 class AddMemberRequest(BaseModel):
     """单邮箱成员请求"""
     email: str = Field(..., description="成员邮箱")
+
+
+class MemberAuthorizationRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value):
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("请输入有效的成员邮箱")
+        return value
+
+
+class MemberAuthorizationCallbackRequest(MemberAuthorizationRequest):
+    callback_url: str = Field(..., min_length=1, max_length=16384)
 
 
 class DeleteMemberRequest(BaseModel):
@@ -836,6 +854,53 @@ async def parse_openai_oauth_callback(
     except Exception as e:
         logger.exception("解析 OAuth 回调失败")
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"success": False, "error": "操作失败，请稍后重试"})
+
+
+async def _member_authorization_action(action, team_id, payload, db):
+    headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    try:
+        if action == "callback":
+            data = await member_authorization_service.callback(team_id, payload.email, payload.callback_url, db)
+        else:
+            data = await getattr(member_authorization_service, action)(team_id, payload.email, db)
+        if action == "export":
+            return Response(
+                content=json.dumps(data, ensure_ascii=False, indent=2), media_type="application/json",
+                headers={**headers, "Content-Disposition": f'attachment; filename="sub2api-team-{team_id}-member.json"'},
+            )
+        return JSONResponse(content={"success": True, "data": data}, headers=headers)
+    except MemberAuthorizationError as exc:
+        await db.rollback()
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
+    except Exception:
+        await db.rollback()
+        # 不记录含回调或凭据的异常内容。
+        logger.error("成员授权操作失败: %s", action)
+        return JSONResponse(status_code=500, content={"success": False, "error": "操作失败，请稍后重试"}, headers=headers)
+
+
+@router.post("/teams/{team_id}/members/authorization/authorize")
+async def authorize_member(team_id: int, payload: MemberAuthorizationRequest,
+                           db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
+    return await _member_authorization_action("authorize", team_id, payload, db)
+
+
+@router.post("/teams/{team_id}/members/authorization/callback")
+async def authorize_member_callback(team_id: int, payload: MemberAuthorizationCallbackRequest,
+                                    db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
+    return await _member_authorization_action("callback", team_id, payload, db)
+
+
+@router.post("/teams/{team_id}/members/authorization/check")
+async def check_member_authorization(team_id: int, payload: MemberAuthorizationRequest,
+                                     db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
+    return await _member_authorization_action("check", team_id, payload, db)
+
+
+@router.post("/teams/{team_id}/members/authorization/export")
+async def export_member_sub2api(team_id: int, payload: MemberAuthorizationRequest,
+                               db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
+    return await _member_authorization_action("export", team_id, payload, db)
 
 
 @router.get("/teams/{team_id}/members/list")
