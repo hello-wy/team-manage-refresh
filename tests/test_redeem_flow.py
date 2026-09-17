@@ -2,7 +2,7 @@ import asyncio
 import json
 import unittest
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from sqlalchemy import select
 from fastapi.responses import JSONResponse
@@ -1677,6 +1677,14 @@ class AdminInvitedExpiredKickTests(unittest.IsolatedAsyncioTestCase):
 
 class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        balance_patch = patch.object(TeamService, "get_team_seat_balance", new=AsyncMock(return_value={
+            "success": True, "balance": {
+                "standard": {"known": True, "remaining": 100},
+                "premium": {"known": True, "remaining": 100},
+            },
+        }))
+        balance_patch.start()
+        self.addCleanup(balance_patch.stop)
         self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         self.session_factory = async_sessionmaker(
             self.engine,
@@ -1727,7 +1735,7 @@ class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
                 "error": None,
             }
 
-        async def stub_add_member(team_id, email, db_session):
+        async def stub_add_member(team_id, email, db_session, seat_type=None):
             return {
                 "success": True,
                 "message": f"邀请已发送到 {email}",
@@ -1775,7 +1783,7 @@ class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
                 "error": None,
             }
 
-        async def stub_add_member(team_id, email, db_session):
+        async def stub_add_member(team_id, email, db_session, seat_type=None):
             add_member_calls.append(email)
             return {
                 "success": True,
@@ -2017,7 +2025,7 @@ class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
                 "error": None,
             }
 
-        async def stub_add_member(team_id, email, db_session):
+        async def stub_add_member(team_id, email, db_session, seat_type=None):
             invited_calls.append(email)
             if email == "fatal@example.com":
                 return {
@@ -2056,6 +2064,14 @@ class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
 
 class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        balance_patch = patch.object(TeamService, "get_team_seat_balance", new=AsyncMock(return_value={
+            "success": True, "balance": {
+                "standard": {"known": True, "remaining": 100},
+                "premium": {"known": True, "remaining": 100},
+            },
+        }))
+        balance_patch.start()
+        self.addCleanup(balance_patch.stop)
         self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         self.session_factory = async_sessionmaker(
             self.engine,
@@ -3176,7 +3192,10 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(team_service.chatgpt_service, "get_account_info", new=self._stub_account_info_success), \
                  patch.object(team_service.chatgpt_service, "get_members", new=self._stub_members_four), \
                  patch.object(team_service.chatgpt_service, "get_invites", new=self._stub_empty_invites), \
-                 patch.object(team_service.chatgpt_service, "get_account_settings", new=self._stub_account_settings_success):
+                 patch.object(team_service.chatgpt_service, "get_account_settings", new=self._stub_account_settings_success), \
+                 patch.object(team_service.chatgpt_service, "get_seat_capacity", new=AsyncMock(return_value={"success": True, "data": {"seat_capacity": [
+                     {"type": "default", "paid": 4}, {"type": "prolite", "paid": 2},
+                 ]}})):
                 result = await team_service.sync_team_info(64, session)
 
             self.assertTrue(result["success"])
@@ -3186,6 +3205,8 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
             refreshed_team = await session.get(Team, 64)
             self.assertEqual(refreshed_team.current_members, 5)
             self.assertEqual(refreshed_team.status, "full")
+            self.assertEqual(refreshed_team.joined_members, 4)
+            self.assertEqual(refreshed_team.total_seats, 6)
 
     async def test_apply_member_count_floor_allows_count_to_fall_after_mapping_removed(self):
         async with self.session_factory() as session:
@@ -3257,12 +3278,25 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
                 }
 
             with patch.object(team_service, "ensure_access_token", new=self._return_token), \
+                 patch.object(team_service, "get_team_seat_balance", new=team_service._get_team_seat_balance_locked), \
                  patch.object(team_service.chatgpt_service, "get_members", new=stub_members), \
-                 patch.object(team_service.chatgpt_service, "get_invites", new=stub_invites):
+                 patch.object(team_service.chatgpt_service, "get_invites", new=stub_invites), \
+                 patch.object(team_service.chatgpt_service, "get_seat_capacity", new=AsyncMock(return_value={"success": True, "data": {"seat_capacity": [
+                     {"type": "default", "paid": 2}, {"type": "prolite", "paid": 1},
+                 ]}})):
                 result = await team_service.get_team_members(67, session)
 
             self.assertTrue(result["success"])
             self.assertEqual(result["total"], 3)
+            self.assertEqual(result["joined_members"], 2)
+            self.assertEqual(result["total_seats"], 3)
+            for pool in ("normal", "welfare"):
+                team.pool_type = pool
+                await session.commit()
+                listing = await team_service.get_all_teams(session, pool_type=pool)
+                self.assertTrue(listing["success"])
+                self.assertEqual(listing["teams"][0]["joined_members"], 2)
+                self.assertEqual(listing["teams"][0]["total_seats"], 3)
             emails = [item["email"] for item in result["members"]]
             self.assertEqual(emails.count("joined@example.com"), 1)
             self.assertIn("pending@example.com", emails)

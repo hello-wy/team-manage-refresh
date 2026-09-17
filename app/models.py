@@ -28,6 +28,8 @@ class Team(Base):
     expires_at = Column(DateTime, comment="订阅到期时间")
     current_members = Column(Integer, default=0, comment="当前成员数")
     max_members = Column(Integer, default=6, comment="最大成员数")
+    joined_members = Column(Integer, nullable=True, comment="上游已加入成员数，不含邀请")
+    total_seats = Column(Integer, nullable=True, comment="上游已购标准与高级席位合计")
     status = Column(String(20), default="active", comment="状态: active/full/expired/error/banned")
     account_role = Column(String(50), comment="账号角色: account-owner/standard-user 等")
     device_code_auth_enabled = Column(Boolean, default=False, comment="是否开启设备代码身份验证")
@@ -46,6 +48,19 @@ class Team(Base):
     __table_args__ = (
         Index("idx_status", "status"),
     )
+
+
+class TeamSeatHold(Base):
+    """尚未在上游列表中确认的席位操作，重启后仍保留预留。"""
+    __tablename__ = "team_seat_holds"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(String(100), nullable=False, index=True)
+    operation = Column(String(20), nullable=False)
+    target = Column(String(255), nullable=False)
+    seat_type = Column(String(20), nullable=False)
+    created_at = Column(DateTime, default=get_now, nullable=False)
+    __table_args__ = (Index("idx_seat_hold_target", "account_id", "operation", "target", unique=True),)
 
 
 class TeamAccount(Base):

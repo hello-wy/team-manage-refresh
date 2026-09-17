@@ -60,6 +60,11 @@ def run_auto_migration():
         cursor = conn.cursor()
         
         migrations_applied = []
+
+        for column in ("joined_members", "total_seats"):
+            if not column_exists(cursor, "teams", column):
+                cursor.execute(f"ALTER TABLE teams ADD COLUMN {column} INTEGER")
+                migrations_applied.append(f"teams.{column}")
         
         # 检查并添加质保相关字段
         if not column_exists(cursor, "redemption_codes", "has_warranty"):

@@ -12,12 +12,14 @@ from sqlalchemy import select, update, delete, func, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Team, TeamAccount, RedemptionCode, TeamEmailMapping
+from app.models import Team, TeamAccount, RedemptionCode, TeamEmailMapping, TeamSeatHold
 from app.services.chatgpt import ChatGPTService
 from app.services.encryption import encryption_service
 from app.utils.token_parser import TokenParser
 from app.utils.jwt_parser import JWTParser
 from app.utils.time_utils import get_now
+from app.utils.seats import calculate_seat_balance, normalize_seat_type, summarize_member_seats, total_paid_seats
+from app.utils.seat_lock import seat_account_lock
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -1102,6 +1104,7 @@ class TeamService:
                 )
 
                 db_session.add(team)
+                await self._refresh_member_display(team, members_result, access_token, db_session)
                 await db_session.flush()  # 获取 team.id
 
                 # 创建 TeamAccount 记录 (保存所有 Team 账户)
@@ -1978,6 +1981,7 @@ class TeamService:
             team.device_code_auth_enabled = device_code_auth_enabled
             team.error_count = 0  # 同步成功，重置错误次数
             team.last_sync = get_now()
+            await self._refresh_member_display(team, members_result, access_token, db_session)
             await self._reconcile_team_email_mappings(
                 team.id,
                 joined_member_emails,
@@ -2170,6 +2174,90 @@ class TeamService:
                 "error": f"批量同步失败: {str(e)}"
             }
 
+    async def _refresh_member_display(self, team, members_result, token, db_session, capacity_result=None):
+        """只缓存展示口径，保留 current_members/max_members 的分配语义。"""
+        count = members_result.get("total") if members_result.get("success") else None
+        team.joined_members = count if type(count) is int and count >= 0 else None
+        team.total_seats = None
+        try:
+            if capacity_result is None:
+                capacity_result = await self.chatgpt_service.get_seat_capacity(token, team.account_id, db_session)
+            if capacity_result.get("success"):
+                team.total_seats = total_paid_seats((capacity_result.get("data") or {}).get("seat_capacity"))
+        except Exception:
+            logger.warning("Team %s 的总席位暂不可用", team.id)
+
+    async def get_team_seat_balance(self, team, db_session, token=None, members_result=None, invites_result=None):
+        async with seat_account_lock(team.account_id):
+            return await self._get_team_seat_balance_locked(team, db_session, token, members_result, invites_result)
+
+    async def _get_team_seat_balance_locked(self, team, db_session, token=None, members_result=None, invites_result=None):
+        """从订阅、成员和邀请读取实时余额；缺失信息时禁止写入。"""
+        try:
+            token = token or await self.ensure_access_token(team, db_session)
+            if not token:
+                return {"success": False, "error": "登录凭证已失效，无法读取席位余额"}
+            capacity = await self.chatgpt_service.get_seat_capacity(token, team.account_id, db_session)
+            members_result = members_result or await self.chatgpt_service.get_members(token, team.account_id, db_session)
+            invites_result = invites_result or await self.chatgpt_service.get_invites(token, team.account_id, db_session)
+            await self._refresh_member_display(team, members_result, token, db_session, capacity)
+            await db_session.commit()
+            if not all(r.get("success") for r in (capacity, members_result, invites_result)):
+                return {"success": False, "error": "席位余额读取失败，暂时无法保存或邀请，请刷新重试"}
+            members = members_result.get("members", [])
+            joined_emails = {self._normalize_member_email(m.get("email")) for m in members}
+            invites = self._filter_pending_invites(invites_result.get("items", []), joined_emails=joined_emails)
+            holds = (await db_session.execute(select(TeamSeatHold).where(TeamSeatHold.account_id == team.account_id))).scalars().all()
+            unresolved = []
+            for hold in holds:
+                kind = normalize_seat_type(hold.seat_type)
+                if hold.operation == "invite":
+                    observed = hold.target in joined_emails or any(
+                        i.get("email_address") == hold.target and normalize_seat_type(i.get("seat_type")) == kind
+                        for i in invites
+                    )
+                else:
+                    observed = any(m.get("id") == hold.target and (
+                        normalize_seat_type(m.get("seat_type")) == kind or
+                        normalize_seat_type(m.get("pending_seat_type")) == kind
+                    ) for m in members)
+                if observed:
+                    await db_session.delete(hold)
+                else:
+                    unresolved.append(hold)
+            if len(unresolved) != len(holds):
+                await db_session.commit()
+            return calculate_seat_balance((capacity.get("data") or {}).get("seat_capacity"), members, invites, unresolved)
+        except Exception:
+            logger.exception("读取席位余额失败")
+            return {"success": False, "error": "席位余额暂不可用，暂时无法保存或邀请"}
+
+    def _seat_balance_error(self, result, seat_type, required=1):
+        kind = normalize_seat_type(seat_type)
+        balance = result.get("balance", {}).get(kind, {})
+        if not result.get("success") or not balance.get("known"):
+            return self._admin_error("seat_balance_unavailable", result.get("error") or "该类型席位余额未知，暂时无法保存或邀请")
+        if required > balance["remaining"]:
+            label = "高级" if kind == "premium" else "标准"
+            return self._admin_error("seat_limit_exceeded", f"{label}席位余额不足：剩余 {balance['remaining']}，本次需要 {required}")
+        return None
+
+    async def _reserve_member_seat(self, team, operation, target, seat_type, db_session):
+        existing = await db_session.execute(select(TeamSeatHold.id).where(
+            TeamSeatHold.account_id == team.account_id, TeamSeatHold.operation == operation, TeamSeatHold.target == target,
+        ))
+        if existing.scalar_one_or_none() is not None:
+            return self._admin_error("seat_operation_pending", "该成员或邀请已有未确认操作，请刷新核实后重试")
+        db_session.add(TeamSeatHold(account_id=team.account_id, operation=operation, target=target, seat_type=seat_type))
+        await db_session.commit()
+        return None
+
+    async def _release_member_seat(self, account_id, operation, target, db_session):
+        await db_session.execute(delete(TeamSeatHold).where(
+            TeamSeatHold.account_id == account_id, TeamSeatHold.operation == operation, TeamSeatHold.target == target,
+        ))
+        await db_session.commit()
+
     async def get_team_members(
         self,
         team_id: int,
@@ -2276,6 +2364,8 @@ class TeamService:
                     "email": normalized_email or m.get("email"),
                     "name": m.get("name"),
                     "role": m.get("role"),
+                    "seat_type": m.get("seat_type"),
+                    "pending_seat_type": m.get("pending_seat_type"),
                     "added_at": m.get("created_time"),
                     "status": "joined"
                 })
@@ -2292,6 +2382,7 @@ class TeamService:
                         "email": inv.get("email_address"),
                         "name": None,
                         "role": inv.get("role"),
+                        "seat_type": inv.get("seat_type"),
                         "added_at": inv.get("created_time"),
                         "status": "invited"
                     })
@@ -2300,15 +2391,21 @@ class TeamService:
 
             # 6. 持久化最新人数，避免“查看成员/撤回时已拿到实时列表，但数据库人数仍旧值”
             live_member_count = len(all_members)
+            team.joined_members = len(members_result["members"])
             team.last_sync = get_now()
             effective_members = await self._apply_member_count_floor(team, live_member_count, db_session)
 
             # 7. 请求成功，重置错误状态
             await self._reset_error_status(team, db_session)
 
+            seat_balance = await self.get_team_seat_balance(team, db_session, access_token, members_result, invites_result)
             return {
                 "success": True,
                 "members": all_members,
+                "seat_summary": summarize_member_seats(all_members, invites_result["success"]),
+                "seat_balance": seat_balance,
+                "joined_members": team.joined_members,
+                "total_seats": team.total_seats,
                 "total": effective_members,
                 "error": None
             }
@@ -2322,12 +2419,93 @@ class TeamService:
                 "error": "获取成员列表失败，请稍后重试"
             }
 
+    async def update_member_seat_type(
+        self, team_id: int, user_id: str, seat_type: str,
+        expected_seat_type: str, db_session: AsyncSession,
+    ) -> Dict[str, Any]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return self._admin_error("team_not_found", "Team 不存在")
+        async with seat_account_lock(team.account_id):
+            return await self._update_member_seat_type_locked(team_id, user_id, seat_type, expected_seat_type, db_session)
+
+    async def _update_member_seat_type_locked(
+        self, team_id, user_id, seat_type, expected_seat_type, db_session,
+    ):
+        """校验实时成员状态，修改席位并回读确认；不购买或扩容席位。"""
+        if seat_type not in {"default", "premium"}:
+            return self._admin_error("invalid_seat_type", "不支持的席位类型")
+        try:
+            team = await db_session.get(Team, team_id)
+            if not team:
+                return self._admin_error("team_not_found", "Team 不存在")
+            token = await self.ensure_access_token(team, db_session)
+            if not token:
+                return self._admin_error("token_refresh_failed", "登录凭证已失效，请重新登录或导入")
+
+            async def read_member():
+                result = await self.chatgpt_service.get_members(token, team.account_id, db_session)
+                if not result.get("success"):
+                    return result, None
+                return result, next((m for m in result.get("members", []) if m.get("id") == user_id), None)
+
+            result, member = await read_member()
+            if not result.get("success"):
+                return self._admin_error("member_read_failed", result.get("error") or "读取成员失败")
+            if member is None:
+                return self._admin_error("member_not_found", "该成员已不在当前 Team 中，请刷新列表")
+            if member.get("pending_seat_type"):
+                return self._admin_error("seat_change_pending", "该成员已有待生效的席位变更，请先在官方工作区处理")
+            current = normalize_seat_type(member.get("seat_type"))
+            target = normalize_seat_type(seat_type)
+            if current != normalize_seat_type(expected_seat_type):
+                return self._admin_error("seat_changed", "成员席位已被修改，请刷新列表后重试")
+            if current == target:
+                return {"success": True, "status": "unchanged", "message": "该成员已使用所选席位", "error": None}
+
+            balance = await self.get_team_seat_balance(team, db_session, token, members_result=result)
+            error = self._seat_balance_error(balance, seat_type)
+            if error:
+                return error
+            error = await self._reserve_member_seat(team, "member", user_id, seat_type, db_session)
+            if error:
+                return error
+            changed = await self.chatgpt_service.update_member_seat_type(
+                token, team.account_id, user_id, seat_type, db_session, identifier=team.email,
+            )
+            # 即使网络超时也回读一次，避免重复提交已生效的请求。
+            _, updated = await read_member()
+            if updated and normalize_seat_type(updated.get("seat_type")) == target:
+                await self._release_member_seat(team.account_id, "member", user_id, db_session)
+                return {"success": True, "status": "applied", "message": "席位类型已更新", "error": None}
+            if updated and normalize_seat_type(updated.get("pending_seat_type")) == target:
+                await self._release_member_seat(team.account_id, "member", user_id, db_session)
+                return {"success": True, "status": "pending", "message": "席位变更已提交，等待上游生效", "error": None}
+            if not changed.get("success") or changed.get("data", {}).get("success") is False:
+                if 400 <= changed.get("status_code", 0) < 500 or changed.get("data", {}).get("success") is False:
+                    await self._release_member_seat(team.account_id, "member", user_id, db_session)
+                return self._admin_error("seat_update_failed", changed.get("error") or "上游未接受席位变更，请检查权限和可用席位")
+            return {
+                "success": True, "status": "unconfirmed",
+                "message": "请求已提交，暂未确认生效，请稍后刷新成员列表核实", "error": None,
+            }
+        except Exception:
+            logger.exception("修改成员席位失败")
+            return self._admin_error("seat_update_failed", "席位操作未能确认完成，请刷新成员列表核实后再试")
+
     async def revoke_team_invite(
         self,
         team_id: int,
         email: str,
         db_session: AsyncSession
     ) -> Dict[str, Any]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return self._admin_error("team_not_found", "Team 不存在")
+        async with seat_account_lock(team.account_id):
+            return await self._revoke_team_invite_locked(team_id, email, db_session)
+
+    async def _revoke_team_invite_locked(self, team_id, email, db_session):
         """
         撤回 Team 邀请
 
@@ -2390,6 +2568,7 @@ class TeamService:
                 }
 
             await self.mark_team_email_mapping_removed(team_id, email, db_session, source="api")
+            await self._release_member_seat(team.account_id, "invite", self._normalize_member_email(email), db_session)
 
             # 4. 更新成员数 (不再手动 -1，同步最新数据)
             await self.sync_team_info(team_id, db_session)
@@ -2420,8 +2599,16 @@ class TeamService:
         self,
         team_id: int,
         email: str,
-        db_session: AsyncSession
+        db_session: AsyncSession,
+        seat_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return self._admin_error("team_not_found", "Team 不存在")
+        async with seat_account_lock(team.account_id):
+            return await self._add_team_member_locked(team_id, email, db_session, seat_type)
+
+    async def _add_team_member_locked(self, team_id, email, db_session, seat_type=None):
         """
         添加 Team 成员
 
@@ -2433,6 +2620,9 @@ class TeamService:
         Returns:
             结果字典,包含 success, message, error
         """
+        seat_type = seat_type or "default"
+        if seat_type not in {"default", "premium"}:
+            return self._admin_error("invalid_seat_type", "不支持的席位类型")
         normalized_email = self._normalize_member_email(email)
         if not normalized_email:
             return self._admin_error(
@@ -2516,15 +2706,26 @@ class TeamService:
             had_active_mapping = existing_mapping_status in ACTIVE_TEAM_EMAIL_STATUSES
 
             # 4. 调用 ChatGPT API 发送邀请
+            balance = await self.get_team_seat_balance(team, db_session, access_token)
+            error = self._seat_balance_error(balance, seat_type or "default")
+            if error:
+                return error
+            error = await self._reserve_member_seat(team, "invite", normalized_email, seat_type or "default", db_session)
+            if error:
+                return error
+            seat_options = {"seat_type": seat_type} if seat_type is not None else {}
             invite_result = await self.chatgpt_service.send_invite(
                 access_token,
                 team.account_id,
                 normalized_email,
                 db_session,
-                identifier=team.email
+                identifier=team.email,
+                **seat_options,
             )
 
             if not invite_result["success"]:
+                if 400 <= invite_result.get("status_code", 0) < 500:
+                    await self._release_member_seat(team.account_id, "invite", normalized_email, db_session)
                 # 检查是否封号或 Token 失效
                 if await self._handle_api_error(invite_result, team, db_session):
                     error_msg = invite_result.get("error", "未知错误")
@@ -2673,8 +2874,19 @@ class TeamService:
         team_id: int,
         emails: List[str],
         db_session: AsyncSession,
+        seat_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return self._admin_error("team_not_found", "Team 不存在")
+        async with seat_account_lock(team.account_id):
+            return await self._add_team_members_locked(team_id, emails, db_session, seat_type)
+
+    async def _add_team_members_locked(self, team_id, emails, db_session, seat_type=None):
         """批量添加 Team 成员。"""
+        seat_type = seat_type or "default"
+        if seat_type is not None and seat_type not in {"default", "premium"}:
+            return self._admin_error("invalid_seat_type", "不支持的席位类型")
         submitted = list(emails or [])
         results: List[Dict[str, Any]] = []
         summary = {
@@ -2757,6 +2969,12 @@ class TeamService:
             for item in initial_sync.get("member_emails", [])
             if self._normalize_member_email(item)
         }
+        required = sum(email not in existing_emails for email in normalized_candidates)
+        if required:
+            balance = await self.get_team_seat_balance(team, db_session)
+            error = self._seat_balance_error(balance, seat_type or "default", required)
+            if error:
+                return {**error, "processed": False, "summary": summary, "results": results}
         available_slots = max(int(team.max_members or 0) - int(team.current_members or 0), 0)
         queued_emails: List[str] = []
 
@@ -2806,7 +3024,8 @@ class TeamService:
                 })
                 continue
 
-            item_result = await self.add_team_member(team_id, normalized_email, db_session)
+            seat_options = {"seat_type": seat_type} if seat_type is not None else {}
+            item_result = await self.add_team_member(team_id, normalized_email, db_session, **seat_options)
             item_status = item_result.get("status") or ("invited" if item_result.get("success") else "failed")
             item_message = item_result.get("message")
             item_error = item_result.get("error")
@@ -2864,6 +3083,13 @@ class TeamService:
         db_session: AsyncSession,
         email: Optional[str] = None
     ) -> Dict[str, Any]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return self._admin_error("team_not_found", "Team 不存在")
+        async with seat_account_lock(team.account_id):
+            return await self._delete_team_member_locked(team_id, user_id, db_session, email)
+
+    async def _delete_team_member_locked(self, team_id, user_id, db_session, email=None):
         """
         删除 Team 成员
 
@@ -2927,6 +3153,8 @@ class TeamService:
 
             if email:
                 await self.mark_team_email_mapping_removed(team_id, email, db_session, source="api")
+                await self._release_member_seat(team.account_id, "invite", self._normalize_member_email(email), db_session)
+            await self._release_member_seat(team.account_id, "member", user_id, db_session)
 
             # 4. 更新成员数 (不再手动 -1，同步最新数据)
             await self.sync_team_info(team_id, db_session)
@@ -3270,6 +3498,8 @@ class TeamService:
                     "max_members": team.max_members,
                     "status": team.status,
                     "device_code_auth_enabled": getattr(team, 'device_code_auth_enabled', False),
+                    "joined_members": team.joined_members,
+                    "total_seats": team.total_seats,
                     "warranty_seat_enabled": getattr(team, "warranty_seat_enabled", False),
                     "last_sync": team.last_sync.isoformat() if team.last_sync else None,
                     "created_at": team.created_at.isoformat() if team.created_at else None,

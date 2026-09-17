@@ -1875,6 +1875,124 @@ function downloadCodes() {
     showToast('下载成功', 'success');
 }
 // === 成员管理逻辑 ===
+let memberSeatUpdateInProgress = false;
+let memberListRequestId = 0;
+let memberSeatBalance = null;
+let memberInviteInProgress = false;
+let memberExistingEmails = new Set();
+
+function memberSeatQuota(seatType) {
+    const kind = ['premium', 'prolite'].includes(seatType) ? 'premium' : 'standard';
+    const quota = memberSeatBalance?.success ? memberSeatBalance.balance?.[kind] : null;
+    return quota?.known ? quota : null;
+}
+
+function canAllocateMemberSeat(seatType, required = 1) {
+    const quota = memberSeatQuota(seatType);
+    return quota !== null && Number.isInteger(quota.remaining) && required <= quota.remaining;
+}
+
+function updateMemberSeatButton(select) {
+    const disabled = memberSeatUpdateInProgress || memberInviteInProgress
+        || select.value === select.dataset.currentSeat || !canAllocateMemberSeat(select.value);
+    select.parentElement.querySelector('button').disabled = disabled;
+}
+
+function updateMemberInviteAvailability() {
+    const form = document.getElementById('addMemberForm');
+    if (!form) return;
+    const required = new Set(parseMemberEmails(form.memberEmails.value)
+        .map(email => email.toLowerCase()).filter(email => !memberExistingEmails.has(email))).size;
+    const quota = memberSeatQuota(form.seatType.value);
+    const busy = memberSeatUpdateInProgress || memberInviteInProgress;
+    document.getElementById('addMemberSubmitBtn').disabled = busy || !required || !canAllocateMemberSeat(form.seatType.value, required);
+    const hint = document.getElementById('memberInviteQuotaHint');
+    hint.classList.toggle('is-error', !quota || quota.remaining === 0 || required > quota.remaining);
+    hint.textContent = !quota ? '余额暂不可用，无法邀请，请刷新重试。'
+        : quota.remaining === 0 ? '余额不足，无法邀请。'
+        : required > quota.remaining ? `余额不足：剩余 ${quota.remaining} 个，本次需要 ${required} 个。`
+        : `剩余 ${quota.remaining} 个${required ? `，本次需要 ${required} 个` : ''}。`;
+    document.querySelectorAll('.member-seat-control select').forEach(select => updateMemberSeatButton(select));
+}
+
+function renderMemberSeatSummary(summary) {
+    if (!summary) return '席位数量暂不可用';
+    return [['standard', '标准席位'], ['premium', '高级席位']]
+        .map(([key, label]) => {
+            const quota = memberSeatQuota(key);
+            return `<div class="member-seat-card"><strong>${label} · 剩余 ${quota ? quota.remaining : '暂不可用'}</strong>
+                <small>已购 ${quota ? quota.paid : '—'} · 已加入 ${Number(summary.joined[key]) || 0}${summary.invites_complete ? (summary.invited[key] ? ` · 邀请中 ${Number(summary.invited[key]) || 0}` : '') : ' · 邀请数未知'}${quota?.reserved ? ` · 待确认 ${quota.reserved}` : ''}</small>
+            </div>`;
+        }).join('');
+}
+
+function renderMemberSeatType(seatType) {
+    const value = typeof seatType === 'string' ? seatType.trim() : '';
+    switch (value.toLowerCase()) {
+        case 'default':
+        case 'standard':
+            return '<span class="role-badge role-member">标准席位</span>';
+        case 'premium':
+        case 'prolite':
+            return '<span class="role-badge role-account-owner">高级席位</span>';
+        default:
+            return `<span class="text-muted">${value ? `未知类型（${escapeHtml(value)}）` : '未提供'}</span>`;
+    }
+}
+
+function renderMemberSeatControl(member) {
+    const current = member.seat_type === 'standard' ? 'default' : member.seat_type === 'prolite' ? 'premium' : member.seat_type;
+    if (member.pending_seat_type) {
+        return `${renderMemberSeatType(current)}<small class="member-seat-pending">待生效：${renderMemberSeatType(member.pending_seat_type)}</small>`;
+    }
+    if (!member.user_id || !['default', 'premium'].includes(current)) return renderMemberSeatType(current);
+    return `<div class="member-seat-control">
+        <select class="form-control" aria-label="${escapeHtml(member.email)} 的席位类型"
+            data-user-id="${escapeHtml(member.user_id)}" data-email="${escapeHtml(member.email)}"
+            data-current-seat="${current}" ${memberSeatUpdateInProgress ? 'disabled' : ''}
+            onchange="updateMemberSeatButton(this)">
+            <option value="default" ${current === 'default' ? 'selected' : !canAllocateMemberSeat('default') ? 'disabled' : ''}>标准席位</option>
+            <option value="premium" ${current === 'premium' ? 'selected' : !canAllocateMemberSeat('premium') ? 'disabled' : ''}>高级席位</option>
+        </select>
+        <button type="button" class="btn btn-sm btn-secondary" disabled onclick="saveMemberSeatType(this)">保存</button>
+    </div>`;
+}
+
+async function saveMemberSeatType(button) {
+    if (memberSeatUpdateInProgress || memberInviteInProgress) return;
+    const select = button.parentElement.querySelector('select');
+    const teamId = window.currentTeamId;
+    const target = select.value;
+    if (target === select.dataset.currentSeat) return;
+    if (!canAllocateMemberSeat(target)) {
+        showToast('所选席位余额不足或余额未知，无法保存', 'error');
+        updateMemberSeatButton(select);
+        return;
+    }
+    const label = target === 'premium' ? '高级席位' : '标准席位';
+    if (!confirm(`将 ${select.dataset.email} 设置为${label}？\n将调整该成员的使用额度，需有对应可用席位。`)) return;
+    memberSeatUpdateInProgress = true;
+    updateMemberInviteAvailability();
+    document.querySelectorAll('.member-seat-control select, .member-seat-control button').forEach(el => el.disabled = true);
+    button.textContent = '保存中...';
+    try {
+        const result = await apiCall(`/admin/teams/${teamId}/members/${encodeURIComponent(select.dataset.userId)}/seat-type`, {
+            method: 'POST',
+            body: JSON.stringify({seat_type: target, expected_seat_type: select.dataset.currentSeat})
+        });
+        const data = result.data || {};
+        if (result.success && data.success) {
+            showToast(data.message, ['pending', 'unconfirmed'].includes(data.status) ? 'warning' : 'success');
+        } else {
+            showToast(getFriendlyAdminErrorMessage(result.error || data.error || '席位修改失败', 0, 'member'), 'error');
+        }
+    } catch (error) {
+        showToast('未能确认席位变更结果，请刷新列表核实', 'error');
+    } finally {
+        memberSeatUpdateInProgress = false;
+        await loadModalMemberList(window.currentTeamId);
+    }
+}
 
 async function viewMembers(teamId, teamEmail = '') {
     window.currentTeamId = teamId;
@@ -1892,23 +2010,41 @@ async function viewMembers(teamId, teamEmail = '') {
 }
 
 async function loadModalMemberList(teamId) {
+    const requestId = ++memberListRequestId;
     const joinedTableBody = document.getElementById('modalJoinedMembersTableBody');
     const invitedTableBody = document.getElementById('modalInvitedMembersTableBody');
+    const seatSummary = document.getElementById('memberSeatSummary');
+    memberSeatBalance = null;
+    memberExistingEmails = new Set();
+    updateMemberInviteAvailability();
+    if (seatSummary) seatSummary.textContent = '正在读取席位数量...';
 
-    if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
-    if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
+    if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
+    if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
 
     try {
         const result = await apiCall(`/admin/teams/${teamId}/members/list`);
-        if (result.success) {
+        if (window.currentTeamId !== teamId || requestId !== memberListRequestId) return;
+        if (result.success && result.data.success) {
             const allMembers = result.data.members || [];
             const joinedMembers = allMembers.filter(m => m.status === 'joined');
             const invitedMembers = allMembers.filter(m => m.status === 'invited');
+            const memberCount = document.getElementById(`team-member-count-${teamId}`);
+            if (memberCount) {
+                memberCount.textContent = `${result.data.joined_members ?? '—'}/${result.data.total_seats ?? '—'}`;
+            }
+            memberSeatBalance = result.data.seat_balance || null;
+            memberExistingEmails = new Set(allMembers.map(m => (m.email || '').toLowerCase()));
+            document.getElementById('memberSeatBalanceError').textContent = memberSeatBalance?.success
+                ? '' : memberSeatBalance?.error || '余额暂不可用，无法保存或邀请。';
+            if (seatSummary) {
+                seatSummary.innerHTML = renderMemberSeatSummary(result.data.seat_summary);
+            }
 
             // 渲染已加入成员
             if (joinedTableBody) {
                 if (joinedMembers.length === 0) {
-                    joinedTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无已加入成员</td></tr>';
+                    joinedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无已加入成员</td></tr>';
                 } else {
                     joinedTableBody.innerHTML = joinedMembers.map(m => `
                         <tr>
@@ -1918,6 +2054,7 @@ async function loadModalMemberList(teamId) {
                                     ${m.role === 'account-owner' ? '所有者' : '成员'}
                                 </span>
                             </td>
+                            <td>${renderMemberSeatControl(m)}</td>
                             <td>${formatDateTime(m.added_at)}</td>
                             <td style="text-align: right;">
                                 ${m.role !== 'account-owner' ? `
@@ -1933,8 +2070,10 @@ async function loadModalMemberList(teamId) {
 
             // 渲染待加入成员
             if (invitedTableBody) {
-                if (invitedMembers.length === 0) {
-                    invitedTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无待加入成员</td></tr>';
+                if (result.data.seat_summary?.invites_complete === false) {
+                    invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--danger);">邀请列表读取失败，请重新打开成员管理重试</td></tr>';
+                } else if (invitedMembers.length === 0) {
+                    invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无待加入成员</td></tr>';
                 } else {
                     invitedTableBody.innerHTML = invitedMembers.map(m => `
                         <tr>
@@ -1942,6 +2081,7 @@ async function loadModalMemberList(teamId) {
                             <td>
                                 <span class="role-badge role-member">成员</span>
                             </td>
+                            <td>${renderMemberSeatType(m.seat_type)}</td>
                             <td>${formatDateTime(m.added_at)}</td>
                             <td style="text-align: right;">
                                 <button onclick='revokeInvite(${JSON.stringify(teamId)}, ${JSON.stringify(m.email)}, true)' class="btn btn-sm btn-warning">
@@ -1954,14 +2094,19 @@ async function loadModalMemberList(teamId) {
             }
 
             if (window.lucide) lucide.createIcons();
+            updateMemberInviteAvailability();
         } else {
-            const friendlyError = getFriendlyAdminErrorMessage(result.error || '加载失败', 0, 'member');
-            const errorMsg = `<tr><td colspan="4" style="text-align: center; color: var(--danger);">${escapeHtml(friendlyError)}</td></tr>`;
+            if (seatSummary) seatSummary.textContent = '席位数量读取失败';
+            updateMemberInviteAvailability();
+            const friendlyError = getFriendlyAdminErrorMessage(result.error || result.data?.error || '加载失败', 0, 'member');
+            const errorMsg = `<tr><td colspan="5" style="text-align: center; color: var(--danger);">${escapeHtml(friendlyError)}</td></tr>`;
             if (joinedTableBody) joinedTableBody.innerHTML = errorMsg;
             if (invitedTableBody) invitedTableBody.innerHTML = errorMsg;
         }
     } catch (error) {
-        const errorMsg = '<tr><td colspan="4" style="text-align: center; color: var(--danger);">加载失败</td></tr>';
+        if (window.currentTeamId !== teamId || requestId !== memberListRequestId) return;
+        if (seatSummary) seatSummary.textContent = '席位数量读取失败';
+        const errorMsg = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">加载失败</td></tr>';
         if (joinedTableBody) joinedTableBody.innerHTML = errorMsg;
         if (invitedTableBody) invitedTableBody.innerHTML = errorMsg;
     }
@@ -2019,6 +2164,15 @@ async function handleAddMember(event) {
         return;
     }
 
+    const required = new Set(emails.map(email => email.toLowerCase()).filter(email => !memberExistingEmails.has(email))).size;
+    if (memberInviteInProgress || memberSeatUpdateInProgress || !canAllocateMemberSeat(form.seatType.value, required) || !required) {
+        showToast('席位余额不足、余额未知或没有新增邮箱，无法邀请', 'error');
+        updateMemberInviteAvailability();
+        return;
+    }
+
+    memberInviteInProgress = true;
+    updateMemberInviteAvailability();
     submitButton.disabled = true;
     const originalText = submitButton.innerHTML;
     submitButton.textContent = '发送中...';
@@ -2026,7 +2180,7 @@ async function handleAddMember(event) {
     try {
         const result = await apiCall(`/admin/teams/${teamId}/members/add`, {
             method: 'POST',
-            body: JSON.stringify({ emails })
+            body: JSON.stringify({ emails, seat_type: form.seatType.value })
         });
 
         if (!result.success) {
@@ -2049,19 +2203,13 @@ async function handleAddMember(event) {
             showToast(getFriendlyAdminErrorMessage(message || '添加失败', 0, 'member'), 'error');
         }
 
-        if (invitedCount > 0 && document.getElementById('manageMembersModal').classList.contains('show')) {
-            await loadModalMemberList(teamId);
-            if (failedCount === 0) {
-                setTimeout(() => {
-                    window.location.reload();
-                }, 800);
-            }
-        }
     } catch (error) {
         showToast(getFriendlyAdminErrorMessage(error.message || '网络错误', 0, 'member'), 'error');
     } finally {
-        submitButton.disabled = false;
+        memberInviteInProgress = false;
         submitButton.innerHTML = originalText;
+        if (window.currentTeamId === teamId) await loadModalMemberList(teamId);
+        updateMemberInviteAvailability();
     }
 }
 

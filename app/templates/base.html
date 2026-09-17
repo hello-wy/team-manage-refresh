@@ -35,7 +35,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=20260429-ui-style-toggle">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260918-member-layout">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     {% block extra_css %}{% endblock %}
@@ -831,7 +831,7 @@ eyJ..."></textarea>
 
     <!-- 成员管理 模态框 -->
     <div id="manageMembersModal" class="modal-overlay">
-        <div class="modal" style="max-width: 800px;">
+        <div class="modal" style="max-width: 960px;">
             <div class="modal-header">
                 <div>
                     <h3 id="modalTeamName">Team 成员管理</h3>
@@ -841,19 +841,35 @@ eyJ..."></textarea>
             </div>
             <div class="modal-body">
                 <!-- 添加成员表单 -->
+                <div id="memberSeatSummary" class="member-seat-summary" role="status" aria-live="polite">正在读取席位数量...</div>
+                <p class="text-muted member-seat-hint">剩余席位已扣除邀请及待确认操作的预留。
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="loadModalMemberList(window.currentTeamId)">刷新余额</button>
+                </p>
+                <p id="memberSeatBalanceError" class="text-muted" role="status"></p>
                 <div class="content-section"
                     style="padding: 1.25rem; margin-bottom: 1.5rem; background: rgba(255,255,255,0.03);">
-                    <form id="addMemberForm" onsubmit="handleAddMember(event)"
-                        style="display: flex; gap: 1rem; align-items: flex-end;">
-                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                    <form id="addMemberForm" class="member-invite-form" onsubmit="handleAddMember(event)">
+                        <div class="form-group member-invite-emails">
                             <label for="memberEmails">新增成员邮箱</label>
                             <textarea id="memberEmails" name="memberEmails" class="form-control" rows="4"
+                                oninput="updateMemberInviteAvailability()"
                                 placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com" required></textarea>
-                            <small class="form-text">推荐一行一个邮箱，同时支持英文逗号和中文逗号，系统会自动去重并跳过空项。</small>
+                            <small class="form-text">每行一个邮箱，或用逗号分隔；自动去重。</small>
                         </div>
-                        <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn">
-                            <i data-lucide="user-plus"></i> 发送邀请
-                        </button>
+                        <div class="form-group member-invite-seat">
+                            <label for="inviteSeatType">邀请席位类型</label>
+                            <select id="inviteSeatType" name="seatType" class="form-control" onchange="updateMemberInviteAvailability()">
+                                <option value="default">标准席位</option>
+                                <option value="premium">高级席位</option>
+                            </select>
+                            <small class="form-text">本批次所有邮箱使用所选类型。</small>
+                            <small id="memberInviteQuotaHint" class="form-text" aria-live="polite">正在读取余额...</small>
+                        </div>
+                        <div class="member-invite-actions">
+                            <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn" disabled>
+                                <i data-lucide="user-plus"></i> 发送邀请
+                            </button>
+                        </div>
                     </form>
                 </div>
 
@@ -866,6 +882,7 @@ eyJ..."></textarea>
                                 <tr>
                                     <th>邮箱</th>
                                     <th style="width: 100px;">角色</th>
+                                    <th style="width: 200px;">席位类型</th>
                                     <th style="width: 160px;">加入时间</th>
                                     <th style="text-align: right; width: 100px;">操作</th>
                                 </tr>
@@ -886,6 +903,7 @@ eyJ..."></textarea>
                                 <tr>
                                     <th>邮箱</th>
                                     <th style="width: 100px;">角色</th>
+                                    <th style="width: 120px;">席位类型</th>
                                     <th style="width: 160px;">邀请时间</th>
                                     <th style="text-align: right; width: 100px;">操作</th>
                                 </tr>
@@ -902,7 +920,7 @@ eyJ..."></textarea>
     <div id="toast" class="toast"></div>
 
     <script>window.SYSTEM_UI_THEME = {{ ui_theme|default("ocean")|tojson }};</script>
-    <script src="/static/js/main.js?v=20260429-ui-style-toggle"></script>
+    <script src="/static/js/main.js?v=20260918-member-layout"></script>
     <script>
         lucide.createIcons();
     </script>

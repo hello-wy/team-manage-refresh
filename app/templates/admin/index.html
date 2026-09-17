@@ -274,7 +274,28 @@
 
     .team-dashboard-page {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 1rem;
+    }
+
+    /* 网格允许收缩，长表格只在自身容器内滚动。 */
+    .team-dashboard-page .workbench-panel {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .team-dashboard-page > *,
+    .team-dashboard-page .workbench-panel > * {
+        min-width: 0;
+    }
+
+    .team-list-panel .team-list-toolbar {
+        display: grid;
+        gap: 1rem;
+        min-width: 0;
+    }
+
+    .team-list-panel .team-table-card {
+        min-width: 0;
     }
 
     .team-dashboard-page .page-header,
@@ -795,11 +816,15 @@
         <div id="batchRefreshProgressText" class="batch-progress-text">正在刷新中，请稍候…</div>
     </div>
 
-    <div class="workbench-panel">
-        <div class="content-section team-list-toolbar-section workbench-toolbar">
+    <div class="content-section workbench-panel team-list-panel">
+        <div class="team-list-toolbar-section team-list-toolbar">
             <div class="workbench-toolbar-row">
                 <div class="workbench-toolbar-copy">
                     <h3>{% if active_page == "welfare" %}福利 Team 列表{% else %}Team 列表{% endif %}</h3>
+                </div>
+                <div class="table-section-meta">
+                    <span class="table-meta-pill">每页 {{ pagination.per_page if pagination else 20 }} 条</span>
+                    {% if pagination %}<span class="table-meta-pill">共 {{ pagination.total }} 条</span>{% endif %}
                 </div>
                 <div id="batchActions" class="batch-actions-group" style="display: none;">
                     <button type="button" id="btnBatchRefresh" class="btn btn-secondary btn-sm">
@@ -896,30 +921,7 @@
         </div>
 
 {% if teams %}
-        <div class="content-section workbench-table-card team-table-card">
-            <div class="table-section-head">
-                <div class="table-section-copy">
-                    <h3>{% if active_page == "welfare" %}福利席位明细{% else %}Team 运行明细{% endif %}</h3>
-                </div>
-                <div class="table-section-meta">
-                    {% if search %}
-                    <span class="table-meta-pill">
-                        <i data-lucide="search"></i>
-                        <span>关键词：{{ search }}</span>
-                    </span>
-                    {% endif %}
-                    <span class="table-meta-pill">
-                        <i data-lucide="rows-3"></i>
-                        <span>每页 {{ pagination.per_page if pagination else 20 }} 条</span>
-                    </span>
-                    {% if pagination %}
-                    <span class="table-meta-pill">
-                        <i data-lucide="list-filter"></i>
-                        <span>共 {{ pagination.total }} 条</span>
-                    </span>
-                    {% endif %}
-                </div>
-            </div>
+        <div class="team-table-card">
             <div class="table-container team-list-table-container">
     <table class="data-table">
         <thead>
@@ -928,10 +930,10 @@
                 </th>
                 <th>{% if active_page == "welfare" %}编号{% else %}ID{% endif %}</th>
                 <th>邮箱</th>
-                <th>Account ID</th>
+                <th data-default-hidden>Account ID</th>
                 <th>Team 名称</th>
-                <th>成员数</th>
-                <th>订阅计划</th>
+                <th>已加入成员数/总席位数</th>
+                <th data-default-hidden>订阅计划</th>
                 <th>到期时间</th>
                 <th>设备验证</th>
                 <th>状态</th>
@@ -952,9 +954,9 @@
                 </td>
                 <td data-label="Account ID"><span class="text-muted small">{{ team.account_id or '-' }}</span></td>
                 <td data-label="Team 名称">{{ team.team_name or '-' }}</td>
-                <td data-label="成员数">
-                    <span class="member-count">
-                        {{ team.current_members }}/{{ team.max_members }}
+                <td data-label="已加入成员数/总席位数">
+                    <span class="member-count" id="team-member-count-{{ team.id }}" title="已加入成员数 / 已购标准与高级席位合计；— 表示未知，请同步或刷新成员">
+                        {{ team.joined_members if team.joined_members is not none else '—' }}/{{ team.total_seats if team.total_seats is not none else '—' }}
                     </span>
                 </td>
                 <td data-label="订阅计划">{{ team.subscription_plan or '-' }}</td>
@@ -1137,7 +1139,7 @@
 {% endif %}
         </div>
 {% else %}
-        <div class="content-section team-empty-state">
+        <div class="team-empty-state">
             <div class="empty-state">
                 <span class="empty-icon"><i data-lucide="server-off"></i></span>
                 <p>还没有 Team 数据，先导入一批账号开始运营吧。</p>
@@ -1301,7 +1303,7 @@
         }
 
         // Init Column Toggler
-        initColumnToggler('.data-table', 'team_list_columns');
+        initColumnToggler('.team-list-table-container .data-table', 'team_list_columns');
 
         // 绑定下拉按钮点击（避免仅依赖内联 onclick）
         const statusFilterToggleBtn = document.getElementById('statusFilterToggleBtn');
@@ -1865,13 +1867,19 @@
         container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
         // Load saved preferences
-        const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        const defaults = Array.from(headers).flatMap((th, index) => th.hasAttribute('data-default-hidden') ? [index] : []);
+        let saved = defaults;
+        try {
+            const stored = JSON.parse(localStorage.getItem(storageKey));
+            if (Array.isArray(stored)) saved = stored.filter(Number.isInteger);
+        } catch (_) { /* 无效偏好使用默认列。 */ }
+        const hiddenColumns = new Set(saved);
 
         headers.forEach((th, index) => {
             const text = th.innerText.trim();
             if (!text || text === '操作' || th.querySelector('input')) return; // Checkbox column or Action
 
-            const isVisible = !saved.includes(index);
+            const isVisible = !hiddenColumns.has(index);
             if (!isVisible) {
                 th.style.display = 'none';
                 table.querySelectorAll(`tbody tr td:nth-child(${index + 1})`).forEach(td => td.style.display = 'none');
@@ -1892,14 +1900,12 @@
                 table.querySelectorAll(`tbody tr td:nth-child(${index + 1})`).forEach(td => td.style.display = checked ? '' : 'none');
 
                 // Save to localStorage
-                const currentSaved = JSON.parse(localStorage.getItem(storageKey) || '[]');
                 if (checked) {
-                    const idx = currentSaved.indexOf(index);
-                    if (idx > -1) currentSaved.splice(idx, 1);
+                    hiddenColumns.delete(index);
                 } else {
-                    if (!currentSaved.includes(index)) currentSaved.push(index);
+                    hiddenColumns.add(index);
                 }
-                localStorage.setItem(storageKey, JSON.stringify(currentSaved));
+                localStorage.setItem(storageKey, JSON.stringify([...hiddenColumns]));
             });
 
             container.appendChild(item);

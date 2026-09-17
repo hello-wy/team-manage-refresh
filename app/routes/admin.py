@@ -143,6 +143,12 @@ class DeleteMemberRequest(BaseModel):
 class AddMembersRequest(BaseModel):
     """批量添加成员请求"""
     emails: List[str] = Field(..., description="成员邮箱列表")
+    seat_type: Literal["default", "premium"] = Field("default", description="邀请席位类型")
+
+
+class MemberSeatTypeRequest(BaseModel):
+    seat_type: Literal["default", "premium"]
+    expected_seat_type: Literal["default", "standard", "premium"]
 
 
 class CodeGenerateRequest(BaseModel):
@@ -889,7 +895,8 @@ async def add_team_member(
         result = await team_service.add_team_members(
             team_id=team_id,
             emails=member_data.emails,
-            db_session=db
+            db_session=db,
+            seat_type=member_data.seat_type,
         )
 
         if not result.get("processed") and not result["success"]:
@@ -909,6 +916,20 @@ async def add_team_member(
                 "error": "添加成员失败，请稍后重试"
             }
         )
+
+
+@router.post("/teams/{team_id}/members/{user_id}/seat-type")
+async def update_member_seat_type(
+    team_id: int,
+    user_id: str,
+    payload: MemberSeatTypeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await team_service.update_member_seat_type(
+        team_id, user_id, payload.seat_type, payload.expected_seat_type, db,
+    )
+    return JSONResponse(content=result, status_code=200 if result["success"] else 400)
 
 
 @router.post("/teams/{team_id}/members/{user_id}/delete")

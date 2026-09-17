@@ -8,13 +8,14 @@ import hashlib
 import logging
 import random
 import secrets
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from typing import Optional, Dict, Any, List
 from curl_cffi.requests import AsyncSession
 from app.services.settings import settings_service
 from sqlalchemy.ext.asyncio import AsyncSession as DBAsyncSession
 from app.utils.jwt_parser import JWTParser
 from app.utils.proxy import build_curl_cffi_proxies
+from app.utils.seats import upstream_seat_type
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,8 @@ class ChatGPTService:
         headers: Dict[str, str],
         json_data: Optional[Dict[str, Any]] = None,
         db_session: Optional[DBAsyncSession] = None,
-        identifier: str = "default"
+        identifier: str = "default",
+        retry: bool = True,
     ) -> Dict[str, Any]:
         """
         发送 HTTP 请求 (使用持久化隔离会话，提高 CF 通过率并防止污染)
@@ -128,7 +130,8 @@ class ChatGPTService:
             if k not in headers:
                 headers[k] = v
 
-        for attempt in range(self.MAX_RETRIES):
+        attempts = self.MAX_RETRIES if retry else 1
+        for attempt in range(attempts):
             try:
                 # 随机微小延迟，模拟真实用户行为
                 if attempt > 0:
@@ -141,6 +144,8 @@ class ChatGPTService:
                     response = await session.get(url, headers=headers)
                 elif method == "POST":
                     response = await session.post(url, headers=headers, json=json_data)
+                elif method == "PATCH":
+                    response = await session.patch(url, headers=headers, json=json_data)
                 elif method == "DELETE":
                     response = await session.delete(url, headers=headers, json=json_data)
                 else:
@@ -178,13 +183,13 @@ class ChatGPTService:
                     return {"success": False, "status_code": status_code, "error": error_msg, "error_code": error_code}
 
                 if status_code >= 500:
-                    if attempt < self.MAX_RETRIES - 1:
+                    if attempt < attempts - 1:
                         continue
                     return {"success": False, "status_code": status_code, "error": f"服务器错误 {status_code}"}
 
             except Exception as e:
                 logger.error(f"请求异常: {e}")
-                if attempt < self.MAX_RETRIES - 1:
+                if attempt < attempts - 1:
                     continue
                 return {"success": False, "status_code": 0, "error": str(e)}
 
@@ -196,7 +201,8 @@ class ChatGPTService:
         account_id: str,
         email: str,
         db_session: DBAsyncSession,
-        identifier: str = "default"
+        identifier: str = "default",
+        seat_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """发送 Team 邀请"""
         url = f"{self.BASE_URL}/accounts/{account_id}/invites"
@@ -206,7 +212,37 @@ class ChatGPTService:
             "chatgpt-account-id": account_id
         }
         json_data = {"email_addresses": [email], "role": "standard-user", "resend_emails": True}
+        if seat_type is not None:
+            if seat_type not in {"default", "premium"}:
+                return {"success": False, "error": "不支持的席位类型"}
+            json_data["seat_type"] = upstream_seat_type(seat_type)
         return await self._make_request("POST", url, headers, json_data, db_session, identifier)
+
+    async def update_member_seat_type(
+        self, access_token: str, account_id: str, user_id: str,
+        seat_type: str, db_session: DBAsyncSession, identifier: str = "default",
+    ) -> Dict[str, Any]:
+        """按成员 ID 修改席位；不自动重试写入，由调用方回读确认。"""
+        if seat_type not in {"default", "premium"}:
+            return {"success": False, "error": "不支持的席位类型"}
+        url = f"{self.BASE_URL}/accounts/{quote(account_id, safe='')}/users/{quote(user_id, safe='')}"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "chatgpt-account-id": account_id,
+        }
+        return await self._make_request(
+            "PATCH", url, headers, {"seat_type": upstream_seat_type(seat_type)}, db_session, identifier,
+            retry=False,
+        )
+
+    async def get_seat_capacity(self, access_token, account_id, db_session):
+        """读取已购席位和官方可用余额，不修改订阅。"""
+        return await self._make_request(
+            "GET", f"{self.BASE_URL}/subscriptions?{urlencode({'account_id': account_id})}",
+            {"Authorization": f"Bearer {access_token}", "chatgpt-account-id": account_id},
+            db_session=db_session,
+        )
 
     async def get_members(
         self,
@@ -248,24 +284,28 @@ class ChatGPTService:
         db_session: DBAsyncSession,
         identifier: str = "default"
     ) -> Dict[str, Any]:
-        """获取 Team 邀请列表"""
-        url = f"{self.BASE_URL}/accounts/{account_id}/invites"
+        """分页获取全部邀请，避免席位统计只包含第一页。"""
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "chatgpt-account-id": account_id
+            "chatgpt-account-id": account_id,
         }
-        result = await self._make_request("GET", url, headers, db_session=db_session, identifier=identifier)
-        if not result["success"]:
-            return {
-                "success": False,
-                "items": [],
-                "total": 0,
-                "error": result["error"],
-                "error_code": result.get("error_code"),
-                "status_code": result.get("status_code"),
-            }
-        data = result["data"]
-        items = data.get("items", [])
+        items = []
+        offset = 0
+        limit = 50
+        while True:
+            url = f"{self.BASE_URL}/accounts/{account_id}/invites?limit={limit}&offset={offset}"
+            result = await self._make_request("GET", url, headers, db_session=db_session, identifier=identifier)
+            if not result["success"]:
+                return {**result, "items": [], "total": 0}
+            data = result["data"]
+            page = data.get("items", [])
+            items.extend(page)
+            total = data.get("total")
+            if total is None or len(items) >= total:
+                break
+            if not page:
+                return {"success": False, "items": [], "total": 0, "error": "邀请列表分页不完整，请重试"}
+            offset += len(page)
         return {"success": True, "items": items, "total": len(items), "error": None}
 
     async def delete_invite(
