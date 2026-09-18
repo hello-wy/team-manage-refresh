@@ -5,6 +5,7 @@ SQLite 异步连接配置和会话管理
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from app.config import settings
 
 # SQLite 本质上是单写者数据库，即便开启 WAL，过大的连接池反而会放大
@@ -15,6 +16,7 @@ _is_sqlite = settings.database_url.startswith("sqlite")
 if _is_sqlite:
     _engine_kwargs = dict(
         connect_args={"timeout": 60},
+        poolclass=AsyncAdaptedQueuePool,
         pool_size=5,
         max_overflow=10,
         pool_recycle=3600,

@@ -831,7 +831,7 @@ eyJ..."></textarea>
 
     <!-- 成员管理 模态框 -->
     <div id="manageMembersModal" class="modal-overlay">
-        <div class="modal" style="max-width: 960px;">
+        <div class="modal" style="max-width: 1120px;">
             <div class="modal-header">
                 <div>
                     <h3 id="modalTeamName">Team 成员管理</h3>
@@ -840,6 +840,22 @@ eyJ..."></textarea>
                 <button class="modal-close" onclick="hideModal('manageMembersModal')">&times;</button>
             </div>
             <div class="modal-body">
+                <div class="member-auto-kick-settings">
+                    <div>
+                        <strong>成员自动下线</strong>
+                        <small>按成员实际加入时间计算；Team 所有者不会自动下线。</small>
+                    </div>
+                    <div class="member-auto-kick-controls">
+                        <label for="memberAutoKickHours">加入后</label>
+                        <input id="memberAutoKickHours" class="form-control" type="number" value="2"
+                            min="1" max="8760" step="1" inputmode="numeric">
+                        <span>小时</span>
+                        <button id="memberAutoKickSaveBtn" type="button" class="btn btn-secondary"
+                            onclick="saveMemberAutoKickSettings()">
+                            <i data-lucide="clock-3"></i> 保存
+                        </button>
+                    </div>
+                </div>
                 <!-- 添加成员表单 -->
                 <div id="memberSeatSummary" class="member-seat-summary" role="status" aria-live="polite">正在读取席位数量...</div>
                 <p class="text-muted member-seat-hint">剩余席位已扣除邀请及待确认操作的预留。
@@ -886,6 +902,7 @@ eyJ..."></textarea>
                                     <th style="width: 100px;">角色</th>
                                     <th style="width: 200px;">席位类型</th>
                                     <th style="width: 160px;">加入时间</th>
+                                    <th style="width: 160px;">下线时间</th>
                                     <th style="text-align: right; width: 128px;">授权与操作</th>
                                 </tr>
                             </thead>

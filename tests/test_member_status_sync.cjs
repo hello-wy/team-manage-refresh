@@ -36,6 +36,7 @@ function harness() {
         renderMemberSeatSummary: () => '席位余额',
         renderMemberSeatControl: () => '',
         renderMemberSeatType: () => '',
+        renderMemberAutoKickTime: () => '',
         renderMemberAuthorizationActions: () => '',
         escapeHtml: value => String(value),
         formatDateTime: () => '',

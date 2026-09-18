@@ -2096,7 +2096,48 @@ let memberSeatUpdateInProgress = false;
 let memberListRequestId = 0;
 let memberSeatBalance = null;
 let memberInviteInProgress = false;
+let memberAutoKickUpdateInProgress = false;
 let memberExistingEmails = new Set();
+
+function renderMemberAutoKickTime(member) {
+    if (member.role === 'account-owner') return '<span class="text-muted">不会自动下线</span>';
+    if (!member.auto_kick_at) return '<span class="text-muted">待同步</span>';
+    const overdue = new Date(member.auto_kick_at).getTime() <= Date.now();
+    return `<span class="member-auto-kick-time${overdue ? ' is-overdue' : ''}">${formatDateTime(member.auto_kick_at)}</span>`;
+}
+
+async function saveMemberAutoKickSettings() {
+    const input = document.getElementById('memberAutoKickHours');
+    const button = document.getElementById('memberAutoKickSaveBtn');
+    const teamId = Number(window.currentTeamId);
+    const hours = Number.parseInt(input?.value, 10);
+    if (!teamId || !Number.isInteger(hours) || hours < 1 || hours > 8760) {
+        showToast('请输入 1 到 8760 之间的整数小时', 'error');
+        return;
+    }
+    if (memberAutoKickUpdateInProgress) return;
+    memberAutoKickUpdateInProgress = true;
+    button.disabled = true;
+    const original = button.innerHTML;
+    button.textContent = '保存中...';
+    try {
+        const result = await apiCall(`/admin/teams/${teamId}/members/auto-kick`, {
+            method: 'POST',
+            body: JSON.stringify({hours}),
+        });
+        if (!result.success || !result.data?.success) {
+            showToast(result.error || result.data?.error || '保存失败', 'error');
+            return;
+        }
+        showToast(result.data.message, 'success');
+        await loadModalMemberList(teamId);
+    } finally {
+        memberAutoKickUpdateInProgress = false;
+        button.innerHTML = original;
+        button.disabled = false;
+        if (window.lucide) lucide.createIcons();
+    }
+}
 
 function memberSeatQuota(seatType) {
     const kind = ['premium', 'prolite'].includes(seatType) ? 'premium' : 'standard';
@@ -2243,7 +2284,7 @@ async function loadModalMemberList(teamId, snapshot = null) {
     updateMemberInviteAvailability();
     if (seatSummary) seatSummary.textContent = '正在读取席位数量...';
 
-    if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
+    if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
     if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
 
     try {
@@ -2256,6 +2297,8 @@ async function loadModalMemberList(teamId, snapshot = null) {
             updateTeamMemberCount(teamId, result.data);
             memberSeatBalance = result.data.seat_balance || null;
             memberExistingEmails = new Set(allMembers.map(m => (m.email || '').toLowerCase()));
+            const autoKickInput = document.getElementById('memberAutoKickHours');
+            if (autoKickInput) autoKickInput.value = String(result.data.member_auto_kick_hours || 2);
             document.getElementById('memberSeatBalanceError').textContent = memberSeatBalance?.success
                 ? '' : memberSeatBalance?.error || '余额暂不可用，无法保存或邀请。';
             if (seatSummary) {
@@ -2265,7 +2308,7 @@ async function loadModalMemberList(teamId, snapshot = null) {
             // 渲染已加入成员
             if (joinedTableBody) {
                 if (joinedMembers.length === 0) {
-                    joinedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无已加入成员</td></tr>';
+                    joinedTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无已加入成员</td></tr>';
                 } else {
                     joinedTableBody.innerHTML = joinedMembers.map(m => `
                         <tr>
@@ -2277,6 +2320,7 @@ async function loadModalMemberList(teamId, snapshot = null) {
                             </td>
                             <td>${renderMemberSeatControl(m)}</td>
                             <td>${formatDateTime(m.added_at)}</td>
+                            <td>${renderMemberAutoKickTime(m)}</td>
                             <td style="text-align: right;">
                                 ${renderMemberAuthorizationActions(teamId, m)}
                             </td>
@@ -2314,16 +2358,16 @@ async function loadModalMemberList(teamId, snapshot = null) {
             if (seatSummary) seatSummary.textContent = '席位数量读取失败';
             updateMemberInviteAvailability();
             const friendlyError = getFriendlyAdminErrorMessage(result.error || result.data?.error || '加载失败', 0, 'member');
-            const errorMsg = `<tr><td colspan="5" style="text-align: center; color: var(--danger);">${escapeHtml(friendlyError)}</td></tr>`;
-            if (joinedTableBody) joinedTableBody.innerHTML = errorMsg;
-            if (invitedTableBody) invitedTableBody.innerHTML = errorMsg;
+            const joinedError = `<tr><td colspan="6" style="text-align: center; color: var(--danger);">${escapeHtml(friendlyError)}</td></tr>`;
+            const invitedError = `<tr><td colspan="5" style="text-align: center; color: var(--danger);">${escapeHtml(friendlyError)}</td></tr>`;
+            if (joinedTableBody) joinedTableBody.innerHTML = joinedError;
+            if (invitedTableBody) invitedTableBody.innerHTML = invitedError;
         }
     } catch (error) {
         if (window.currentTeamId !== teamId || requestId !== memberListRequestId) return;
         if (seatSummary) seatSummary.textContent = '席位数量读取失败';
-        const errorMsg = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">加载失败</td></tr>';
-        if (joinedTableBody) joinedTableBody.innerHTML = errorMsg;
-        if (invitedTableBody) invitedTableBody.innerHTML = errorMsg;
+        if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--danger);">加载失败</td></tr>';
+        if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">加载失败</td></tr>';
     }
 }
 

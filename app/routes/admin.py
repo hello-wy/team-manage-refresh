@@ -29,6 +29,11 @@ from app.services.settings import (
 )
 from app.services.cliproxyapi import cliproxyapi_service
 from app.services.member_authorization import MemberAuthorizationService, MemberAuthorizationError
+from app.services.member_auto_kick import (
+    MAX_MEMBER_AUTO_KICK_HOURS,
+    MIN_MEMBER_AUTO_KICK_HOURS,
+    member_auto_kick_service,
+)
 from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
@@ -167,6 +172,15 @@ class AddMembersRequest(BaseModel):
 class MemberSeatTypeRequest(BaseModel):
     seat_type: Literal["default", "premium"]
     expected_seat_type: Literal["default", "standard", "premium"]
+
+
+class MemberAutoKickRequest(BaseModel):
+    hours: int = Field(
+        2,
+        ge=MIN_MEMBER_AUTO_KICK_HOURS,
+        le=MAX_MEMBER_AUTO_KICK_HOURS,
+        description="成员加入后自动踢出的小时数",
+    )
 
 
 class CodeGenerateRequest(BaseModel):
@@ -933,6 +947,21 @@ async def team_members_list(
                 "error": "获取成员列表失败，请稍后重试"
             }
         )
+
+
+@router.post("/teams/{team_id}/members/auto-kick")
+async def update_member_auto_kick(
+    team_id: int,
+    payload: MemberAutoKickRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await member_auto_kick_service.update_team_hours(
+        team_id,
+        payload.hours,
+        db,
+    )
+    return JSONResponse(content=result, status_code=200 if result["success"] else 404)
 
 
 @router.post("/teams/{team_id}/members/add")

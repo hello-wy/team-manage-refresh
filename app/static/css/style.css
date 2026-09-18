@@ -963,6 +963,46 @@ body.admin-theme .toast {
     margin-bottom: 0.75rem;
 }
 
+.member-auto-kick-settings {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0 0 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border-base);
+}
+
+.member-auto-kick-settings strong,
+.member-auto-kick-settings small {
+    display: block;
+}
+
+.member-auto-kick-settings small {
+    margin-top: 0.35rem;
+    color: var(--text-muted);
+}
+
+.member-auto-kick-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 0 0 auto;
+}
+
+.member-auto-kick-controls label {
+    white-space: nowrap;
+}
+
+.member-auto-kick-controls input {
+    width: 88px;
+}
+
+.member-auto-kick-time.is-overdue {
+    color: var(--danger);
+    font-weight: 700;
+}
+
 .member-seat-card {
     padding: 1rem;
     border: 1px solid var(--border-base);
@@ -984,6 +1024,9 @@ body.admin-theme .toast {
 #memberInviteQuotaHint { font-size: 0.75rem; line-height: 1.5; }
 #memberInviteQuotaHint.is-error { color: #b42318; }
 @media (max-width: 640px) {
+    .member-auto-kick-settings { align-items: stretch; flex-direction: column; }
+    .member-auto-kick-controls { flex-wrap: wrap; }
+    .member-auto-kick-controls .btn { flex: 1 0 100%; }
     .member-invite-form { grid-template-columns: minmax(0, 1fr); }
     .member-invite-actions .btn { width: 100%; }
 }

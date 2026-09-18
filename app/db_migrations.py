@@ -146,6 +146,13 @@ def run_auto_migration():
             cursor.execute("ALTER TABLE teams ADD COLUMN warranty_seat_enabled BOOLEAN DEFAULT 0")
             migrations_applied.append("teams.warranty_seat_enabled")
 
+        if not column_exists(cursor, "teams", "member_auto_kick_hours"):
+            logger.info("添加 teams.member_auto_kick_hours 字段")
+            cursor.execute(
+                "ALTER TABLE teams ADD COLUMN member_auto_kick_hours INTEGER NOT NULL DEFAULT 2"
+            )
+            migrations_applied.append("teams.member_auto_kick_hours")
+
         if not column_exists(cursor, "redemption_codes", "pool_type"):
             logger.info("添加 redemption_codes.pool_type 字段")
             cursor.execute("ALTER TABLE redemption_codes ADD COLUMN pool_type VARCHAR(20) DEFAULT 'normal'")
@@ -196,6 +203,22 @@ def run_auto_migration():
             """)
             migrations_applied.append("team_email_mappings.is_admin_invited")
 
+        mapping_columns = {
+            "upstream_user_id": "VARCHAR(255)",
+            "member_role": "VARCHAR(50)",
+            "joined_at": "DATETIME",
+            "auto_kick_at": "DATETIME",
+        }
+        for column_name, column_type in mapping_columns.items():
+            if table_exists(cursor, "team_email_mappings") and not column_exists(
+                cursor, "team_email_mappings", column_name
+            ):
+                logger.info("添加 team_email_mappings.%s 字段", column_name)
+                cursor.execute(
+                    f"ALTER TABLE team_email_mappings ADD COLUMN {column_name} {column_type}"
+                )
+                migrations_applied.append(f"team_email_mappings.{column_name}")
+
         cursor.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_team_email_unique
             ON team_email_mappings (team_id, email)
@@ -207,6 +230,10 @@ def run_auto_migration():
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_team_email_status
             ON team_email_mappings (team_id, status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_team_email_auto_kick
+            ON team_email_mappings (status, auto_kick_at)
         """)
 
         if not table_exists(cursor, "renewal_requests"):

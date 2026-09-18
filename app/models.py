@@ -34,6 +34,7 @@ class Team(Base):
     account_role = Column(String(50), comment="账号角色: account-owner/standard-user 等")
     device_code_auth_enabled = Column(Boolean, default=False, comment="是否开启设备代码身份验证")
     warranty_seat_enabled = Column(Boolean, default=False, comment="是否作为质保兑换码分流目标 Team")
+    member_auto_kick_hours = Column(Integer, default=2, nullable=False, comment="成员加入后自动踢出小时数")
     error_count = Column(Integer, default=0, comment="连续报错次数")
     last_sync = Column(DateTime, comment="最后同步时间")
     created_at = Column(DateTime, default=get_now, comment="创建时间")
@@ -116,6 +117,10 @@ class TeamEmailMapping(Base):
         nullable=False,
         comment="是否由后台管理员手工邀请（永久标记，自动同步流程不会覆盖）",
     )
+    upstream_user_id = Column(String(255), comment="上游成员用户 ID")
+    member_role = Column(String(50), comment="上游成员角色")
+    joined_at = Column(DateTime, comment="成员实际加入 Team 的时间")
+    auto_kick_at = Column(DateTime, comment="成员计划自动踢出时间")
     last_seen_at = Column(DateTime, default=get_now, comment="最后一次确认该状态的时间")
     missing_sync_count = Column(Integer, default=0, nullable=False, comment="连续同步缺失次数")
     created_at = Column(DateTime, default=get_now, comment="创建时间")
@@ -129,6 +134,7 @@ class TeamEmailMapping(Base):
         Index("idx_team_email_unique", "team_id", "email", unique=True),
         Index("idx_team_email_email", "email"),
         Index("idx_team_email_status", "team_id", "status"),
+        Index("idx_team_email_auto_kick", "status", "auto_kick_at"),
     )
 
 

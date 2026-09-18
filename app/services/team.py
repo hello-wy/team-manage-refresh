@@ -56,21 +56,24 @@ class TeamService:
         # 否则 GC 可能在任务跑完前回收 Task 对象，导致后台校验静默丢失。
         self._background_tasks: set = set()
 
-    def _parse_remote_expires_at(self, expires_at_raw: Optional[str]) -> Optional[datetime]:
-        """将 OpenAI 返回的 expires_at 解析为本地时区语义的 naive datetime。"""
-        if not expires_at_raw:
+    def _parse_remote_datetime(self, raw_value: Optional[str]) -> Optional[datetime]:
+        """将上游时间解析为本地时区语义的 naive datetime。"""
+        if not raw_value:
             return None
 
         try:
-            normalized = str(expires_at_raw).strip().replace("Z", "+00:00")
+            normalized = str(raw_value).strip().replace("Z", "+00:00")
             dt = datetime.fromisoformat(normalized)
             if dt.tzinfo is not None:
                 local_tz = pytz.timezone(settings.timezone)
                 return dt.astimezone(local_tz).replace(tzinfo=None)
             return dt
         except Exception as e:
-            logger.warning(f"解析过期时间失败: {e}")
+            logger.warning("解析上游时间失败: %s", e)
             return None
+
+    def _parse_remote_expires_at(self, expires_at_raw: Optional[str]) -> Optional[datetime]:
+        return self._parse_remote_datetime(expires_at_raw)
 
     def _normalize_account_id(self, account_id: Optional[str]) -> Optional[str]:
         """清理 OAuth 回调中常见的占位 account_id（如 default）。"""
@@ -539,6 +542,11 @@ class TeamService:
         mapping.source = source
         mapping.last_seen_at = current_time
         mapping.missing_sync_count = 0
+        if status != TEAM_EMAIL_STATUS_JOINED:
+            mapping.upstream_user_id = None
+            mapping.member_role = None
+            mapping.joined_at = None
+            mapping.auto_kick_at = None
         if is_admin_invited:
             mapping.is_admin_invited = True
         return mapping
@@ -566,73 +574,80 @@ class TeamService:
         team_id: int,
         joined_emails: set[str],
         invited_emails: set[str],
-        db_session: AsyncSession
+        db_session: AsyncSession,
+        joined_members: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
-        """
-        根据一次完整同步结果，重建某个 Team 的邮箱状态映射。
-        """
+        """根据一次完整同步结果，重建某个 Team 的邮箱状态映射。"""
         seen_at = get_now()
-        normalized_joined = {
-            email for email in (self._normalize_member_email(item) for item in joined_emails) if email
-        }
-        normalized_invited = {
-            email for email in (self._normalize_member_email(item) for item in invited_emails) if email
-        } - normalized_joined
-
-        stmt = select(TeamEmailMapping).where(TeamEmailMapping.team_id == team_id)
-        result = await db_session.execute(stmt)
-        existing_mappings = {
-            mapping.email: mapping
-            for mapping in result.scalars().all()
-            if mapping.email
-        }
-
+        normalized_joined = self._normalized_email_set(joined_emails)
+        normalized_invited = self._normalized_email_set(invited_emails) - normalized_joined
+        team = await db_session.get(Team, team_id)
+        existing_mappings = await self._team_mapping_index(team_id, db_session)
         for email in normalized_joined:
-            mapping = existing_mappings.get(email)
-            if mapping:
-                mapping.status = TEAM_EMAIL_STATUS_JOINED
-                mapping.source = "sync"
-                mapping.last_seen_at = seen_at
-                mapping.missing_sync_count = 0
-            else:
-                db_session.add(
-                    TeamEmailMapping(
-                        team_id=team_id,
-                        email=email,
-                        status=TEAM_EMAIL_STATUS_JOINED,
-                        source="sync",
-                        last_seen_at=seen_at,
-                        missing_sync_count=0,
-                    )
-                )
-
+            member = (joined_members or {}).get(email, {})
+            mapping = existing_mappings.get(email) or TeamEmailMapping(team_id=team_id, email=email)
+            self._apply_joined_mapping(mapping, member, team, seen_at)
+            if email not in existing_mappings:
+                db_session.add(mapping)
         for email in normalized_invited:
-            mapping = existing_mappings.get(email)
-            if mapping:
-                mapping.status = TEAM_EMAIL_STATUS_INVITED
+            mapping = existing_mappings.get(email) or TeamEmailMapping(team_id=team_id, email=email)
+            self._apply_invited_mapping(mapping, seen_at)
+            if email not in existing_mappings:
+                db_session.add(mapping)
+        active_emails = normalized_joined | normalized_invited
+        self._mark_missing_mappings(existing_mappings, active_emails, seen_at)
+
+    def _normalized_email_set(self, emails: set[str]) -> set[str]:
+        return {
+            email for email in (self._normalize_member_email(item) for item in emails) if email
+        }
+
+    async def _team_mapping_index(self, team_id, db_session) -> Dict[str, TeamEmailMapping]:
+        result = await db_session.execute(
+            select(TeamEmailMapping).where(TeamEmailMapping.team_id == team_id)
+        )
+        return {mapping.email: mapping for mapping in result.scalars().all() if mapping.email}
+
+    def _apply_joined_mapping(self, mapping, member, team, seen_at) -> None:
+        mapping.status = TEAM_EMAIL_STATUS_JOINED
+        mapping.source = "sync"
+        mapping.last_seen_at = seen_at
+        mapping.missing_sync_count = 0
+        mapping.upstream_user_id = member.get("id") or mapping.upstream_user_id
+        mapping.member_role = member.get("role") or mapping.member_role
+        joined_at = self._parse_remote_datetime(member.get("created_time"))
+        mapping.joined_at = joined_at or mapping.joined_at
+        hours = int((team.member_auto_kick_hours if team else None) or 2)
+        mapping.auto_kick_at = self._member_auto_kick_at(mapping, hours)
+
+    @staticmethod
+    def _member_auto_kick_at(mapping, hours):
+        if mapping.member_role == "account-owner" or not mapping.joined_at:
+            return None
+        return mapping.joined_at + timedelta(hours=hours)
+
+    @staticmethod
+    def _apply_invited_mapping(mapping, seen_at) -> None:
+        mapping.status = TEAM_EMAIL_STATUS_INVITED
+        mapping.source = "sync"
+        mapping.last_seen_at = seen_at
+        mapping.missing_sync_count = 0
+        mapping.upstream_user_id = None
+        mapping.member_role = None
+        mapping.joined_at = None
+        mapping.auto_kick_at = None
+
+    @staticmethod
+    def _mark_missing_mappings(existing_mappings, active_emails, seen_at) -> None:
+        for email, mapping in existing_mappings.items():
+            if email in active_emails or mapping.status not in ACTIVE_TEAM_EMAIL_STATUSES:
+                continue
+            mapping.missing_sync_count = (mapping.missing_sync_count or 0) + 1
+            if mapping.missing_sync_count >= TEAM_EMAIL_SYNC_MISS_THRESHOLD:
+                mapping.status = TEAM_EMAIL_STATUS_REMOVED
                 mapping.source = "sync"
                 mapping.last_seen_at = seen_at
-                mapping.missing_sync_count = 0
-            else:
-                db_session.add(
-                    TeamEmailMapping(
-                        team_id=team_id,
-                        email=email,
-                        status=TEAM_EMAIL_STATUS_INVITED,
-                        source="sync",
-                        last_seen_at=seen_at,
-                        missing_sync_count=0,
-                    )
-                )
-
-        active_emails = normalized_joined | normalized_invited
-        for email, mapping in existing_mappings.items():
-            if email not in active_emails and mapping.status in ACTIVE_TEAM_EMAIL_STATUSES:
-                mapping.missing_sync_count = (mapping.missing_sync_count or 0) + 1
-                if mapping.missing_sync_count >= TEAM_EMAIL_SYNC_MISS_THRESHOLD:
-                    mapping.status = TEAM_EMAIL_STATUS_REMOVED
-                    mapping.source = "sync"
-                    mapping.last_seen_at = seen_at
+                mapping.auto_kick_at = None
 
     async def ensure_access_token(self, team: Team, db_session: AsyncSession, force_refresh: bool = False) -> Optional[str]:
         """
@@ -1879,6 +1894,7 @@ class TeamService:
             )
 
             joined_member_emails = set()
+            joined_members_by_email: Dict[str, Dict[str, Any]] = {}
             invited_member_emails = set()
             all_member_emails = set()
             current_members = 0
@@ -1889,6 +1905,7 @@ class TeamService:
                         normalized_email = self._normalize_member_email(m["email"])
                         if normalized_email:
                             joined_member_emails.add(normalized_email)
+                            joined_members_by_email[normalized_email] = m
                             all_member_emails.add(normalized_email)
             else:
                 # 检查是否封号或 Token 失效
@@ -1986,7 +2003,8 @@ class TeamService:
                 team.id,
                 joined_member_emails,
                 invited_member_emails,
-                db_session
+                db_session,
+                joined_members=joined_members_by_email,
             )
             effective_members = await self._apply_member_count_floor(team, current_members, db_session)
 
@@ -2353,12 +2371,15 @@ class TeamService:
             # 5. 合并列表并统一格式
             all_members = []
             joined_emails: set[str] = set()
+            joined_members_by_email: Dict[str, Dict[str, Any]] = {}
+            invited_emails: set[str] = set()
 
             # 处理已加入成员
             for m in members_result["members"]:
                 normalized_email = self._normalize_member_email(m.get("email"))
                 if normalized_email:
                     joined_emails.add(normalized_email)
+                    joined_members_by_email[normalized_email] = m
                 all_members.append({
                     "user_id": m.get("id"),
                     "email": normalized_email or m.get("email"),
@@ -2377,6 +2398,9 @@ class TeamService:
                     joined_emails=joined_emails,
                 )
                 for inv in pending_invites:
+                    normalized_invite_email = self._normalize_member_email(inv.get("email_address"))
+                    if normalized_invite_email:
+                        invited_emails.add(normalized_invite_email)
                     all_members.append({
                         "user_id": None, # 邀请还没有 user_id
                         "email": inv.get("email_address"),
@@ -2393,6 +2417,13 @@ class TeamService:
             live_member_count = len(all_members)
             team.joined_members = len(members_result["members"])
             team.last_sync = get_now()
+            await self._reconcile_team_email_mappings(
+                team.id,
+                joined_emails,
+                invited_emails,
+                db_session,
+                joined_members=joined_members_by_email,
+            )
             effective_members = await self._apply_member_count_floor(team, live_member_count, db_session)
 
             # 7. 请求成功，重置错误状态
@@ -2404,8 +2435,13 @@ class TeamService:
                 MemberAuthorization.account_id == team.account_id,
                 MemberAuthorization.credentials_encrypted.is_not(None),
             ))).scalars().all())
+            mapping_index = await self._team_mapping_index(team.id, db_session)
             for member in all_members:
                 member["authorized"] = member["email"] in authorized_emails
+                mapping = mapping_index.get(member["email"])
+                member["auto_kick_at"] = (
+                    mapping.auto_kick_at.isoformat() if mapping and mapping.auto_kick_at else None
+                )
             return {
                 "success": True,
                 "members": all_members,
@@ -2414,6 +2450,7 @@ class TeamService:
                 "joined_members": team.joined_members,
                 "total_seats": team.total_seats,
                 "total": effective_members,
+                "member_auto_kick_hours": int(team.member_auto_kick_hours or 2),
                 "error": None
             }
 

@@ -28,6 +28,7 @@ from app.config import settings
 from app.database import init_db, close_db, AsyncSessionLocal, engine
 from app.services.auth import auth_service
 from app.services.team import team_service
+from app.services.member_auto_kick import member_auto_kick_service
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -57,6 +58,7 @@ DEFAULT_WARRANTY_AUTO_KICK_ENABLED = False
 DEFAULT_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 12
 MIN_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 1
 MAX_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 24 * 7
+MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES = 1
 
 
 def _safe_int(value, default):
@@ -218,6 +220,21 @@ def configure_warranty_auto_kick_job(enabled: bool, interval_hours: int) -> int:
     return normalized_interval
 
 
+def configure_member_auto_kick_job() -> int:
+    """启动 Team 成员到期自动踢出任务。"""
+    scheduler.add_job(
+        scheduled_member_auto_kick,
+        trigger=IntervalTrigger(minutes=MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES),
+        id="member_auto_kick",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=get_now(),
+    )
+    if not scheduler.running:
+        scheduler.start()
+    return MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES
+
+
 async def configure_warranty_auto_kick_job_from_settings() -> tuple[bool, int]:
     """从系统设置读取质保过期自动踢人配置并应用到定时任务。"""
     from app.services.settings import settings_service
@@ -374,6 +391,25 @@ async def scheduled_warranty_auto_kick():
         logger.error(f"后台邀请过期踢人任务执行失败: {e}")
 
 
+async def scheduled_member_auto_kick():
+    """按成员计划下线时间自动移除已到期账号。"""
+    try:
+        async with AsyncSessionLocal() as session:
+            stats = await member_auto_kick_service.run_due_members(
+                session,
+                team_service.delete_team_member,
+            )
+        log_method = logger.info if stats["success"] else logger.warning
+        log_method(
+            "成员自动踢人完成: scanned=%s kicked=%s failed=%s",
+            stats["scanned"],
+            stats["kicked"],
+            stats["failed"],
+        )
+    except Exception:
+        logger.exception("成员自动踢人任务执行失败")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -437,6 +473,12 @@ async def lifespan(app: FastAPI):
             )
         else:
             logger.info("质保过期自动踢人任务已禁用")
+
+        member_auto_kick_interval = configure_member_auto_kick_job()
+        logger.info(
+            "定时任务已启动: 每 %s 分钟检查成员计划下线时间",
+            member_auto_kick_interval,
+        )
 
         logger.info("数据库初始化完成")
     except Exception as exc:
