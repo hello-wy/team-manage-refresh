@@ -35,6 +35,7 @@ from app.services.member_auto_kick import (
     member_auto_kick_service,
 )
 from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team
+from app.services.account_pool import account_pool_service
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
 
@@ -167,6 +168,12 @@ class AddMembersRequest(BaseModel):
     """批量添加成员请求"""
     emails: List[str] = Field(..., description="成员邮箱列表")
     seat_type: Literal["default", "premium"] = Field("default", description="邀请席位类型")
+
+
+class AccountPoolAddRequest(BaseModel):
+    """账号号池批量录入请求。"""
+    emails: List[str] = Field(default_factory=list, description="邮箱列表")
+    content: str = Field("", description="换行分隔的邮箱文本")
 
 
 class MemberSeatTypeRequest(BaseModel):
@@ -322,6 +329,63 @@ async def admin_dashboard(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="加载管理员面板失败，请稍后重试"
         )
+
+
+@router.get("/account-pool", response_class=HTMLResponse)
+async def account_pool_page(
+    request: Request,
+    page: int = 1,
+    per_page: int = 20,
+    search: str = "",
+    status_filter: str = "",
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """账号号池页面。"""
+    from app.main import templates
+
+    listing = await account_pool_service.list_entries(
+        db,
+        page=page,
+        per_page=per_page,
+        search=search,
+        status_filter=status_filter,
+    )
+    context = await build_admin_base_context(request, db, current_user, "account_pool")
+    context.update({
+        **listing,
+        "search": search,
+        "status_filter": status_filter,
+    })
+    return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
+
+
+@router.post("/account-pool")
+async def add_account_pool_emails(
+    payload: AccountPoolAddRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """手动或批量加入账号号池。"""
+    result = await account_pool_service.add_emails(
+        db,
+        emails=payload.emails,
+        content=payload.content,
+    )
+    return JSONResponse(status_code=200 if result["success"] else 400, content=result)
+
+
+@router.get("/account-pool/{entry_id}/history")
+async def account_pool_history(
+    entry_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """返回账号邮箱加入过的 Team 历史。"""
+    result = await account_pool_service.get_history(db, entry_id)
+    if not result:
+        return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"})
+    return JSONResponse(content={"success": True, "data": result})
 
 
 

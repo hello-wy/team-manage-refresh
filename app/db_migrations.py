@@ -236,6 +236,49 @@ def run_auto_migration():
             ON team_email_mappings (status, auto_kick_at)
         """)
 
+        if not table_exists(cursor, "account_pool_entries"):
+            logger.info("创建 account_pool_entries 表")
+            cursor.execute("""
+                CREATE TABLE account_pool_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """)
+            migrations_applied.append("account_pool_entries")
+
+        if not table_exists(cursor, "account_pool_histories"):
+            logger.info("创建 account_pool_histories 表")
+            cursor.execute("""
+                CREATE TABLE account_pool_histories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_pool_id INTEGER NOT NULL,
+                    team_id INTEGER,
+                    team_name VARCHAR(255),
+                    team_email VARCHAR(255),
+                    joined_at DATETIME NOT NULL,
+                    left_at DATETIME,
+                    created_at DATETIME NOT NULL,
+                    FOREIGN KEY(account_pool_id) REFERENCES account_pool_entries(id) ON DELETE CASCADE,
+                    FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE SET NULL
+                )
+            """)
+            migrations_applied.append("account_pool_histories")
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_account_pool_email
+            ON account_pool_entries (email)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_account_pool_history_account
+            ON account_pool_histories (account_pool_id, joined_at)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_account_pool_history_team
+            ON account_pool_histories (team_id, joined_at)
+        """)
+
         if not table_exists(cursor, "renewal_requests"):
             logger.info("创建 renewal_requests 表")
             cursor.execute("""

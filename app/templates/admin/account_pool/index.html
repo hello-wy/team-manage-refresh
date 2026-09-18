@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block title %}账号号池 - GPT Team 管理系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .account-pool-page {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .account-pool-form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 1rem;
+        align-items: end;
+    }
+
+    .account-pool-form .form-group {
+        margin: 0;
+    }
+
+    .account-pool-form textarea {
+        min-height: 118px;
+        resize: vertical;
+    }
+
+    .account-pool-hint {
+        margin-top: 0.45rem;
+        color: var(--text-muted);
+        font-size: 0.82rem;
+    }
+
+    .account-pool-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        white-space: nowrap;
+    }
+
+    .account-pool-team {
+        display: grid;
+        gap: 0.2rem;
+        min-width: 170px;
+    }
+
+    .account-pool-team small {
+        color: var(--text-muted);
+    }
+
+    .account-pool-empty {
+        padding: 3rem 1rem;
+        text-align: center;
+        color: var(--text-muted);
+    }
+
+    .account-pool-history-list {
+        display: grid;
+        gap: 0.65rem;
+    }
+
+    .account-pool-history-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.75rem;
+        padding: 0.85rem 0.95rem;
+        border: 1px solid var(--border-base);
+        border-radius: var(--radius-md);
+        background: var(--surface-elev-1);
+    }
+
+    @media (max-width: 700px) {
+        .account-pool-form {
+            grid-template-columns: 1fr;
+        }
+
+        .account-pool-history-item {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="account-pool-page">
+    <div class="page-header">
+        <div class="page-header-copy">
+            <div class="page-header-kicker">
+                <i data-lucide="mail-plus"></i>
+                <span>Account Pool</span>
+            </div>
+            <h2>账号号池</h2>
+            <div class="page-header-meta">
+                <span class="page-meta-pill"><i data-lucide="database"></i> 共 {{ total }} 个邮箱</span>
+                <span class="page-meta-pill"><i data-lucide="shield-check"></i> 默认一个账号只加入一个 Team</span>
+            </div>
+        </div>
+    </div>
+
+    <section class="content-section">
+        <div class="section-header">
+            <div>
+                <h3>添加账号邮箱</h3>
+                <p class="text-muted">每行一个邮箱，支持一次粘贴多个邮箱。重复邮箱会自动跳过。</p>
+            </div>
+        </div>
+        <form id="accountPoolForm" class="account-pool-form">
+            <div class="form-group">
+                <label for="accountPoolEmails">邮箱列表</label>
+                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com\nbob@example.com"></textarea>
+                <div class="account-pool-hint">支持大小写混合输入，系统会统一转为小写并校验邮箱格式。</div>
+            </div>
+            <button type="submit" class="btn btn-primary" id="accountPoolSubmitBtn">
+                <i data-lucide="plus-circle" style="width: 16px; height: 16px;"></i>
+                加入号池
+            </button>
+        </form>
+    </section>
+
+    <section class="content-section">
+        <div class="workbench-toolbar-row">
+            <div class="workbench-toolbar-copy">
+                <h3>账号状态</h3>
+                <p class="text-muted">当前状态来自 Team 成员/邀请同步；历史记录用于追踪曾经加入过的 Team。</p>
+            </div>
+            <form method="get" class="search-form">
+                <div class="input-group-clean">
+                    <i data-lucide="search" style="width: 14px; height: 14px;"></i>
+                    <input type="text" name="search" value="{{ search or '' }}" placeholder="搜索邮箱...">
+                    {% if status_filter %}<input type="hidden" name="status_filter" value="{{ status_filter }}">{% endif %}
+                </div>
+            </form>
+        </div>
+
+        {% if entries %}
+        <div class="table-container" style="margin-top: 1rem;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>邮箱</th>
+                        <th>当前状态</th>
+                        <th>当前 Team</th>
+                        <th>最近加入时间</th>
+                        <th>加入历史</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in entries %}
+                    <tr>
+                        <td data-label="邮箱"><strong>{{ entry.email }}</strong></td>
+                        <td data-label="当前状态">
+                            <span class="account-pool-status status-badge {% if entry.status == 'joined' %}status-active{% elif entry.status == 'invited' %}status-pending{% elif entry.status == 'conflict' %}status-error{% else %}status-banned{% endif %}">
+                                {% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}
+                            </span>
+                        </td>
+                        <td data-label="当前 Team">
+                            {% if entry.team_id %}
+                            <div class="account-pool-team">
+                                <span>{{ entry.team_name or ('Team #' ~ entry.team_id) }}</span>
+                                <small>{{ entry.team_email or '-' }}</small>
+                            </div>
+                            {% else %}-{% endif %}
+                        </td>
+                        <td data-label="最近加入时间">{{ entry.joined_at|format_datetime }}</td>
+                        <td data-label="加入历史">
+                            <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
+                                <i data-lucide="history" style="width: 14px; height: 14px;"></i>
+                                查看 {{ entry.history_count }} 次
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="account-pool-empty">暂无账号邮箱，请先在上方添加。</div>
+        {% endif %}
+
+        {% if total_pages > 1 %}
+        <div class="pagination" style="margin-top: 1rem;">
+            <div class="pagination-controls">
+                {% if current_page > 1 %}
+                <a class="btn btn-sm btn-secondary" href="?page={{ current_page - 1 }}&per_page={{ per_page }}&search={{ search|urlencode }}&status_filter={{ status_filter|urlencode }}" title="上一页"><i data-lucide="chevron-left"></i></a>
+                {% endif %}
+                <span class="pagination-summary">第 {{ current_page }} / {{ total_pages }} 页，共 {{ total }} 条</span>
+                {% if current_page < total_pages %}
+                <a class="btn btn-sm btn-secondary" href="?page={{ current_page + 1 }}&per_page={{ per_page }}&search={{ search|urlencode }}&status_filter={{ status_filter|urlencode }}" title="下一页"><i data-lucide="chevron-right"></i></a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </section>
+</div>
+
+<div id="accountPoolHistoryModal" class="modal-overlay">
+    <div class="modal modal-large">
+        <div class="modal-header">
+            <h3><i data-lucide="history" style="width: 18px; height: 18px;"></i> 加入历史</h3>
+            <button class="modal-close" type="button" onclick="hideModal('accountPoolHistoryModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="accountPoolHistoryEmail" class="text-muted"></p>
+            <div id="accountPoolHistoryContent" class="account-pool-history-list">加载中...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function accountPoolFormatDate(value) {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString('zh-CN', {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'});
+    }
+
+    async function loadAccountPoolHistory(entryId, email) {
+        const content = document.getElementById('accountPoolHistoryContent');
+        const emailNode = document.getElementById('accountPoolHistoryEmail');
+        emailNode.textContent = email;
+        content.textContent = '加载中...';
+        showModal('accountPoolHistoryModal');
+        try {
+            const response = await fetch(`/admin/account-pool/${entryId}/history`);
+            const payload = await response.json();
+            if (!response.ok || !payload.success) throw new Error(payload.error || '加载历史失败');
+            const histories = payload.data.histories || [];
+            content.innerHTML = histories.length ? histories.map(history => `
+                <div class="account-pool-history-item">
+                    <div>
+                        <strong>${escapeHtml(history.team_name || `Team #${history.team_id || '-'}`)}</strong>
+                        <div class="text-muted small">${escapeHtml(history.team_email || 'Team 邮箱未知')}</div>
+                    </div>
+                    <div class="text-muted small">加入：${accountPoolFormatDate(history.joined_at)}<br>离开：${accountPoolFormatDate(history.left_at)}</div>
+                </div>
+            `).join('') : '<div class="text-muted">暂无加入历史。</div>';
+            if (window.lucide) lucide.createIcons();
+        } catch (error) {
+            content.textContent = error.message || '加载历史失败';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('.account-pool-history-btn').forEach(button => {
+            button.addEventListener('click', () => loadAccountPoolHistory(button.dataset.entryId, button.dataset.email));
+        });
+        document.getElementById('accountPoolForm')?.addEventListener('submit', async event => {
+            event.preventDefault();
+            const input = document.getElementById('accountPoolEmails');
+            const button = document.getElementById('accountPoolSubmitBtn');
+            const content = input.value.trim();
+            if (!content) {
+                showToast('请先输入邮箱', 'warning');
+                return;
+            }
+            button.disabled = true;
+            try {
+                const response = await fetch('/admin/account-pool', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({content})
+                });
+                const payload = await response.json();
+                if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');
+                showToast(payload.message, 'success');
+                input.value = '';
+                setTimeout(() => location.reload(), 500);
+            } catch (error) {
+                showToast(error.message || '添加失败', 'error');
+            } finally {
+                button.disabled = false;
+            }
+        });
+    });
+</script>
+{% endblock %}

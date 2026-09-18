@@ -21,6 +21,7 @@ from app.utils.time_utils import get_now
 from app.utils.seats import calculate_seat_balance, normalize_seat_type, summarize_member_seats, total_paid_seats
 from app.utils.seat_lock import seat_account_lock
 from app.config import settings
+from app.services.account_pool import account_pool_service
 
 logger = logging.getLogger(__name__)
 
@@ -560,7 +561,18 @@ class TeamService:
         seen_at: Optional[datetime] = None
     ) -> Optional[TeamEmailMapping]:
         """将 Team-邮箱映射标记为已移除。"""
-        return await self.upsert_team_email_mapping(
+        normalized_email = self._normalize_member_email(email)
+        existing_result = await db_session.execute(
+            select(TeamEmailMapping).where(
+                TeamEmailMapping.team_id == team_id,
+                TeamEmailMapping.email == normalized_email,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        previous_states = {
+            normalized_email: (existing.status, existing.joined_at)
+        } if existing else {}
+        mapping = await self.upsert_team_email_mapping(
             team_id=team_id,
             email=email,
             status=TEAM_EMAIL_STATUS_REMOVED,
@@ -568,6 +580,16 @@ class TeamService:
             source=source,
             seen_at=seen_at,
         )
+        team = await db_session.get(Team, team_id)
+        if mapping and team:
+            await account_pool_service.record_reconciliation(
+                db_session,
+                team,
+                [mapping],
+                previous_states,
+                seen_at or get_now(),
+            )
+        return mapping
 
     async def _reconcile_team_email_mappings(
         self,
@@ -583,19 +605,33 @@ class TeamService:
         normalized_invited = self._normalized_email_set(invited_emails) - normalized_joined
         team = await db_session.get(Team, team_id)
         existing_mappings = await self._team_mapping_index(team_id, db_session)
+        previous_states = {
+            email: (mapping.status, mapping.joined_at)
+            for email, mapping in existing_mappings.items()
+        }
+        current_mappings = dict(existing_mappings)
         for email in normalized_joined:
             member = (joined_members or {}).get(email, {})
             mapping = existing_mappings.get(email) or TeamEmailMapping(team_id=team_id, email=email)
             self._apply_joined_mapping(mapping, member, team, seen_at)
             if email not in existing_mappings:
                 db_session.add(mapping)
+            current_mappings[email] = mapping
         for email in normalized_invited:
             mapping = existing_mappings.get(email) or TeamEmailMapping(team_id=team_id, email=email)
             self._apply_invited_mapping(mapping, seen_at)
             if email not in existing_mappings:
                 db_session.add(mapping)
+            current_mappings[email] = mapping
         active_emails = normalized_joined | normalized_invited
         self._mark_missing_mappings(existing_mappings, active_emails, seen_at)
+        await account_pool_service.record_reconciliation(
+            db_session,
+            team,
+            list(current_mappings.values()),
+            previous_states,
+            seen_at,
+        )
 
     def _normalized_email_set(self, emails: set[str]) -> set[str]:
         return {
@@ -2727,6 +2763,21 @@ class TeamService:
                     "status": "already_exists",
                     "email": normalized_email,
                 }
+
+            active_result = await db_session.execute(
+                select(TeamEmailMapping.team_id).where(
+                    TeamEmailMapping.email == normalized_email,
+                    TeamEmailMapping.status.in_(ACTIVE_TEAM_EMAIL_STATUSES),
+                )
+            )
+            active_team_ids = list(dict.fromkeys(active_result.scalars().all()))
+            foreign_team_ids = [team_id for team_id in active_team_ids if team_id != team.id]
+            if foreign_team_ids:
+                return self._admin_error(
+                    "email_already_in_team",
+                    "该邮箱已加入或已邀请到其他 Team，默认一个账号只能加入一个 Team",
+                    team_ids=foreign_team_ids,
+                )
 
             team = await db_session.get(Team, team_id)
             if not team:

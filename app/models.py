@@ -138,6 +138,51 @@ class TeamEmailMapping(Base):
     )
 
 
+class AccountPoolEntry(Base):
+    """后台维护的成员邮箱号池。"""
+    __tablename__ = "account_pool_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), nullable=False, comment="成员邮箱(统一存小写)")
+    created_at = Column(DateTime, default=get_now, nullable=False)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now, nullable=False)
+
+    histories = relationship(
+        "AccountPoolHistory",
+        back_populates="account",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_account_pool_email", "email", unique=True),
+    )
+
+
+class AccountPoolHistory(Base):
+    """账号邮箱加入过 Team 的历史记录。"""
+    __tablename__ = "account_pool_histories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_pool_id = Column(
+        Integer,
+        ForeignKey("account_pool_entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    team_name = Column(String(255), comment="历史 Team 名称快照")
+    team_email = Column(String(255), comment="历史 Team 管理员邮箱快照")
+    joined_at = Column(DateTime, nullable=False, comment="本次加入时间")
+    left_at = Column(DateTime, comment="本次离开时间")
+    created_at = Column(DateTime, default=get_now, nullable=False)
+
+    account = relationship("AccountPoolEntry", back_populates="histories")
+
+    __table_args__ = (
+        Index("idx_account_pool_history_account", "account_pool_id", "joined_at"),
+        Index("idx_account_pool_history_team", "team_id", "joined_at"),
+    )
+
+
 class RedemptionCode(Base):
     """兑换码表"""
     __tablename__ = "redemption_codes"
