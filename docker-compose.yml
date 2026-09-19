@@ -1,7 +1,8 @@
 services:
   app:
-    # 默认使用 GHCR 上的预构建镜像；如需基于本地代码构建，注释掉 image 改用 build
-    # image: ${IMAGE:-ghcr.io/lolollipop/team-manage-refresh:latest}
+    # 生产环境通过 IMAGE 指定本次部署的不可变 commit 镜像。
+    # 本地开发如需源码构建，可执行：docker compose up -d --build
+    image: ${IMAGE:-ghcr.io/hello-wy/team-manage-refresh:latest}
     build: .
     container_name: team-manage-app
     ports:

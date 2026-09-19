@@ -1929,6 +1929,7 @@ function syncMemberAuthorizationButtons(ctx) {
     document.getElementById('memberAuthParseBtn').disabled = ctx.busy || !ctx.hasLink;
     document.getElementById('memberAuthCheckBtn').disabled = ctx.busy;
     document.getElementById('memberAuthExportBtn').disabled = ctx.busy || !ctx.canExport;
+    document.getElementById('memberAuthImportBtn').disabled = ctx.busy || !ctx.canExport;
 }
 
 function memberAuthorizationMessage(message, isError = false, isSuccess = false) {
@@ -2032,6 +2033,33 @@ function exportCurrentMemberAuthorization() {
     if (ctx && ctx.canExport && !ctx.busy) return exportMemberSub2api(ctx.teamId, ctx.email);
 }
 
+function importCurrentMemberAuthorization() {
+    const ctx = memberAuthorizationContext;
+    if (ctx && ctx.canExport && !ctx.busy) return importMemberSub2api(ctx.teamId, ctx.email);
+}
+
+async function importMemberSub2api(teamId, email, button = null) {
+    const ctx = memberAuthorizationContext;
+    if (ctx?.busy || !confirm(`确定将 ${email} 导入 sub2api 并绑定所有 OpenAI 分组吗？`)) return;
+    if (ctx) { ctx.busy = true; syncMemberAuthorizationButtons(ctx); }
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/admin/teams/${teamId}/members/authorization/import-sub2api`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email}), credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || '导入失败');
+        showToast(`已导入 sub2api，绑定 ${data.data.group_count} 个分组`, 'success');
+    } catch (error) {
+        showToast(error.message || '导入失败', 'error');
+        if (ctx && memberAuthorizationContext === ctx) memberAuthorizationMessage(error.message, true);
+    } finally {
+        if (ctx) { ctx.busy = false; syncMemberAuthorizationButtons(ctx); }
+        if (button) button.disabled = false;
+    }
+}
+
 async function exportMemberSub2api(teamId, email, button = null) {
     const ctx = memberAuthorizationContext;
     if (ctx?.busy) return;
@@ -2087,6 +2115,9 @@ function renderMemberAuthorizationActions(teamId, member) {
         <span title="${exportHint}"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" ${attributes} ${canExport ? '' : 'disabled'}
             title="${exportHint}" aria-label="导出 sub2api JSON"
             onclick="exportMemberSub2api(Number(this.dataset.teamId), this.dataset.email, this)"><i data-lucide="download" aria-hidden="true"></i></button></span>
+        <span title="${exportHint}"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" ${attributes} ${canExport ? '' : 'disabled'}
+            title="导入到 sub2api（所有 OpenAI 分组）" aria-label="导入到 sub2api"
+            onclick="importMemberSub2api(Number(this.dataset.teamId), this.dataset.email, this)"><i data-lucide="upload" aria-hidden="true"></i></button></span>
         ${removal}
     </div>`;
 }

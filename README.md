@@ -339,6 +339,40 @@ docker run -d --name watchtower \
 
 > Watchtower 不属于本项目，是社区通用的容器自动更新工具。要不要装、间隔设多久、是否开启 `--cleanup` 自行决定。
 
+### GitHub Push 自动部署到 Netcup
+
+仓库已配置 GitHub Actions：每次 `main` 分支 push 后，会构建多架构镜像并推送到 GHCR，然后通过 SSH 连接 Netcup，执行 `docker compose pull` 和 `docker compose up -d`。服务器只需要准备 Docker、Docker Compose 和项目部署目录，不需要在服务器上构建源码。
+
+#### 1. 初始化 Netcup 服务器
+
+在服务器上执行一次：
+
+```bash
+sudo mkdir -p /opt/team-manage-refresh/data
+sudo chown -R "$USER":"$USER" /opt/team-manage-refresh
+cd /opt/team-manage-refresh
+curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/.env.example -o .env
+```
+
+编辑 `.env`，至少设置 `SESSION_SECRET_KEY`、`ENCRYPTION_KEY`、`ADMIN_PASSWORD`、`DEBUG=False`，然后确认服务器上的 SSH 用户可以执行 Docker 命令。若 GHCR package 是私有的，还需要让部署用户具备拉取镜像的权限。
+
+#### 2. 配置 GitHub Actions Secrets
+
+在仓库的 **Settings → Secrets and variables → Actions** 中添加：
+
+| Secret | 内容 |
+| --- | --- |
+| `NETCUP_HOST` | Netcup 服务器 IP 或域名 |
+| `NETCUP_PORT` | SSH 端口，默认 `22` |
+| `NETCUP_USER` | SSH 登录用户名 |
+| `NETCUP_SSH_KEY` | 对应用户的私钥全文，建议使用专用部署密钥 |
+| `NETCUP_DEPLOY_PATH` | 服务器部署目录，例如 `/opt/team-manage-refresh` |
+| `GHCR_USERNAME` | 能读取 GHCR package 的 GitHub 用户名 |
+| `GHCR_TOKEN` | 该用户的 token，至少需要 `read:packages` |
+
+`GHCR_TOKEN` 只会在 GitHub Actions 运行时通过标准输入传给服务器上的 `docker login`，不会写入仓库文件。配置完成后，向 `main` push 一次即可在 Actions 页面查看构建和部署日志。
+
 ### 从源码构建路径升级
 
 `方式 B` 用户升级仍需 `git pull && docker compose up -d --build`，没有变化。

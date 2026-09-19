@@ -29,6 +29,8 @@ from app.services.settings import (
 )
 from app.services.cliproxyapi import cliproxyapi_service
 from app.services.member_authorization import MemberAuthorizationService, MemberAuthorizationError
+from app.services.sub2api import sub2api_service, Sub2apiError, DEFAULT_BASE_URL, normalize_base_url
+from app.services.encryption import encryption_service
 from app.services.member_auto_kick import (
     MAX_MEMBER_AUTO_KICK_HOURS,
     MIN_MEMBER_AUTO_KICK_HOURS,
@@ -999,6 +1001,21 @@ async def check_member_authorization(team_id: int, payload: MemberAuthorizationR
 async def export_member_sub2api(team_id: int, payload: MemberAuthorizationRequest,
                                db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
     return await _member_authorization_action("export", team_id, payload, db)
+
+
+@router.post("/teams/{team_id}/members/authorization/import-sub2api")
+async def import_member_sub2api(team_id: int, payload: MemberAuthorizationRequest,
+                                db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
+    headers = {"Cache-Control": "no-store"}
+    try:
+        data = await member_authorization_service.export(team_id, payload.email, db)
+        result = await sub2api_service.import_member(data, db)
+        return JSONResponse(content={"success": True, "data": result}, headers=headers)
+    except (MemberAuthorizationError, Sub2apiError) as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
+    except Exception:
+        logger.exception("导入 sub2api 失败 (Team %s)", team_id)
+        return JSONResponse(status_code=500, content={"success": False, "error": "导入失败，请检查服务端日志"}, headers=headers)
 
 
 @router.get("/teams/{team_id}/members/list")
@@ -2467,6 +2484,8 @@ async def settings_page(
             "default_team_max_members": await settings_service.get_setting(db, "default_team_max_members", "6"),
             "cliproxyapi_base_url": await settings_service.get_setting(db, "cliproxyapi_base_url", ""),
             "cliproxyapi_api_key": await settings_service.get_setting(db, "cliproxyapi_api_key", ""),
+            "sub2api_base_url": await settings_service.get_setting(db, "sub2api_base_url", DEFAULT_BASE_URL),
+            "sub2api_has_api_key": bool(await settings_service.get_setting(db, "sub2api_api_key_encrypted", "")),
             "warranty_expiration_mode": await settings_service.get_warranty_expiration_mode(db),
             "ui_theme": settings_service.normalize_ui_theme(await settings_service.get_setting(db, "ui_theme", DEFAULT_UI_THEME)),
             "ui_style": settings_service.normalize_ui_style(await settings_service.get_setting(db, "ui_style", DEFAULT_UI_STYLE)),
@@ -2519,6 +2538,11 @@ class CliproxyapiSettingsRequest(BaseModel):
     """CliproxyAPI 推送配置请求"""
     base_url: str = Field("", description="CliproxyAPI 站点地址")
     api_key: str = Field("", description="CliproxyAPI 管理密钥")
+
+
+class Sub2apiSettingsRequest(BaseModel):
+    base_url: str = Field(..., min_length=1, max_length=2048)
+    api_key: str = Field("", max_length=4096)
 
 
 class TeamAutoRefreshSettingsRequest(BaseModel):
@@ -3481,3 +3505,24 @@ async def update_cliproxyapi_settings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"success": False, "error": f"更新失败: {str(e)}"}
         )
+
+
+@router.post("/settings/sub2api")
+async def update_sub2api_settings(payload: Sub2apiSettingsRequest,
+                                  db: AsyncSession = Depends(get_db),
+                                  current_user: dict = Depends(require_admin)):
+    try:
+        base_url = normalize_base_url(payload.base_url)
+    except Sub2apiError as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
+    api_key = payload.api_key.strip()
+    existing = await settings_service.get_setting(db, "sub2api_api_key_encrypted", "")
+    if not api_key and not existing:
+        return JSONResponse(status_code=400, content={"success": False, "error": "请设置 sub2api x-api-key"})
+    settings_to_save = {"sub2api_base_url": base_url}
+    if api_key:
+        settings_to_save["sub2api_api_key_encrypted"] = encryption_service.encrypt_token(api_key)
+    if not await settings_service.update_settings(db, settings_to_save):
+        return JSONResponse(status_code=500, content={"success": False, "error": "保存失败"})
+    return JSONResponse(content={"success": True, "base_url": base_url, "message": "sub2api 配置已保存"},
+                        headers={"Cache-Control": "no-store"})

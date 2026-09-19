@@ -37,6 +37,7 @@
             <a href="#settings-warranty" class="settings-nav-pill settings-nav-link" data-target="settings-warranty">质保设置</a>
             <a href="#settings-team-import" class="settings-nav-pill settings-nav-link" data-target="settings-team-import">Team 导入</a>
             <a href="#settings-cliproxyapi" class="settings-nav-pill settings-nav-link" data-target="settings-cliproxyapi">CliproxyAPI 推送</a>
+            <a href="#settings-sub2api" class="settings-nav-pill settings-nav-link" data-target="settings-sub2api">sub2api 导出</a>
         </div>
         <div class="settings-nav-group">
             <div class="settings-nav-group-title">账户与外观</div>
@@ -332,6 +333,24 @@
         </div>
 
         <button type="submit" class="btn btn-primary">保存 CliproxyAPI 配置</button>
+    </form>
+</div>
+
+<!-- 界面风格 -->
+<div class="content-section settings-panel" id="settings-sub2api">
+    <div class="section-header"><h3>sub2api 导出配置</h3></div>
+    <form id="sub2apiForm" class="settings-form">
+        <div class="form-group">
+            <label for="sub2apiBaseUrl">Base URL</label>
+            <input type="url" id="sub2apiBaseUrl" class="form-control" value="{{ sub2api_base_url }}" required>
+        </div>
+        <div class="form-group">
+            <label for="sub2apiApiKey">x-api-key</label>
+            <input type="password" id="sub2apiApiKey" class="form-control" autocomplete="new-password"
+                placeholder="{{ '已配置，留空保持不变' if sub2api_has_api_key else '请输入管理员 API Key' }}">
+            <p class="form-help">用于将已授权并入组的成员导入 sub2api。密钥不会回显。</p>
+        </div>
+        <button type="submit" class="btn btn-primary">保存 sub2api 配置</button>
     </form>
 </div>
 
@@ -836,6 +855,26 @@
             }
         } catch (error) {
             showToast('网络错误', 'error');
+        }
+    });
+
+    document.getElementById('sub2apiForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const base_url = document.getElementById('sub2apiBaseUrl').value.trim();
+        const api_key = document.getElementById('sub2apiApiKey').value.trim();
+        try {
+            const response = await fetch('/admin/settings/sub2api', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({base_url, api_key})
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || '保存失败');
+            document.getElementById('sub2apiBaseUrl').value = data.base_url;
+            document.getElementById('sub2apiApiKey').value = '';
+            document.getElementById('sub2apiApiKey').placeholder = '已配置，留空保持不变';
+            showToast(data.message, 'success');
+        } catch (error) {
+            showToast(error.message || '网络错误', 'error');
         }
     });
 

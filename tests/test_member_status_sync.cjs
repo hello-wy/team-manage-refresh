@@ -33,6 +33,7 @@ function harness() {
         showModal() {},
         hideModal() {},
         updateMemberInviteAvailability() {},
+        loadMemberPoolOptions: async () => {},
         renderMemberSeatSummary: () => '席位余额',
         renderMemberSeatControl: () => '',
         renderMemberSeatType: () => '',
@@ -82,6 +83,7 @@ test('callback immediately moves member and updates count using one snapshot', a
     assert.equal(h.element('memberAuthStatus').classList.contains('is-success'), true);
     assert.equal(h.toasts[0][2].title, '邀请已完成');
     assert.equal(h.element('memberAuthExportBtn').disabled, false);
+    assert.equal(h.element('memberAuthImportBtn').disabled, false);
     assert.equal(h.timers.size, 0);
     await h.run("requestMemberAuthorization('check')");
     assert.equal(h.toasts.length, 1);
