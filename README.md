@@ -368,10 +368,8 @@ curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/.
 | `NETCUP_USER` | SSH 登录用户名 |
 | `NETCUP_SSH_KEY` | 对应用户的私钥全文，建议使用专用部署密钥 |
 | `NETCUP_DEPLOY_PATH` | 服务器部署目录，例如 `/opt/team-manage-refresh` |
-| `GHCR_USERNAME` | 能读取 GHCR package 的 GitHub 用户名 |
-| `GHCR_TOKEN` | 该用户的 token，至少需要 `read:packages` |
 
-`GHCR_TOKEN` 只会在 GitHub Actions 运行时通过标准输入传给服务器上的 `docker login`，不会写入仓库文件。配置完成后，向 `main` push 一次即可在 Actions 页面查看构建和部署日志。
+GHCR 登录使用当前 workflow 的 `GITHUB_TOKEN`，不需要额外配置 GHCR 用户名或 token。配置完成后，向 `main` push 一次即可在 Actions 页面查看构建和部署日志。
 
 ### 从源码构建路径升级
 
