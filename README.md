@@ -341,7 +341,7 @@ docker run -d --name watchtower \
 
 ### GitHub Push 自动部署到 Netcup
 
-仓库已配置 GitHub Actions：每次 `main` 分支 push 后，会构建多架构镜像并推送到 GHCR，然后通过 SSH 连接 Netcup，执行 `docker compose pull` 和 `docker compose up -d`。服务器只需要准备 Docker、Docker Compose 和项目部署目录，不需要在服务器上构建源码。
+仓库已配置 GitHub Actions：每次 `main` 分支 push 后，会使用当前 GitHub 仓库根目录 `.` 构建多架构镜像并推送到 GHCR，然后通过 SSH 连接 Netcup，使用服务器本地的 `/opt/team-manage-refresh/.env` 执行 `docker compose pull` 和 `docker compose up -d`。服务器不需要拉取或构建源码。
 
 #### 1. 初始化 Netcup 服务器
 
@@ -355,7 +355,7 @@ curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/d
 curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/.env.example -o .env
 ```
 
-编辑 `.env`，至少设置 `SESSION_SECRET_KEY`、`ENCRYPTION_KEY`、`ADMIN_PASSWORD`、`DEBUG=False`，然后确认服务器上的 SSH 用户可以执行 Docker 命令。若 GHCR package 是私有的，还需要让部署用户具备拉取镜像的权限。
+编辑服务器本地 `.env`，至少设置 `SESSION_SECRET_KEY`、`ENCRYPTION_KEY`、`ADMIN_PASSWORD`、`DEBUG=False`，然后确认服务器上的 SSH 用户可以执行 Docker 命令。后续 GitHub Actions 只更新镜像和 `docker-compose.yml`，不会覆盖这个 `.env` 文件。
 
 #### 2. 配置 GitHub Actions Secrets
 

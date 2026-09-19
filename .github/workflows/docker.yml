@@ -97,9 +97,10 @@ jobs:
             "IMAGE='$IMAGE' GHCR_USERNAME='$GHCR_USERNAME' GHCR_TOKEN='$GHCR_TOKEN' DEPLOY_PATH='$NETCUP_DEPLOY_PATH' sh -s" <<'REMOTE_SCRIPT'
           set -eu
           cd "$DEPLOY_PATH"
+          test -f .env
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
-          IMAGE="$IMAGE" docker compose pull app
-          IMAGE="$IMAGE" docker compose up -d --remove-orphans app
+          IMAGE="$IMAGE" docker compose --env-file "$DEPLOY_PATH/.env" pull app
+          IMAGE="$IMAGE" docker compose --env-file "$DEPLOY_PATH/.env" up -d --remove-orphans app
           docker image prune -f
-          docker compose ps
+          docker compose --env-file "$DEPLOY_PATH/.env" ps
           REMOTE_SCRIPT
