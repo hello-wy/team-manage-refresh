@@ -29,6 +29,7 @@ from app.database import init_db, close_db, AsyncSessionLocal, engine
 from app.services.auth import auth_service
 from app.services.team import team_service
 from app.services.member_auto_kick import member_auto_kick_service
+from app.services.account_pool import account_pool_service
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -398,13 +399,26 @@ async def scheduled_member_auto_kick():
             stats = await member_auto_kick_service.run_due_members(
                 session,
                 team_service.delete_team_member,
+                invite_replacement=lambda team_id, db_session: (
+                    account_pool_service.invite_replacement(
+                        team_id,
+                        db_session,
+                        invite_member=team_service.add_team_member,
+                    )
+                ),
             )
         log_method = logger.info if stats["success"] else logger.warning
         log_method(
-            "成员自动踢人完成: scanned=%s kicked=%s failed=%s",
+            "成员自动踢人完成: scanned=%s kicked=%s failed=%s "
+            "replacement_invited=%s replacement_unavailable=%s replacement_failed=%s "
+            "replacement_pending=%s",
             stats["scanned"],
             stats["kicked"],
             stats["failed"],
+            stats["replacement_invited"],
+            stats["replacement_unavailable"],
+            stats["replacement_failed"],
+            stats["replacement_pending"],
         )
     except Exception:
         logger.exception("成员自动踢人任务执行失败")

@@ -153,6 +153,13 @@ def run_auto_migration():
             )
             migrations_applied.append("teams.member_auto_kick_hours")
 
+        if not column_exists(cursor, "teams", "pending_replacements"):
+            logger.info("添加 teams.pending_replacements 字段")
+            cursor.execute(
+                "ALTER TABLE teams ADD COLUMN pending_replacements INTEGER NOT NULL DEFAULT 0"
+            )
+            migrations_applied.append("teams.pending_replacements")
+
         if not column_exists(cursor, "redemption_codes", "pool_type"):
             logger.info("添加 redemption_codes.pool_type 字段")
             cursor.execute("ALTER TABLE redemption_codes ADD COLUMN pool_type VARCHAR(20) DEFAULT 'normal'")
@@ -208,6 +215,7 @@ def run_auto_migration():
             "member_role": "VARCHAR(50)",
             "joined_at": "DATETIME",
             "auto_kick_at": "DATETIME",
+            "last_invited_at": "DATETIME",
         }
         for column_name, column_type in mapping_columns.items():
             if table_exists(cursor, "team_email_mappings") and not column_exists(
@@ -242,11 +250,22 @@ def run_auto_migration():
                 CREATE TABLE account_pool_entries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) NOT NULL,
+                    seat_type VARCHAR(20) NOT NULL DEFAULT 'default',
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL
                 )
             """)
             migrations_applied.append("account_pool_entries")
+
+        if table_exists(cursor, "account_pool_entries") and not column_exists(
+            cursor, "account_pool_entries", "seat_type"
+        ):
+            logger.info("添加 account_pool_entries.seat_type 字段")
+            cursor.execute(
+                "ALTER TABLE account_pool_entries "
+                "ADD COLUMN seat_type VARCHAR(20) NOT NULL DEFAULT 'default'"
+            )
+            migrations_applied.append("account_pool_entries.seat_type")
 
         if not table_exists(cursor, "account_pool_histories"):
             logger.info("创建 account_pool_histories 表")

@@ -2098,6 +2098,7 @@ let memberSeatBalance = null;
 let memberInviteInProgress = false;
 let memberAutoKickUpdateInProgress = false;
 let memberExistingEmails = new Set();
+let memberPoolOptionsRequestId = 0;
 
 function renderMemberAutoKickTime(member) {
     if (member.role === 'account-owner') return '<span class="text-muted">不会自动下线</span>';
@@ -2150,6 +2151,53 @@ function canAllocateMemberSeat(seatType, required = 1) {
     return quota !== null && Number.isInteger(quota.remaining) && required <= quota.remaining;
 }
 
+function getMemberInviteEmails(form) {
+    const values = parseMemberEmails(form.memberEmails?.value || '');
+    const poolEmail = String(form.querySelector('#memberPoolEmail')?.value || '').trim();
+    if (poolEmail) values.push(poolEmail);
+    return [...new Map(values.map(email => [email.toLowerCase(), email])).values()];
+}
+
+function handleMemberPoolSelection(select) {
+    const option = select.options[select.selectedIndex];
+    const seatType = option?.dataset.seatType;
+    const seatSelect = document.getElementById('inviteSeatType');
+    if (seatType && seatSelect) seatSelect.value = seatType;
+    updateMemberInviteAvailability();
+}
+
+async function loadMemberPoolOptions(teamId) {
+    const select = document.getElementById('memberPoolEmail');
+    const hint = document.getElementById('memberPoolEmailHint');
+    if (!select || !hint) return;
+    const requestId = ++memberPoolOptionsRequestId;
+    select.disabled = true;
+    select.innerHTML = '<option value="">正在读取可用账号...</option>';
+    hint.textContent = '仅显示最近 7 天未加入过当前 Team 的可邀请账号。';
+
+    const result = await apiCall(`/admin/account-pool/options?team_id=${encodeURIComponent(teamId)}`);
+    if (requestId !== memberPoolOptionsRequestId || window.currentTeamId !== teamId) return;
+    if (!result.success || !result.data?.success) {
+        select.innerHTML = '<option value="">号池账号读取失败</option>';
+        hint.textContent = result.error || result.data?.error || '号池账号读取失败，请重新打开成员管理。';
+        return;
+    }
+
+    const entries = (result.data.entries || []).filter(entry => !memberExistingEmails.has(entry.email.toLowerCase()));
+    select.innerHTML = '<option value="">不使用号池账号</option>';
+    entries.forEach(entry => {
+        const label = entry.seat_type === 'premium' ? '高级席位' : '标准席位';
+        const option = new Option(`${entry.email} · ${label}`, entry.email);
+        option.dataset.seatType = entry.seat_type;
+        select.add(option);
+    });
+    select.disabled = entries.length === 0;
+    hint.textContent = entries.length
+        ? `可选 ${entries.length} 个；均为最近 7 天未加入过当前 Team 的账号。`
+        : '当前没有符合 7 天限制的可邀请号池账号。';
+    updateMemberInviteAvailability();
+}
+
 function updateMemberSeatButton(select) {
     const disabled = memberSeatUpdateInProgress || memberInviteInProgress
         || select.value === select.dataset.currentSeat || !canAllocateMemberSeat(select.value);
@@ -2159,7 +2207,7 @@ function updateMemberSeatButton(select) {
 function updateMemberInviteAvailability() {
     const form = document.getElementById('addMemberForm');
     if (!form) return;
-    const required = new Set(parseMemberEmails(form.memberEmails.value)
+    const required = new Set(getMemberInviteEmails(form)
         .map(email => email.toLowerCase()).filter(email => !memberExistingEmails.has(email))).size;
     const quota = memberSeatQuota(form.seatType.value);
     const busy = memberSeatUpdateInProgress || memberInviteInProgress;
@@ -2267,6 +2315,7 @@ async function viewMembers(teamId, teamEmail = '') {
 
     // 加载成员列表
     await loadModalMemberList(teamId);
+    await loadMemberPoolOptions(teamId);
 }
 
 function updateTeamMemberCount(teamId, data) {
@@ -2408,8 +2457,7 @@ function parseMemberEmails(rawValue) {
 async function handleAddMember(event) {
     event.preventDefault();
     const form = event.target;
-    const rawEmails = form.memberEmails ? form.memberEmails.value : '';
-    const emails = parseMemberEmails(rawEmails);
+    const emails = getMemberInviteEmails(form);
     const submitButton = document.getElementById('addMemberSubmitBtn');
     const teamId = window.currentTeamId;
 
@@ -2467,7 +2515,10 @@ async function handleAddMember(event) {
     } finally {
         memberInviteInProgress = false;
         submitButton.innerHTML = originalText;
-        if (window.currentTeamId === teamId) await loadModalMemberList(teamId);
+        if (window.currentTeamId === teamId) {
+            await loadModalMemberList(teamId);
+            await loadMemberPoolOptions(teamId);
+        }
         updateMemberInviteAvailability();
     }
 }

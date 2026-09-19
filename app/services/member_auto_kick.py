@@ -27,6 +27,7 @@ class DueMember:
 
 
 DeleteMember = Callable[..., Awaitable[Dict[str, object]]]
+InviteReplacement = Callable[..., Awaitable[Dict[str, object]]]
 
 
 class MemberAutoKickService:
@@ -76,6 +77,8 @@ class MemberAutoKickService:
         self,
         db_session: AsyncSession,
         delete_member: DeleteMember,
+        *,
+        invite_replacement: InviteReplacement,
     ) -> Dict[str, int | bool]:
         due_members = await self._due_members(db_session)
         stats: Dict[str, int | bool] = {
@@ -83,6 +86,10 @@ class MemberAutoKickService:
             "scanned": len(due_members),
             "kicked": 0,
             "failed": 0,
+            "replacement_invited": 0,
+            "replacement_unavailable": 0,
+            "replacement_failed": 0,
+            "replacement_pending": 0,
         }
         for member in due_members:
             try:
@@ -101,11 +108,94 @@ class MemberAutoKickService:
                 )
                 result = {"success": False}
 
-            key = "kicked" if result.get("success") else "failed"
-            stats[key] = int(stats[key]) + 1
+            if not result.get("success"):
+                stats["failed"] = int(stats["failed"]) + 1
+                continue
 
-        stats["success"] = stats["failed"] == 0
+            stats["kicked"] = int(stats["kicked"]) + 1
+            queued = await self._queue_replacement(member.team_id, db_session)
+            if not queued:
+                stats["replacement_failed"] = int(stats["replacement_failed"]) + 1
+
+        await self._process_pending_replacements(
+            db_session=db_session,
+            invite_replacement=invite_replacement,
+            stats=stats,
+        )
+        stats["replacement_pending"] = await self._pending_replacement_count(db_session)
+
+        stats["success"] = stats["failed"] == 0 and stats["replacement_failed"] == 0
         return stats
+
+    @staticmethod
+    async def _queue_replacement(team_id, db_session) -> bool:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return False
+        team.pending_replacements = int(team.pending_replacements or 0) + 1
+        await db_session.commit()
+        return True
+
+    async def _process_pending_replacements(
+        self,
+        *,
+        db_session,
+        invite_replacement,
+        stats,
+    ) -> None:
+        result = await db_session.execute(
+            select(Team)
+            .where(Team.pending_replacements > 0)
+            .order_by(Team.id.asc())
+        )
+        for team in result.scalars().all():
+            await self._fill_team_replacements(
+                team,
+                db_session=db_session,
+                invite_replacement=invite_replacement,
+                stats=stats,
+            )
+
+    async def _fill_team_replacements(
+        self,
+        team,
+        *,
+        db_session,
+        invite_replacement,
+        stats,
+    ) -> None:
+        while int(team.pending_replacements or 0) > 0:
+            replacement = await self._invite_replacement(
+                team.id,
+                db_session,
+                invite_replacement,
+            )
+            status = replacement.get("status")
+            if status == "no_candidate":
+                stats["replacement_unavailable"] += int(team.pending_replacements)
+                return
+            if status != "invited":
+                stats["replacement_failed"] += 1
+                return
+            team.pending_replacements -= 1
+            stats["replacement_invited"] += 1
+            await db_session.commit()
+
+    @staticmethod
+    async def _pending_replacement_count(db_session) -> int:
+        result = await db_session.execute(
+            select(Team.pending_replacements).where(Team.pending_replacements > 0)
+        )
+        return sum(int(value or 0) for value in result.scalars().all())
+
+    @staticmethod
+    async def _invite_replacement(team_id, db_session, invite_replacement):
+        try:
+            return await invite_replacement(team_id, db_session)
+        except Exception:
+            await db_session.rollback()
+            logger.exception("成员自动补位异常: team=%s", team_id)
+            return {"success": False, "status": "failed"}
 
     async def _joined_mappings(
         self,

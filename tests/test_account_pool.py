@@ -1,11 +1,12 @@
 import unittest
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolHistory, Team, TeamEmailMapping
+from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
 from app.services.account_pool import AccountPoolService
 from app.services.team import TeamService
 from app.utils.time_utils import get_now
@@ -34,6 +35,19 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             repeat = await self.service.add_emails(session, emails=["ALICE@example.com"])
             self.assertTrue(repeat["success"])
             self.assertEqual(repeat["existing"], ["alice@example.com"])
+
+    async def test_existing_email_can_update_seat_type(self):
+        async with self.sessions() as session:
+            await self.service.add_emails(session, emails=["member@example.com"])
+            result = await self.service.add_emails(
+                session,
+                emails=["member@example.com"],
+                seat_type="premium",
+            )
+            entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
+
+            self.assertEqual(result["updated"], ["member@example.com"])
+            self.assertEqual(entry.seat_type, "premium")
 
     async def test_join_and_leave_creates_reopenable_history(self):
         async with self.sessions() as session:
@@ -86,6 +100,168 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             listing = await self.service.list_entries(session)
             self.assertEqual(listing["entries"][0]["status"], "conflict")
             self.assertEqual(listing["entries"][0]["team_id"], 1)
+
+    async def test_replacement_skips_active_and_recently_invited_accounts(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(
+                    id=1,
+                    email="owner-1@example.com",
+                    status="active",
+                    max_members=6,
+                    access_token_encrypted="token-1",
+                ),
+                Team(
+                    id=2,
+                    email="owner-2@example.com",
+                    status="active",
+                    max_members=6,
+                    access_token_encrypted="token-2",
+                ),
+            ])
+            await session.commit()
+            await self.service.add_emails(
+                session,
+                emails=["active@example.com", "recent@example.com"],
+            )
+            await self.service.add_emails(
+                session,
+                emails=["eligible@example.com"],
+                seat_type="premium",
+            )
+            now = get_now()
+            session.add_all([
+                TeamEmailMapping(
+                    team_id=2,
+                    email="active@example.com",
+                    status="joined",
+                ),
+                TeamEmailMapping(
+                    team_id=1,
+                    email="recent@example.com",
+                    status="removed",
+                    last_invited_at=now - timedelta(days=1),
+                ),
+                TeamEmailMapping(
+                    team_id=1,
+                    email="eligible@example.com",
+                    status="removed",
+                    last_invited_at=now - timedelta(days=8),
+                ),
+            ])
+            await session.commit()
+            invite_member = AsyncMock(
+                return_value={"success": True, "status": "invited"}
+            )
+
+            result = await self.service.invite_replacement(
+                1,
+                session,
+                invite_member=invite_member,
+            )
+
+            self.assertEqual(result["email"], "eligible@example.com")
+            invite_member.assert_awaited_once_with(
+                1,
+                "eligible@example.com",
+                session,
+                seat_type="premium",
+            )
+
+    async def test_invite_options_only_include_currently_available_accounts(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner@example.com", status="active", max_members=6, access_token_encrypted="token-1"),
+                Team(id=2, email="other-owner@example.com", status="active", max_members=6, access_token_encrypted="token-2"),
+            ])
+            await session.commit()
+            await self.service.add_emails(
+                session,
+                emails=[
+                    "owner@example.com",
+                    "active@example.com",
+                    "recent@example.com",
+                    "old@example.com",
+                ],
+            )
+            await self.service.add_emails(
+                session,
+                emails=["available@example.com"],
+                seat_type="premium",
+            )
+            entries = {
+                entry.email: entry
+                for entry in (await session.execute(select(AccountPoolEntry))).scalars().all()
+            }
+            session.add_all([
+                TeamEmailMapping(team_id=2, email="active@example.com", status="joined"),
+                AccountPoolHistory(
+                    account_pool_id=entries["recent@example.com"].id,
+                    team_id=1,
+                    team_name="Alpha",
+                    team_email="owner@example.com",
+                    joined_at=get_now() - timedelta(days=1),
+                    left_at=get_now(),
+                ),
+                AccountPoolHistory(
+                    account_pool_id=entries["old@example.com"].id,
+                    team_id=1,
+                    team_name="Alpha",
+                    team_email="owner@example.com",
+                    joined_at=get_now() - timedelta(days=8),
+                    left_at=get_now() - timedelta(days=7),
+                ),
+            ])
+            await session.commit()
+
+            options = await self.service.list_invite_options(1, session)
+
+            self.assertEqual(
+                [(option["email"], option["seat_type"]) for option in options],
+                [
+                    ("old@example.com", "default"),
+                    ("available@example.com", "premium"),
+                ],
+            )
+
+    async def test_invite_options_return_none_for_unknown_team(self):
+        async with self.sessions() as session:
+            self.assertIsNone(await self.service.list_invite_options(999, session))
+
+    async def test_team_reinvite_cooldown_survives_member_removal(self):
+        async with self.sessions() as session:
+            team = Team(
+                id=1,
+                email="owner@example.com",
+                status="active",
+                max_members=6,
+                access_token_encrypted="token",
+            )
+            session.add(team)
+            await session.commit()
+            invited_at = get_now() - timedelta(days=1)
+            team_service = TeamService.__new__(TeamService)
+            await team_service.upsert_team_email_mapping(
+                team.id,
+                "member@example.com",
+                "invited",
+                session,
+                invited_at=invited_at,
+            )
+            await team_service.mark_team_email_mapping_removed(
+                team.id,
+                "member@example.com",
+                session,
+            )
+            await session.commit()
+
+            retry_at = await team_service.get_reinvite_retry_at(
+                team.id,
+                "member@example.com",
+                session,
+            )
+
+            self.assertEqual(retry_at, invited_at + timedelta(days=7))
 
 
 class AccountPoolInputTests(unittest.TestCase):

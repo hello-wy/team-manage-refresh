@@ -11,7 +11,7 @@
 
     .account-pool-form {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) 160px auto;
         gap: 1rem;
         align-items: end;
     }
@@ -101,7 +101,7 @@
         <div class="section-header">
             <div>
                 <h3>添加账号邮箱</h3>
-                <p class="text-muted">每行一个邮箱，支持一次粘贴多个邮箱。重复邮箱会自动跳过。</p>
+                <p class="text-muted">每行一个邮箱，支持一次粘贴多个邮箱。重复邮箱会更新为本次选择的席位类型。</p>
             </div>
         </div>
         <form id="accountPoolForm" class="account-pool-form">
@@ -109,6 +109,13 @@
                 <label for="accountPoolEmails">邮箱列表</label>
                 <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com\nbob@example.com"></textarea>
                 <div class="account-pool-hint">支持大小写混合输入，系统会统一转为小写并校验邮箱格式。</div>
+            </div>
+            <div class="form-group">
+                <label for="accountPoolSeatType">席位类型</label>
+                <select id="accountPoolSeatType" class="form-control">
+                    <option value="default">标准席位</option>
+                    <option value="premium">高级席位</option>
+                </select>
             </div>
             <button type="submit" class="btn btn-primary" id="accountPoolSubmitBtn">
                 <i data-lucide="plus-circle" style="width: 16px; height: 16px;"></i>
@@ -138,6 +145,7 @@
                 <thead>
                     <tr>
                         <th>邮箱</th>
+                        <th>席位类型</th>
                         <th>当前状态</th>
                         <th>当前 Team</th>
                         <th>最近加入时间</th>
@@ -148,6 +156,11 @@
                     {% for entry in entries %}
                     <tr>
                         <td data-label="邮箱"><strong>{{ entry.email }}</strong></td>
+                        <td data-label="席位类型">
+                            <span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">
+                                {% if entry.seat_type == 'premium' %}高级{% else %}标准{% endif %}
+                            </span>
+                        </td>
                         <td data-label="当前状态">
                             <span class="account-pool-status status-badge {% if entry.status == 'joined' %}status-active{% elif entry.status == 'invited' %}status-pending{% elif entry.status == 'conflict' %}status-error{% else %}status-banned{% endif %}">
                                 {% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}
@@ -249,6 +262,7 @@
         document.getElementById('accountPoolForm')?.addEventListener('submit', async event => {
             event.preventDefault();
             const input = document.getElementById('accountPoolEmails');
+            const seatType = document.getElementById('accountPoolSeatType').value;
             const button = document.getElementById('accountPoolSubmitBtn');
             const content = input.value.trim();
             if (!content) {
@@ -260,7 +274,7 @@
                 const response = await fetch('/admin/account-pool', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({content})
+                    body: JSON.stringify({content, seat_type: seatType})
                 });
                 const payload = await response.json();
                 if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');

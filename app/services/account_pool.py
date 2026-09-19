@@ -1,22 +1,39 @@
 """后台账号号池及成员加入历史服务。"""
 import re
 from collections import defaultdict
-from datetime import datetime
-from typing import Any, Optional
+from datetime import datetime, timedelta
+from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
+from app.services.account_pool_history import account_pool_history_service
 from app.utils.time_utils import get_now
+
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ACTIVE_MAPPING_STATUSES = ("invited", "joined")
+ACCOUNT_POOL_SEAT_TYPES = {"default", "premium"}
+TEAM_REINVITE_COOLDOWN_DAYS = 7
+TEAM_REJOIN_COOLDOWN_DAYS = 7
+
+InviteMember = Callable[..., Awaitable[dict[str, Any]]]
+
+
 class AccountPoolService:
     """维护邮箱号池，并把 Team 同步结果转换为可追溯历史。"""
 
     @staticmethod
     def normalize_email(value: Any) -> str:
         return str(value or "").strip().lower()
+
+    @staticmethod
+    def normalize_seat_type(value: Any) -> str:
+        seat_type = str(value or "default").strip().lower()
+        if seat_type not in ACCOUNT_POOL_SEAT_TYPES:
+            raise ValueError("不支持的席位类型")
+        return seat_type
+
     @classmethod
     def parse_emails(cls, emails: Optional[list[str]] = None, content: str = "") -> tuple[list[str], list[str]]:
         values = list(emails or [])
@@ -40,9 +57,12 @@ class AccountPoolService:
     async def add_emails(
         self,
         db_session: AsyncSession,
+        *,
         emails: Optional[list[str]] = None,
         content: str = "",
+        seat_type: str = "default",
     ) -> dict[str, Any]:
+        normalized_seat_type = self.normalize_seat_type(seat_type)
         normalized, invalid = self.parse_emails(emails, content)
         if not normalized:
             return {
@@ -58,122 +78,139 @@ class AccountPoolService:
         )
         existing = {entry.email: entry for entry in result.scalars().all()}
         added = []
+        updated = []
         for email in normalized:
-            if email in existing:
+            entry = existing.get(email)
+            if entry:
+                if entry.seat_type != normalized_seat_type:
+                    entry.seat_type = normalized_seat_type
+                    updated.append(email)
                 continue
-            entry = AccountPoolEntry(email=email)
+            entry = AccountPoolEntry(email=email, seat_type=normalized_seat_type)
             db_session.add(entry)
             existing[email] = entry
             added.append(email)
 
         await db_session.flush()
-        await self.backfill_current_histories(db_session, list(existing.values()))
+        await account_pool_history_service.backfill_current_histories(
+            db_session, list(existing.values())
+        )
         await db_session.commit()
         return {
-            "success": bool(added or existing),
-            "message": f"新增 {len(added)} 个邮箱，已存在 {len(normalized) - len(added)} 个",
+            "success": bool(normalized),
+            "message": self._build_add_message(normalized, added, updated),
             "added": added,
-            "existing": [email for email in normalized if email in existing and email not in added],
+            "updated": updated,
+            "existing": [
+                email for email in normalized if email not in added and email not in updated
+            ],
             "invalid": invalid,
         }
-    async def backfill_current_histories(
+
+    @staticmethod
+    def _build_add_message(normalized, added, updated) -> str:
+        unchanged = len(normalized) - len(added) - len(updated)
+        return f"新增 {len(added)} 个邮箱，更新 {len(updated)} 个，未变化 {unchanged} 个"
+
+    async def find_replacement_candidate(
         self,
+        team_id: int,
         db_session: AsyncSession,
-        entries: list[AccountPoolEntry],
-    ) -> None:
-        if not entries:
-            return
-        emails = [entry.email for entry in entries]
-        mappings_result = await db_session.execute(
-            select(TeamEmailMapping, Team)
-            .join(Team, Team.id == TeamEmailMapping.team_id)
-            .where(
-                TeamEmailMapping.email.in_(emails),
-                TeamEmailMapping.status == "joined",
-            )
+    ) -> Optional[AccountPoolEntry]:
+        cutoff = get_now() - timedelta(days=TEAM_REINVITE_COOLDOWN_DAYS)
+        active_mapping = select(TeamEmailMapping.id).where(
+            TeamEmailMapping.email == AccountPoolEntry.email,
+            TeamEmailMapping.status.in_(ACTIVE_MAPPING_STATUSES),
         )
-        entry_by_email = {entry.email: entry for entry in entries}
-        for mapping, team in mappings_result.all():
-            await self._record_joined_history(
-                db_session,
-                entry_by_email[mapping.email],
-                team,
-                mapping.joined_at or get_now(),
-            )
+        recent_team_invite = select(TeamEmailMapping.id).where(
+            TeamEmailMapping.team_id == team_id,
+            TeamEmailMapping.email == AccountPoolEntry.email,
+            TeamEmailMapping.last_invited_at.is_not(None),
+            TeamEmailMapping.last_invited_at > cutoff,
+        )
+        result = await db_session.execute(
+            select(AccountPoolEntry)
+            .where(~active_mapping.exists(), ~recent_team_invite.exists())
+            .order_by(AccountPoolEntry.updated_at.asc(), AccountPoolEntry.id.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_invite_options(
+        self,
+        team_id: int,
+        db_session: AsyncSession,
+    ) -> Optional[list[dict[str, Any]]]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return None
+
+        cutoff = get_now() - timedelta(days=TEAM_REJOIN_COOLDOWN_DAYS)
+        active_mapping = select(TeamEmailMapping.id).where(
+            TeamEmailMapping.email == AccountPoolEntry.email,
+            TeamEmailMapping.status.in_(ACTIVE_MAPPING_STATUSES),
+        )
+        recent_team_join = select(AccountPoolHistory.id).where(
+            AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
+            AccountPoolHistory.team_id == team_id,
+            AccountPoolHistory.joined_at > cutoff,
+        )
+        conditions = [~active_mapping.exists(), ~recent_team_join.exists()]
+        owner_email = self.normalize_email(team.email)
+        if owner_email:
+            conditions.append(AccountPoolEntry.email != owner_email)
+
+        result = await db_session.execute(
+            select(AccountPoolEntry)
+            .where(*conditions)
+            .order_by(AccountPoolEntry.seat_type.asc(), AccountPoolEntry.email.asc())
+        )
+        return [
+            {"id": entry.id, "email": entry.email, "seat_type": entry.seat_type}
+            for entry in result.scalars().all()
+        ]
+
+    async def invite_replacement(
+        self,
+        team_id: int,
+        db_session: AsyncSession,
+        *,
+        invite_member: InviteMember,
+    ) -> dict[str, Any]:
+        candidate = await self.find_replacement_candidate(team_id, db_session)
+        if not candidate:
+            return {"success": True, "status": "no_candidate", "email": None}
+
+        result = await invite_member(
+            team_id,
+            candidate.email,
+            db_session,
+            seat_type=candidate.seat_type,
+        )
+        if not result.get("success") or result.get("status") != "invited":
+            return {
+                "success": False,
+                "status": "failed",
+                "email": candidate.email,
+                "error": result.get("error") or result.get("message") or "邀请失败",
+            }
+        return {"success": True, "status": "invited", "email": candidate.email}
     async def record_reconciliation(
         self,
         db_session: AsyncSession,
+        *,
         team: Optional[Team],
         mappings: list[TeamEmailMapping],
         previous_states: dict[str, tuple[Optional[str], Optional[datetime]]],
         seen_at: datetime,
     ) -> None:
-        if not team or not mappings:
-            return
-        emails = [mapping.email for mapping in mappings if mapping.email]
-        if not emails:
-            return
-        entries_result = await db_session.execute(
-            select(AccountPoolEntry).where(AccountPoolEntry.email.in_(emails))
+        await account_pool_history_service.record_reconciliation(
+            db_session,
+            team=team,
+            mappings=mappings,
+            previous_states=previous_states,
+            seen_at=seen_at,
         )
-        entries = {entry.email: entry for entry in entries_result.scalars().all()}
-        if not entries:
-            return
-
-        history_result = await db_session.execute(
-            select(AccountPoolHistory).where(
-                AccountPoolHistory.account_pool_id.in_([entry.id for entry in entries.values()]),
-                AccountPoolHistory.team_id == team.id,
-                AccountPoolHistory.left_at.is_(None),
-            )
-        )
-        open_histories = {history.account_pool_id: history for history in history_result.scalars().all()}
-        for mapping in mappings:
-            entry = entries.get(mapping.email)
-            if not entry:
-                continue
-            previous_status, _ = previous_states.get(mapping.email, (None, None))
-            current_status = mapping.status
-            if current_status == "joined":
-                if previous_status != "joined" and entry.id not in open_histories:
-                    history = await self._record_joined_history(
-                        db_session,
-                        entry,
-                        team,
-                        mapping.joined_at or seen_at,
-                    )
-                    open_histories[entry.id] = history
-            elif previous_status == "joined":
-                history = open_histories.get(entry.id)
-                if history:
-                    history.left_at = seen_at
-                    open_histories.pop(entry.id, None)
-    async def _record_joined_history(
-        self,
-        db_session: AsyncSession,
-        entry: AccountPoolEntry,
-        team: Team,
-        joined_at: datetime,
-    ) -> AccountPoolHistory:
-        result = await db_session.execute(
-            select(AccountPoolHistory).where(
-                AccountPoolHistory.account_pool_id == entry.id,
-                AccountPoolHistory.team_id == team.id,
-                AccountPoolHistory.left_at.is_(None),
-            )
-        )
-        history = result.scalar_one_or_none()
-        if history:
-            return history
-        history = AccountPoolHistory(
-            account_pool_id=entry.id,
-            team_id=team.id,
-            team_name=team.team_name,
-            team_email=team.email,
-            joined_at=joined_at,
-        )
-        db_session.add(history)
-        return history
     async def list_entries(
         self,
         db_session: AsyncSession,
@@ -265,6 +302,7 @@ class AccountPoolService:
             items.append({
                 "id": entry.id,
                 "email": entry.email,
+                "seat_type": entry.seat_type,
                 "status": status,
                 "team_id": current[1].id if current[1] else None,
                 "team_name": current[1].team_name if current[1] else None,
@@ -275,26 +313,7 @@ class AccountPoolService:
             })
         return items
     async def get_history(self, db_session: AsyncSession, entry_id: int) -> Optional[dict[str, Any]]:
-        entry = await db_session.get(AccountPoolEntry, entry_id)
-        if not entry:
-            return None
-        result = await db_session.execute(
-            select(AccountPoolHistory)
-            .where(AccountPoolHistory.account_pool_id == entry_id)
-            .order_by(AccountPoolHistory.joined_at.desc(), AccountPoolHistory.id.desc())
-        )
-        return {
-            "email": entry.email,
-            "histories": [
-                {
-                    "id": history.id,
-                    "team_id": history.team_id,
-                    "team_name": history.team_name,
-                    "team_email": history.team_email,
-                    "joined_at": history.joined_at.isoformat() if history.joined_at else None,
-                    "left_at": history.left_at.isoformat() if history.left_at else None,
-                }
-                for history in result.scalars().all()
-            ],
-        }
+        return await account_pool_history_service.get_history(db_session, entry_id)
+
+
 account_pool_service = AccountPoolService()

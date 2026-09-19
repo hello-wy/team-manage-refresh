@@ -35,6 +35,7 @@ class Team(Base):
     device_code_auth_enabled = Column(Boolean, default=False, comment="是否开启设备代码身份验证")
     warranty_seat_enabled = Column(Boolean, default=False, comment="是否作为质保兑换码分流目标 Team")
     member_auto_kick_hours = Column(Integer, default=2, nullable=False, comment="成员加入后自动踢出小时数")
+    pending_replacements = Column(Integer, default=0, nullable=False, comment="自动踢人后待补账号数")
     error_count = Column(Integer, default=0, comment="连续报错次数")
     last_sync = Column(DateTime, comment="最后同步时间")
     created_at = Column(DateTime, default=get_now, comment="创建时间")
@@ -121,6 +122,7 @@ class TeamEmailMapping(Base):
     member_role = Column(String(50), comment="上游成员角色")
     joined_at = Column(DateTime, comment="成员实际加入 Team 的时间")
     auto_kick_at = Column(DateTime, comment="成员计划自动踢出时间")
+    last_invited_at = Column(DateTime, comment="最近一次向该 Team 发送邀请的时间")
     last_seen_at = Column(DateTime, default=get_now, comment="最后一次确认该状态的时间")
     missing_sync_count = Column(Integer, default=0, nullable=False, comment="连续同步缺失次数")
     created_at = Column(DateTime, default=get_now, comment="创建时间")
@@ -144,6 +146,12 @@ class AccountPoolEntry(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), nullable=False, comment="成员邮箱(统一存小写)")
+    seat_type = Column(
+        String(20),
+        default="default",
+        nullable=False,
+        comment="邀请席位类型: default/premium",
+    )
     created_at = Column(DateTime, default=get_now, nullable=False)
     updated_at = Column(DateTime, default=get_now, onupdate=get_now, nullable=False)
 

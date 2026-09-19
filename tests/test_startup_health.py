@@ -1,4 +1,7 @@
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.responses import JSONResponse
@@ -67,6 +70,49 @@ class MigrationCompatibilityTests(unittest.TestCase):
             "sqlite+aiosqlite:///:memory:",
         ):
             self.assertIsNone(db_migrations.get_db_path())
+
+    def test_auto_migration_adds_account_pool_replacement_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "legacy.db"
+            connection = sqlite3.connect(db_path)
+            connection.executescript("""
+                CREATE TABLE teams (
+                    id INTEGER PRIMARY KEY,
+                    email VARCHAR(255) NOT NULL,
+                    access_token_encrypted TEXT NOT NULL
+                );
+                CREATE TABLE redemption_codes (
+                    id INTEGER PRIMARY KEY,
+                    code VARCHAR(32) NOT NULL,
+                    status VARCHAR(20)
+                );
+                CREATE TABLE redemption_records (
+                    id INTEGER PRIMARY KEY,
+                    email VARCHAR(255) NOT NULL,
+                    code VARCHAR(32) NOT NULL,
+                    team_id INTEGER NOT NULL,
+                    account_id VARCHAR(100) NOT NULL
+                );
+            """)
+            connection.close()
+
+            database_url = f"sqlite+aiosqlite:///{db_path}"
+            with patch("app.config.settings.database_url", database_url):
+                db_migrations.run_auto_migration()
+
+            connection = sqlite3.connect(db_path)
+            team_columns = self._columns(connection, "teams")
+            mapping_columns = self._columns(connection, "team_email_mappings")
+            pool_columns = self._columns(connection, "account_pool_entries")
+            connection.close()
+
+            self.assertIn("pending_replacements", team_columns)
+            self.assertIn("last_invited_at", mapping_columns)
+            self.assertIn("seat_type", pool_columns)
+
+    @staticmethod
+    def _columns(connection, table_name):
+        return {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")}
 
 
 class StartupAndHealthTests(unittest.IsolatedAsyncioTestCase):

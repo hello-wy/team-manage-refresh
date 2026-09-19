@@ -35,7 +35,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=20260918-member-status-sync">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260919-account-pool-picker">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     {% block extra_css %}{% endblock %}
@@ -869,8 +869,15 @@ eyJ..."></textarea>
                             <label for="memberEmails">新增成员邮箱</label>
                             <textarea id="memberEmails" name="memberEmails" class="form-control" rows="4"
                                 oninput="updateMemberInviteAvailability()"
-                                placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com" required></textarea>
+                                placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com"></textarea>
                             <small class="form-text">每行一个邮箱，或用逗号分隔；自动去重。</small>
+                            <div class="member-pool-picker">
+                                <label for="memberPoolEmail">从账号号池选择</label>
+                                <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
+                                    <option value="">正在读取可用账号...</option>
+                                </select>
+                                <small id="memberPoolEmailHint" class="form-text" aria-live="polite">仅显示最近 7 天未加入过当前 Team 的可邀请账号。</small>
+                            </div>
                         </div>
                         <div class="form-group member-invite-seat">
                             <label for="inviteSeatType">邀请席位类型</label>
@@ -976,7 +983,7 @@ eyJ..."></textarea>
     <div id="toast" class="toast"></div>
 
     <script>window.SYSTEM_UI_THEME = {{ ui_theme|default("ocean")|tojson }};</script>
-    <script src="/static/js/main.js?v=20260918-member-status-sync"></script>
+    <script src="/static/js/main.js?v=20260919-account-pool-picker"></script>
     <script>
         lucide.createIcons();
     </script>

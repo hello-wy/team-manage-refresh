@@ -1020,6 +1020,15 @@ body.admin-theme .toast {
 }
 .member-invite-form .form-group { min-width: 0; margin-bottom: 0; }
 .member-invite-form .form-text { display: block; margin-top: 0.5rem; }
+.member-pool-picker {
+    display: grid;
+    gap: 0.45rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-base);
+}
+.member-pool-picker label { margin: 0; }
+.member-pool-picker .form-text { margin-top: 0; }
 .member-invite-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 #memberInviteQuotaHint { font-size: 0.75rem; line-height: 1.5; }
 #memberInviteQuotaHint.is-error { color: #b42318; }

@@ -432,6 +432,17 @@ class RedeemFlowService:
                                             await db_session.rollback()
                                             return {"success": False, "error": f"兑换码状态无效: {rc.status}"}
 
+                            retry_at = await self.team_service.get_reinvite_retry_at(
+                                team_id_final,
+                                email,
+                                db_session,
+                            )
+                            if retry_at:
+                                raise Exception(
+                                    "该账号 7 天内已被当前 Team 邀请过，"
+                                    f"可在 {retry_at.isoformat()} 后重试"
+                                )
+
                             # 2. 以数据库原子更新的方式预留席位，避免多实例并发时超拉
                             reserve_result = await self.team_service.reserve_seat_if_available(
                                 team_id=team_id_final,
@@ -714,7 +725,8 @@ class RedeemFlowService:
                                 email,
                                 status="invited",
                                 db_session=db_session,
-                                source="redeem"
+                                source="redeem",
+                                invited_at=get_now(),
                             )
 
                             seat_reserved = False
@@ -776,7 +788,14 @@ class RedeemFlowService:
                                 await db_session.rollback()
 
                     # 判读是否中断重试
-                    if any(kw in last_error for kw in ["不存在", "已使用", "已有正在使用", "质保已过期", "当前兑换码不会被消耗"]):
+                    if any(kw in last_error for kw in [
+                        "不存在",
+                        "已使用",
+                        "已有正在使用",
+                        "质保已过期",
+                        "当前兑换码不会被消耗",
+                        "7 天内已被当前 Team 邀请过",
+                    ]):
                         return {"success": False, "error": last_error}
 
                     # 判定是否需要永久标记为“满员”

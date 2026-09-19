@@ -174,6 +174,9 @@ class AccountPoolAddRequest(BaseModel):
     """账号号池批量录入请求。"""
     emails: List[str] = Field(default_factory=list, description="邮箱列表")
     content: str = Field("", description="换行分隔的邮箱文本")
+    seat_type: Literal["default", "premium"] = Field(
+        "default", description="账号邀请席位类型"
+    )
 
 
 class MemberSeatTypeRequest(BaseModel):
@@ -371,8 +374,25 @@ async def add_account_pool_emails(
         db,
         emails=payload.emails,
         content=payload.content,
+        seat_type=payload.seat_type,
     )
     return JSONResponse(status_code=200 if result["success"] else 400, content=result)
+
+
+@router.get("/account-pool/options")
+async def account_pool_invite_options(
+    team_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """返回最近 7 天未加入过指定 Team 的可邀请号池账号。"""
+    entries = await account_pool_service.list_invite_options(team_id, db)
+    if entries is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"success": False, "error": "Team 不存在"},
+        )
+    return JSONResponse(content={"success": True, "entries": entries})
 
 
 @router.get("/account-pool/{entry_id}/history")

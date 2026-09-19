@@ -132,16 +132,33 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             ])
             await session.commit()
             delete_member = AsyncMock(return_value={"success": True})
+            invite_replacement = AsyncMock(
+                return_value={"success": True, "status": "invited"}
+            )
 
-            stats = await self.service.run_due_members(session, delete_member)
+            stats = await self.service.run_due_members(
+                session,
+                delete_member,
+                invite_replacement=invite_replacement,
+            )
 
-            self.assertEqual(stats, {"success": True, "scanned": 1, "kicked": 1, "failed": 0})
+            self.assertEqual(stats, {
+                "success": True,
+                "scanned": 1,
+                "kicked": 1,
+                "failed": 0,
+                "replacement_invited": 1,
+                "replacement_unavailable": 0,
+                "replacement_failed": 0,
+                "replacement_pending": 0,
+            })
             delete_member.assert_awaited_once_with(
                 team.id,
                 "user-due",
                 session,
                 email="due@example.com",
             )
+            invite_replacement.assert_awaited_once_with(team.id, session)
 
     async def test_due_scan_reports_delete_failure(self):
         now = get_now()
@@ -162,9 +179,75 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             stats = await self.service.run_due_members(
                 session,
                 AsyncMock(return_value={"success": False, "error": "upstream failed"}),
+                invite_replacement=AsyncMock(
+                    return_value={"success": True, "status": "invited"}
+                ),
             )
 
-            self.assertEqual(stats, {"success": False, "scanned": 1, "kicked": 0, "failed": 1})
+            self.assertEqual(stats, {
+                "success": False,
+                "scanned": 1,
+                "kicked": 0,
+                "failed": 1,
+                "replacement_invited": 0,
+                "replacement_unavailable": 0,
+                "replacement_failed": 0,
+                "replacement_pending": 0,
+            })
+
+    async def test_due_scan_reports_replacement_failure(self):
+        now = get_now()
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            session.add(TeamEmailMapping(
+                team_id=team.id,
+                email="due@example.com",
+                status="joined",
+                upstream_user_id="user-due",
+                member_role="standard-user",
+                joined_at=now - timedelta(hours=3),
+                auto_kick_at=now - timedelta(hours=1),
+            ))
+            await session.commit()
+
+            stats = await self.service.run_due_members(
+                session,
+                AsyncMock(return_value={"success": True}),
+                invite_replacement=AsyncMock(
+                    return_value={"success": False, "status": "failed"}
+                ),
+            )
+
+            self.assertFalse(stats["success"])
+            self.assertEqual(stats["kicked"], 1)
+            self.assertEqual(stats["replacement_failed"], 1)
+            self.assertEqual(stats["replacement_pending"], 1)
+
+    async def test_pending_replacement_retries_on_next_scan(self):
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            team.pending_replacements = 1
+            await session.commit()
+
+            unavailable = await self.service.run_due_members(
+                session,
+                AsyncMock(),
+                invite_replacement=AsyncMock(
+                    return_value={"success": True, "status": "no_candidate"}
+                ),
+            )
+            self.assertEqual(unavailable["replacement_pending"], 1)
+            self.assertEqual(unavailable["replacement_unavailable"], 1)
+
+            invited = await self.service.run_due_members(
+                session,
+                AsyncMock(),
+                invite_replacement=AsyncMock(
+                    return_value={"success": True, "status": "invited"}
+                ),
+            )
+            self.assertEqual(invited["replacement_invited"], 1)
+            self.assertEqual(invited["replacement_pending"], 0)
 
 
 if __name__ == "__main__":

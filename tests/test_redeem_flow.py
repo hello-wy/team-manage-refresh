@@ -142,7 +142,12 @@ class StubTeamService:
         normalized_email = str(email).strip().lower()
         return sorted(self.active_team_ids_by_email.get(normalized_email, set()))
 
-    async def upsert_team_email_mapping(self, team_id, email, status, db_session, source="sync"):
+    async def get_reinvite_retry_at(self, team_id, email, db_session):
+        return None
+
+    async def upsert_team_email_mapping(
+        self, team_id, email, status, db_session, source="sync", **kwargs
+    ):
         normalized_email = str(email).strip().lower()
         self.mapping_updates.append((team_id, normalized_email, status, source))
         active_team_ids = self.active_team_ids_by_email.setdefault(normalized_email, set())

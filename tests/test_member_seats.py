@@ -191,3 +191,13 @@ class MemberSeatRouteTests(unittest.TestCase):
             response = self.client.post("/admin/teams/1/members/add", json={"emails": ["test@example.com"], "seat_type": "premium"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(invite.await_args.kwargs["seat_type"], "premium")
+
+    def test_account_pool_options_route_returns_service_entries(self):
+        app.dependency_overrides[require_admin] = lambda: {"is_admin": True}
+        app.dependency_overrides[get_db] = lambda: None
+        entries = [{"id": 7, "email": "pool@example.com", "seat_type": "premium"}]
+        with patch.object(admin.account_pool_service, "list_invite_options", new=AsyncMock(return_value=entries)) as list_options:
+            response = self.client.get("/admin/account-pool/options?team_id=3")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["entries"], entries)
+        list_options.assert_awaited_once_with(3, None)

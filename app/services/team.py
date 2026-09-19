@@ -21,7 +21,7 @@ from app.utils.time_utils import get_now
 from app.utils.seats import calculate_seat_balance, normalize_seat_type, summarize_member_seats, total_paid_seats
 from app.utils.seat_lock import seat_account_lock
 from app.config import settings
-from app.services.account_pool import account_pool_service
+from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS, account_pool_service
 
 logger = logging.getLogger(__name__)
 
@@ -508,6 +508,7 @@ class TeamService:
         source: str = "sync",
         seen_at: Optional[datetime] = None,
         is_admin_invited: Optional[bool] = None,
+        invited_at: Optional[datetime] = None,
     ) -> Optional[TeamEmailMapping]:
         """创建或更新 Team-邮箱映射。
 
@@ -535,6 +536,7 @@ class TeamService:
                 last_seen_at=current_time,
                 missing_sync_count=0,
                 is_admin_invited=bool(is_admin_invited) if is_admin_invited else False,
+                last_invited_at=invited_at,
             )
             db_session.add(mapping)
             return mapping
@@ -550,7 +552,30 @@ class TeamService:
             mapping.auto_kick_at = None
         if is_admin_invited:
             mapping.is_admin_invited = True
+        if invited_at:
+            mapping.last_invited_at = invited_at
         return mapping
+
+    async def get_reinvite_retry_at(
+        self,
+        team_id: int,
+        email: str,
+        db_session: AsyncSession,
+    ) -> Optional[datetime]:
+        normalized_email = self._normalize_member_email(email)
+        if not normalized_email:
+            return None
+        result = await db_session.execute(
+            select(TeamEmailMapping.last_invited_at).where(
+                TeamEmailMapping.team_id == team_id,
+                TeamEmailMapping.email == normalized_email,
+            )
+        )
+        invited_at = result.scalar_one_or_none()
+        if not invited_at:
+            return None
+        retry_at = invited_at + timedelta(days=TEAM_REINVITE_COOLDOWN_DAYS)
+        return retry_at if retry_at > get_now() else None
 
     async def mark_team_email_mapping_removed(
         self,
@@ -584,10 +609,10 @@ class TeamService:
         if mapping and team:
             await account_pool_service.record_reconciliation(
                 db_session,
-                team,
-                [mapping],
-                previous_states,
-                seen_at or get_now(),
+                team=team,
+                mappings=[mapping],
+                previous_states=previous_states,
+                seen_at=seen_at or get_now(),
             )
         return mapping
 
@@ -627,10 +652,10 @@ class TeamService:
         self._mark_missing_mappings(existing_mappings, active_emails, seen_at)
         await account_pool_service.record_reconciliation(
             db_session,
-            team,
-            list(current_mappings.values()),
-            previous_states,
-            seen_at,
+            team=team,
+            mappings=list(current_mappings.values()),
+            previous_states=previous_states,
+            seen_at=seen_at,
         )
 
     def _normalized_email_set(self, emails: set[str]) -> set[str]:
@@ -2791,14 +2816,22 @@ class TeamService:
                     "Team 已满,无法添加成员",
                 )
 
-            mapping_result = await db_session.execute(
+            retry_at = await self.get_reinvite_retry_at(
+                team_id, normalized_email, db_session
+            )
+            if retry_at:
+                return self._admin_error(
+                    "team_reinvite_cooldown",
+                    f"该账号 7 天内已被当前 Team 邀请过，可在 {retry_at.isoformat()} 后重试",
+                    retry_at=retry_at.isoformat(),
+                )
+            status_result = await db_session.execute(
                 select(TeamEmailMapping.status).where(
                     TeamEmailMapping.team_id == team_id,
                     TeamEmailMapping.email == normalized_email,
                 )
             )
-            existing_mapping_status = mapping_result.scalar_one_or_none()
-            had_active_mapping = existing_mapping_status in ACTIVE_TEAM_EMAIL_STATUSES
+            had_active_mapping = status_result.scalar_one_or_none() in ACTIVE_TEAM_EMAIL_STATUSES
 
             # 4. 调用 ChatGPT API 发送邀请
             balance = await self.get_team_seat_balance(team, db_session, access_token)
@@ -2860,6 +2893,7 @@ class TeamService:
                 db_session=db_session,
                 source="admin_add",
                 is_admin_invited=True,
+                invited_at=get_now(),
             )
             if not had_active_mapping:
                 team.current_members = min(team.current_members + 1, team.max_members)
