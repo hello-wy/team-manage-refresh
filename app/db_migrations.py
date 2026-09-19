@@ -61,6 +61,20 @@ def run_auto_migration():
         
         migrations_applied = []
 
+        member_authorization_columns = {
+            "export_json_encrypted": "TEXT",
+            "export_json_updated_at": "DATETIME",
+            "sub2api_account_id": "INTEGER",
+            "sub2api_exported_at": "DATETIME",
+        }
+        if table_exists(cursor, "member_authorizations"):
+            for column_name, column_type in member_authorization_columns.items():
+                if not column_exists(cursor, "member_authorizations", column_name):
+                    cursor.execute(
+                        f"ALTER TABLE member_authorizations ADD COLUMN {column_name} {column_type}"
+                    )
+                    migrations_applied.append(f"member_authorizations.{column_name}")
+
         for column in ("joined_members", "total_seats"):
             if not column_exists(cursor, "teams", column):
                 cursor.execute(f"ALTER TABLE teams ADD COLUMN {column} INTEGER")

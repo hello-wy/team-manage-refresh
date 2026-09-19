@@ -2491,14 +2491,22 @@ class TeamService:
             await self._reset_error_status(team, db_session)
 
             seat_balance = await self.get_team_seat_balance(team, db_session, access_token, members_result, invites_result)
-            authorized_emails = set((await db_session.execute(select(MemberAuthorization.email).where(
+            authorization_records = (await db_session.execute(select(MemberAuthorization).where(
                 MemberAuthorization.team_id == team.id,
                 MemberAuthorization.account_id == team.account_id,
                 MemberAuthorization.credentials_encrypted.is_not(None),
-            ))).scalars().all())
+            ))).scalars().all()
+            authorization_by_email = {record.email: record for record in authorization_records}
             mapping_index = await self._team_mapping_index(team.id, db_session)
             for member in all_members:
-                member["authorized"] = member["email"] in authorized_emails
+                authorization = authorization_by_email.get(member["email"])
+                member["authorized"] = authorization is not None
+                member["json_saved"] = bool(
+                    authorization and authorization.export_json_encrypted
+                )
+                member["sub2api_exported"] = bool(
+                    authorization and authorization.sub2api_exported_at
+                )
                 mapping = mapping_index.get(member["email"])
                 member["auto_kick_at"] = (
                     mapping.auto_kick_at.isoformat() if mapping and mapping.auto_kick_at else None

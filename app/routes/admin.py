@@ -1010,6 +1010,9 @@ async def import_member_sub2api(team_id: int, payload: MemberAuthorizationReques
     try:
         data = await member_authorization_service.export(team_id, payload.email, db)
         result = await sub2api_service.import_member(data, db)
+        await member_authorization_service.mark_sub2api_exported(
+            team_id, payload.email, result["account_id"], db
+        )
         return JSONResponse(content={"success": True, "data": result}, headers=headers)
     except (MemberAuthorizationError, Sub2apiError) as exc:
         return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)

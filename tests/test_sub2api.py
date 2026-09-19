@@ -82,11 +82,17 @@ class Sub2apiRouteTests(unittest.TestCase):
         with patch.object(admin.member_authorization_service, "export", new=AsyncMock(return_value=payload)) as export:
             with patch.object(admin.sub2api_service, "import_member", new=AsyncMock(
                     return_value={"account_id": 42, "group_count": 2})) as push:
-                response = self.client.post("/admin/teams/1/members/authorization/import-sub2api",
-                                            json={"email": " MEMBER@example.com "})
+                with patch.object(
+                    admin.member_authorization_service,
+                    "mark_sub2api_exported",
+                    new=AsyncMock(),
+                ) as mark:
+                    response = self.client.post("/admin/teams/1/members/authorization/import-sub2api",
+                                                json={"email": " MEMBER@example.com "})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(export.await_args.args[1], "member@example.com")
         self.assertEqual(push.await_args.args[0], payload)
+        self.assertEqual(mark.await_args.args[:3], (1, "member@example.com", 42))
         self.assertNotIn("secret", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
 

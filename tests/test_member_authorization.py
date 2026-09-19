@@ -83,10 +83,14 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_authorization_is_encrypted_and_not_exportable(self):
         result = await self.authorize()
         self.assertTrue(result["authorized"])
+        self.assertTrue(result["json_saved"])
         self.assertEqual(result["membership"], "invited")
         self.assertFalse(result["can_export"])
         record = await self.record()
         self.assertNotIn("test-member-refresh", record.credentials_encrypted)
+        self.assertNotIn("test-member-refresh", record.export_json_encrypted)
+        saved = json.loads(encryption_service.decrypt_token(record.export_json_encrypted))
+        self.assertEqual(saved["accounts"][0]["credentials"]["email"], EMAIL)
         self.assertIsNone(record.oauth_state)
         self.assertNotIn("access_token", json.dumps(result))
         with self.assertRaisesRegex(MemberAuthorizationError, "等待"):
@@ -104,6 +108,18 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account["credentials"]["chatgpt_user_id"], "member-user")
         self.assertTrue(account["credentials"]["expires_at"].endswith("Z"))
         self.assertNotIn("owner-token", json.dumps(payload))
+        record = await self.record()
+        saved = json.loads(encryption_service.decrypt_token(record.export_json_encrypted))
+        self.assertEqual(saved["accounts"][0]["credentials"]["chatgpt_account_id"], ACCOUNT)
+
+    async def test_sub2api_export_status_is_persisted_without_exposing_json(self):
+        await self.authorize()
+        await self.service.mark_sub2api_exported(1, EMAIL, 42, self.db)
+        result = await self.service.check(1, EMAIL, self.db)
+        self.assertTrue(result["sub2api_exported"])
+        self.assertEqual(result["sub2api_account_id"], 42)
+        self.assertIsNotNone(result["sub2api_exported_at"])
+        self.assertNotIn("credentials", json.dumps(result))
 
     async def test_unauthed_joined_member_cannot_export(self):
         self.join()
@@ -141,6 +157,8 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         result = await self.service.check(1, EMAIL, self.db)
         snapshot = result["members_snapshot"]
         self.assertEqual(result["membership"], "joined")
+        self.assertTrue(snapshot["members"][0]["json_saved"])
+        self.assertFalse(snapshot["members"][0]["sub2api_exported"])
         self.assertEqual(snapshot["members"][0]["status"], "joined")
         self.assertTrue(snapshot["members"][0]["authorized"])
         self.assertEqual(snapshot["seat_summary"]["invited"]["total"], 0)
@@ -230,6 +248,7 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         result = await self.service.export(1, EMAIL, self.db)
         self.assertEqual(result["accounts"][0]["credentials"]["refresh_token"], "rotated-refresh")
         self.assertIn("rotated-refresh", encryption_service.decrypt_token(record.credentials_encrypted))
+        self.assertIn("rotated-refresh", encryption_service.decrypt_token(record.export_json_encrypted))
 
     async def test_failed_token_refresh_blocks_export(self):
         await self.authorize()

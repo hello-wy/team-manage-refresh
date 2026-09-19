@@ -69,6 +69,10 @@ class MemberAuthorizationService:
                 record.account_id = team.account_id
                 record.credentials_encrypted = None
                 record.authorized_at = None
+                record.export_json_encrypted = None
+                record.export_json_updated_at = None
+                record.sub2api_account_id = None
+                record.sub2api_exported_at = None
             draft = self.remote.create_oauth_authorize_url(CLIENT_ID, REDIRECT_URI)
             record.oauth_state = draft["state"]
             record.verifier_encrypted = encryption_service.encrypt_token(draft["code_verifier"])
@@ -89,6 +93,46 @@ class MemberAuthorizationService:
         if token_emails != {email}:
             raise MemberAuthorizationError("授权登录邮箱与所选成员不一致，请使用该成员邮箱重新授权")
         return claims, identity or {}
+
+    def _export_payload(self, team, email, credentials):
+        claims, identity = self._identity(credentials, email)
+        auth = claims.get("https://api.openai.com/auth") or identity.get(
+            "https://api.openai.com/auth"
+        ) or {}
+        exported_credentials = {
+            **credentials,
+            "email": email,
+            "chatgpt_account_id": team.account_id,
+            "plan_type": "team",
+            "expires_at": datetime.fromtimestamp(
+                claims["exp"], timezone.utc
+            ).isoformat().replace("+00:00", "Z"),
+        }
+        user_id = auth.get("chatgpt_user_id") or auth.get("user_id")
+        if user_id:
+            exported_credentials["chatgpt_user_id"] = user_id
+        return {
+            "type": "sub2api-data",
+            "version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "proxies": [],
+            "accounts": [{
+                "name": f"{email} - {team.team_name or team.account_id}",
+                "platform": "openai",
+                "type": "oauth",
+                "credentials": exported_credentials,
+                "concurrency": 1,
+                "priority": 1,
+                "rate_multiplier": 1,
+            }],
+        }
+
+    async def _save_export_json(self, record, payload, db):
+        record.export_json_encrypted = encryption_service.encrypt_token(
+            json.dumps(payload, ensure_ascii=False)
+        )
+        record.export_json_updated_at = get_now()
+        await db.commit()
 
     async def callback(self, team_id, email, callback_url, db):
         team = await self._team(team_id, db)
@@ -128,7 +172,8 @@ class MemberAuthorizationService:
                 raise MemberAuthorizationError("授权未返回 Refresh Token，请重新授权")
             record.credentials_encrypted = encryption_service.encrypt_token(json.dumps(credentials))
             record.authorized_at = get_now()
-            await db.commit()
+            payload = self._export_payload(team, email, credentials)
+            await self._save_export_json(record, payload, db)
         return await self.check(team_id, email, db)
 
     async def _credentials(self, record, email, db):
@@ -148,7 +193,9 @@ class MemberAuthorizationService:
                     credentials[key] = result[key]
             self._identity(credentials, email)
             record.credentials_encrypted = encryption_service.encrypt_token(json.dumps(credentials))
-            await db.commit()
+            team = await db.get(Team, record.team_id)
+            payload = self._export_payload(team, email, credentials)
+            await self._save_export_json(record, payload, db)
         self._identity(credentials, email)
         if not credentials.get("refresh_token"):
             raise MemberAuthorizationError("缺少 Refresh Token，请重新授权")
@@ -158,6 +205,11 @@ class MemberAuthorizationService:
         record = await self._record(team, email, db)
         data = {"email": email, "account_id": team.account_id,
                 "authorized": bool(record and record.credentials_encrypted),
+                "json_saved": bool(record and record.export_json_encrypted),
+                "json_updated_at": record.export_json_updated_at.isoformat() if record and record.export_json_updated_at else None,
+                "sub2api_exported": bool(record and record.sub2api_exported_at),
+                "sub2api_exported_at": record.sub2api_exported_at.isoformat() if record and record.sub2api_exported_at else None,
+                "sub2api_account_id": record.sub2api_account_id if record else None,
                 "authorization_pending": bool(record and record.oauth_state and record.oauth_expires_at and record.oauth_expires_at > get_now()),
                 "membership": "unknown", "can_export": False}
         credentials = None
@@ -208,17 +260,16 @@ class MemberAuthorizationService:
             data, credentials = await self._check(team, email, db)
             if not data["can_export"]:
                 raise MemberAuthorizationError(data["message"])
-            claims, identity = self._identity(credentials, email)
-            auth = claims.get("https://api.openai.com/auth") or identity.get("https://api.openai.com/auth") or {}
-            credentials = {**credentials, "email": email, "chatgpt_account_id": team.account_id,
-                           "plan_type": "team", "expires_at": datetime.fromtimestamp(claims["exp"], timezone.utc).isoformat().replace("+00:00", "Z")}
-            user_id = auth.get("chatgpt_user_id") or auth.get("user_id")
-            if user_id:
-                credentials["chatgpt_user_id"] = user_id
-            return {
-                "type": "sub2api-data", "version": 1,
-                "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "proxies": [], "accounts": [{"name": f"{email} - {team.team_name or team.account_id}",
-                    "platform": "openai", "type": "oauth", "credentials": credentials,
-                    "concurrency": 1, "priority": 1, "rate_multiplier": 1}],
-            }
+            payload = self._export_payload(team, email, credentials)
+            record = await self._record(team, email, db)
+            await self._save_export_json(record, payload, db)
+            return payload
+
+    async def mark_sub2api_exported(self, team_id, email, account_id, db):
+        team = await self._team(team_id, db)
+        record = await self._record(team, email, db)
+        if not record or not record.export_json_encrypted:
+            raise MemberAuthorizationError("授权 JSON 状态不存在，请重新授权后再导出")
+        record.sub2api_account_id = account_id
+        record.sub2api_exported_at = get_now()
+        await db.commit()
