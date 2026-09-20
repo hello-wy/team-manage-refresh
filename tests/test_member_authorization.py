@@ -202,12 +202,14 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret", str(error.exception))
         self.assertIsNone((await self.record()).oauth_state)
 
-    async def test_personal_workspace_auth_cannot_export_as_team(self):
+    async def test_accessible_team_exports_when_token_default_workspace_is_personal(self):
         self.remote.exchange_oauth_code.return_value = tokens(account="personal-account")
         await self.authorize()
         self.join()
-        with self.assertRaisesRegex(MemberAuthorizationError, "未选择此工作区"):
-            await self.service.export(1, EMAIL, self.db)
+        payload = await self.service.export(1, EMAIL, self.db)
+        credentials = payload["accounts"][0]["credentials"]
+        self.assertEqual(credentials["chatgpt_account_id"], ACCOUNT)
+        self.assertEqual(credentials["email"], EMAIL)
 
     async def test_removed_member_and_failed_reads_block_export(self):
         await self.authorize()

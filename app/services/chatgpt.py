@@ -19,6 +19,8 @@ from app.utils.seats import upstream_seat_type
 
 logger = logging.getLogger(__name__)
 
+TEAM_PLAN_TYPES = frozenset({"team", "business"})
+
 
 class ChatGPTService:
     """ChatGPT API 服务类"""
@@ -389,11 +391,12 @@ class ChatGPTService:
         for aid, info in accounts_data.items():
             account = info.get("account", {})
             entitlement = info.get("entitlement", {})
-            if account.get("plan_type") == "team":
+            plan_type = str(account.get("plan_type") or "").strip().lower()
+            if plan_type in TEAM_PLAN_TYPES:
                 team_accounts.append({
                     "account_id": aid,
                     "name": account.get("name", ""),
-                    "plan_type": "team",
+                    "plan_type": plan_type,
                     "account_user_role": account.get("account_user_role", ""),
                     "subscription_plan": entitlement.get("subscription_plan", ""),
                     "expires_at": entitlement.get("expires_at", ""),

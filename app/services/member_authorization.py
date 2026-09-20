@@ -237,11 +237,6 @@ class MemberAuthorizationService:
                     raise MemberAuthorizationError("成员工作区访问验证失败，请稍后重新判定")
                 if not any(a.get("account_id") == team.account_id for a in accessible.get("accounts", [])):
                     raise MemberAuthorizationError("该成员授权无法访问当前 Team，请接受邀请后重新授权")
-                # sub2api 刷新时会从 JWT 恢复工作区，避免导出个人工作区凭证冒充 Team。
-                claims, identity = self._identity(credentials, email)
-                auth = claims.get("https://api.openai.com/auth") or identity.get("https://api.openai.com/auth") or {}
-                if auth.get("chatgpt_account_id") != team.account_id:
-                    raise MemberAuthorizationError("已加入 Team，但授权未选择此工作区，请重新授权并选择当前 Team")
                 data["can_export"] = True
                 data["message"] = "已确认加入当前 Team，可以导出 sub2api JSON"
         except MemberAuthorizationError as exc:
