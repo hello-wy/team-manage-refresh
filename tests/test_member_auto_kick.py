@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Team, TeamEmailMapping
+from app.models import Team, TeamEmailMapping, TeamReplacementQueue
 from app.services.member_auto_kick import MemberAutoKickService
 from app.services.team import TeamService
 from app.utils.time_utils import get_now
@@ -94,6 +94,66 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(team.member_auto_kick_hours, 6)
             self.assertEqual(mapping.auto_kick_at, joined_at + timedelta(hours=6))
 
+    async def test_member_exemption_clears_deadline_and_restores_it(self):
+        joined_at = get_now() - timedelta(hours=1)
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            session.add(TeamEmailMapping(
+                team_id=team.id,
+                email="member@example.com",
+                status="joined",
+                source="sync",
+                upstream_user_id="user-member",
+                member_role="standard-user",
+                joined_at=joined_at,
+                auto_kick_at=joined_at + timedelta(hours=2),
+            ))
+            await session.commit()
+
+            exempted = await self.service.update_member_exemption(
+                team.id, "user-member", True, session
+            )
+            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
+            self.assertTrue(exempted["success"])
+            self.assertTrue(mapping.auto_kick_exempt)
+            self.assertIsNone(mapping.auto_kick_at)
+
+            restored = await self.service.update_member_exemption(
+                team.id, "user-member", False, session
+            )
+            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
+            self.assertTrue(restored["success"])
+            self.assertFalse(mapping.auto_kick_exempt)
+            self.assertEqual(mapping.auto_kick_at, joined_at + timedelta(hours=2))
+
+    async def test_due_scan_skips_exempt_member(self):
+        now = get_now()
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            session.add(TeamEmailMapping(
+                team_id=team.id,
+                email="protected@example.com",
+                status="joined",
+                source="sync",
+                upstream_user_id="user-protected",
+                member_role="standard-user",
+                joined_at=now - timedelta(hours=3),
+                auto_kick_at=now - timedelta(hours=1),
+                auto_kick_exempt=True,
+            ))
+            await session.commit()
+
+            stats = await self.service.run_due_members(
+                session,
+                AsyncMock(return_value={"success": True}),
+                invite_replacement=AsyncMock(
+                    return_value={"success": True, "status": "invited"}
+                ),
+            )
+
+            self.assertEqual(stats["scanned"], 0)
+            self.assertEqual(stats["kicked"], 0)
+
     async def test_due_scan_kicks_only_due_non_owner(self):
         now = get_now()
         async with self.session_factory() as session:
@@ -158,7 +218,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 email="due@example.com",
             )
-            invite_replacement.assert_awaited_once_with(team.id, session)
+            invite_replacement.assert_awaited_once_with(team.id, session, "standard")
 
     async def test_due_scan_reports_delete_failure(self):
         now = get_now()
@@ -194,6 +254,36 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                 "replacement_failed": 0,
                 "replacement_pending": 0,
             })
+
+    async def test_replacement_keeps_kicked_member_seat_type(self):
+        now = get_now()
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            session.add(TeamEmailMapping(
+                team_id=team.id,
+                email="premium@example.com",
+                status="joined",
+                source="sync",
+                upstream_user_id="user-premium",
+                member_role="standard-user",
+                seat_type="premium",
+                joined_at=now - timedelta(hours=3),
+                auto_kick_at=now - timedelta(hours=1),
+            ))
+            await session.commit()
+            invite_replacement = AsyncMock(
+                return_value={"success": True, "status": "invited"}
+            )
+
+            await self.service.run_due_members(
+                session,
+                AsyncMock(return_value={"success": True}),
+                invite_replacement=invite_replacement,
+            )
+
+            invite_replacement.assert_awaited_once_with(team.id, session, "premium")
+            queue = (await session.execute(select(TeamReplacementQueue))).scalars().all()
+            self.assertEqual(queue, [])
 
     async def test_due_scan_reports_replacement_failure(self):
         now = get_now()

@@ -34,13 +34,22 @@ from app.services.openai_automatic_login import (
     AutomaticLoginDependencies,
     OpenAIAutomaticLoginService,
 )
-from app.services.sub2api import sub2api_service, Sub2apiError, DEFAULT_BASE_URL, normalize_base_url
+from app.services.sub2api import (
+    DEFAULT_BASE_URL,
+    GROUP_MODE_ALL,
+    GROUP_MODE_SELECTED,
+    Sub2apiError,
+    normalize_base_url,
+    sub2api_service,
+)
 from app.services.encryption import encryption_service
 from app.services.member_auto_kick import (
     MAX_MEMBER_AUTO_KICK_HOURS,
     MIN_MEMBER_AUTO_KICK_HOURS,
     member_auto_kick_service,
 )
+from app.services.member_rotation import MemberRotationService
+from app.services.replacement_export import ReplacementExportService
 from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool import account_pool_service
 from app.utils.time_utils import get_now
@@ -67,6 +76,13 @@ member_authorization_service = MemberAuthorizationService(
     team_service, automatic_login_service, account_pool_credential_service
 )
 redemption_service = RedemptionService()
+member_rotation_service = MemberRotationService(
+    team_service,
+    account_pool_service,
+    ReplacementExportService(
+        member_authorization_service, sub2api_service
+    ),
+)
 
 
 async def resolve_ui_theme(db: AsyncSession) -> str:
@@ -180,6 +196,19 @@ class DeleteMemberRequest(BaseModel):
     email: Optional[str] = Field(None, description="成员邮箱")
 
 
+class RotateMemberRequest(BaseModel):
+    """成员轮转请求。"""
+    email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value):
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("请输入有效的成员邮箱")
+        return value
+
+
 class AddMembersRequest(BaseModel):
     """批量添加成员请求"""
     emails: List[str] = Field(..., description="成员邮箱列表")
@@ -204,6 +233,10 @@ class MemberAutoKickRequest(BaseModel):
         le=MAX_MEMBER_AUTO_KICK_HOURS,
         description="成员加入后自动踢出的小时数",
     )
+
+
+class MemberAutoKickExemptionRequest(BaseModel):
+    exempt: bool = Field(..., description="是否免除该成员自动下线")
 
 
 class CodeGenerateRequest(BaseModel):
@@ -389,6 +422,25 @@ async def add_account_pool_emails(
         content=payload.content,
     )
     return JSONResponse(status_code=200 if result["success"] else 400, content=result)
+
+
+@router.post("/account-pool/liveness")
+async def run_account_pool_liveness(
+    current_user: dict = Depends(require_admin),
+):
+    """手动执行一次账号号池验活。"""
+    from app.main import scheduled_account_pool_liveness
+
+    counts = await scheduled_account_pool_liveness()
+    return JSONResponse(content={
+        "success": True,
+        "message": (
+            "账号验活已完成："
+            f"正常 {counts['alive']}，凭据无效 {counts['invalid']}，"
+            f"检测异常 {counts['error']}，缺少密码 {counts['missing']}"
+        ),
+        "counts": counts,
+    })
 
 
 @router.get("/account-pool/options")
@@ -1092,6 +1144,23 @@ async def update_member_auto_kick(
     return JSONResponse(content=result, status_code=200 if result["success"] else 404)
 
 
+@router.post("/teams/{team_id}/members/{user_id}/auto-kick")
+async def update_member_auto_kick_exemption(
+    team_id: int,
+    user_id: str,
+    payload: MemberAutoKickExemptionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await member_auto_kick_service.update_member_exemption(
+        team_id,
+        user_id,
+        payload.exempt,
+        db,
+    )
+    return JSONResponse(content=result, status_code=200 if result["success"] else 400)
+
+
 @router.post("/teams/{team_id}/members/add")
 async def add_team_member(
     team_id: int,
@@ -1200,6 +1269,32 @@ async def delete_team_member(
                 "success": False,
                 "error": "删除成员失败，请稍后重试"
             }
+        )
+
+
+@router.post("/teams/{team_id}/members/{user_id}/rotate")
+async def rotate_team_member(
+    team_id: int,
+    user_id: str,
+    payload: RotateMemberRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """踢出当前成员并自动邀请、授权、导入账号池替补。"""
+    try:
+        result = await member_rotation_service.rotate(
+            team_id, user_id, payload.email, db
+        )
+        return JSONResponse(
+            status_code=200 if result["success"] else status.HTTP_400_BAD_REQUEST,
+            content=result,
+        )
+    except Exception:
+        await db.rollback()
+        logger.exception("成员轮转失败")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"success": False, "error": "轮转失败，请检查服务端日志"},
         )
 
 
@@ -2475,7 +2570,8 @@ async def settings_page(
         系统设置页面 HTML
     """
     try:
-        from app.main import templates
+        from app.main import templates, DEFAULT_ACCOUNT_POOL_LIVENESS_CRON
+        from app.config import settings as app_settings
         from app.services.settings import settings_service
 
         logger.info("管理员访问系统设置页面")
@@ -2498,6 +2594,8 @@ async def settings_page(
             "periodic_team_sync_enabled": await settings_service.get_setting(db, "periodic_team_sync_enabled", "true"),
             "periodic_team_sync_interval_hours": await settings_service.get_setting(db, "periodic_team_sync_interval_hours", "12"),
             "periodic_team_sync_days": await settings_service.get_setting(db, "periodic_team_sync_days", "7"),
+            "account_pool_liveness_cron": await settings_service.get_setting(db, "account_pool_liveness_cron", DEFAULT_ACCOUNT_POOL_LIVENESS_CRON),
+            "account_pool_liveness_timezone": app_settings.timezone,
             "warranty_auto_kick_enabled": await settings_service.get_setting(db, "warranty_auto_kick_enabled", "false"),
             "warranty_auto_kick_enabled_since": await settings_service.get_setting(db, "warranty_auto_kick_enabled_since", ""),
             "warranty_auto_kick_interval_hours": await settings_service.get_setting(db, "warranty_auto_kick_interval_hours", "12"),
@@ -2513,6 +2611,8 @@ async def settings_page(
             "cliproxyapi_api_key": await settings_service.get_setting(db, "cliproxyapi_api_key", ""),
             "sub2api_base_url": await settings_service.get_setting(db, "sub2api_base_url", DEFAULT_BASE_URL),
             "sub2api_has_api_key": bool(await settings_service.get_setting(db, "sub2api_api_key_encrypted", "")),
+            "sub2api_group_mode": await settings_service.get_setting(db, "sub2api_group_mode", GROUP_MODE_ALL),
+            "sub2api_group_ids": await settings_service.get_setting(db, "sub2api_group_ids", "[]"),
             "warranty_expiration_mode": await settings_service.get_warranty_expiration_mode(db),
             "ui_theme": settings_service.normalize_ui_theme(await settings_service.get_setting(db, "ui_theme", DEFAULT_UI_THEME)),
             "ui_style": settings_service.normalize_ui_style(await settings_service.get_setting(db, "ui_style", DEFAULT_UI_STYLE)),
@@ -2570,6 +2670,20 @@ class CliproxyapiSettingsRequest(BaseModel):
 class Sub2apiSettingsRequest(BaseModel):
     base_url: str = Field(..., min_length=1, max_length=2048)
     api_key: str = Field("", max_length=4096)
+    group_mode: Literal["all", "selected"] = GROUP_MODE_ALL
+    group_ids: List[int] = Field(default_factory=list)
+
+    @field_validator("group_ids")
+    @classmethod
+    def validate_group_ids(cls, values):
+        if any(value <= 0 for value in values):
+            raise ValueError("分组 ID 必须为正整数")
+        return sorted(set(values))
+
+
+class Sub2apiGroupsRequest(BaseModel):
+    base_url: str = Field(..., min_length=1, max_length=2048)
+    api_key: str = Field("", max_length=4096)
 
 
 class TeamAutoRefreshSettingsRequest(BaseModel):
@@ -2577,6 +2691,10 @@ class TeamAutoRefreshSettingsRequest(BaseModel):
     enabled: bool = Field(True, description="是否启用 Team 周期状态自动刷新")
     interval_hours: int = Field(12, ge=1, le=168, description="检查间隔（小时）")
     refresh_interval_days: int = Field(7, ge=1, le=30, description="同步周期（天）")
+
+
+class AccountPoolLivenessSettingsRequest(BaseModel):
+    cron: str = Field(..., min_length=1, max_length=100)
 
 
 class WarrantyAutoKickSettingsRequest(BaseModel):
@@ -3260,6 +3378,25 @@ async def update_team_auto_refresh_settings(
         )
 
 
+@router.post("/settings/account-pool-liveness")
+async def update_account_pool_liveness_settings(
+    payload: AccountPoolLivenessSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    from app.main import account_pool_liveness_trigger, configure_account_pool_liveness_job
+
+    expression = payload.cron.strip()
+    try:
+        account_pool_liveness_trigger(expression)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": f"无效的 cron 表达式：{exc}"})
+    if not await settings_service.update_setting(db, "account_pool_liveness_cron", expression):
+        return JSONResponse(status_code=500, content={"success": False, "error": "保存失败"})
+    configure_account_pool_liveness_job(expression)
+    return JSONResponse(content={"success": True, "message": "账号验活时间已保存", "cron": expression})
+
+
 @router.post("/settings/warranty")
 async def update_warranty_settings(
     warranty_data: WarrantyExpirationSettingsRequest,
@@ -3546,10 +3683,40 @@ async def update_sub2api_settings(payload: Sub2apiSettingsRequest,
     existing = await settings_service.get_setting(db, "sub2api_api_key_encrypted", "")
     if not api_key and not existing:
         return JSONResponse(status_code=400, content={"success": False, "error": "请设置 sub2api x-api-key"})
-    settings_to_save = {"sub2api_base_url": base_url}
+    if payload.group_mode == GROUP_MODE_SELECTED and not payload.group_ids:
+        return JSONResponse(status_code=400, content={"success": False, "error": "请至少选择一个 sub2api 分组"})
+    settings_to_save = {
+        "sub2api_base_url": base_url,
+        "sub2api_group_mode": payload.group_mode,
+        "sub2api_group_ids": json.dumps(payload.group_ids),
+    }
     if api_key:
         settings_to_save["sub2api_api_key_encrypted"] = encryption_service.encrypt_token(api_key)
     if not await settings_service.update_settings(db, settings_to_save):
         return JSONResponse(status_code=500, content={"success": False, "error": "保存失败"})
-    return JSONResponse(content={"success": True, "base_url": base_url, "message": "sub2api 配置已保存"},
-                        headers={"Cache-Control": "no-store"})
+    return JSONResponse(content={
+        "success": True,
+        "base_url": base_url,
+        "group_mode": payload.group_mode,
+        "group_ids": payload.group_ids,
+        "message": "sub2api 配置已保存",
+    }, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/settings/sub2api/groups")
+async def get_sub2api_groups(payload: Sub2apiGroupsRequest,
+                             db: AsyncSession = Depends(get_db),
+                             current_user: dict = Depends(require_admin)):
+    try:
+        groups = await sub2api_service.list_openai_groups(
+            db, base_url=payload.base_url, api_key=payload.api_key
+        )
+        safe_groups = [
+            {"id": group["id"], "name": str(group.get("name") or f"分组 {group['id']}"), "platform": "openai"}
+            for group in groups
+        ]
+        return JSONResponse(content={"success": True, "groups": safe_groups},
+                            headers={"Cache-Control": "no-store"})
+    except Sub2apiError as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)},
+                            headers={"Cache-Control": "no-store"})

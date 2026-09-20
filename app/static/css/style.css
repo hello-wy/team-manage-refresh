@@ -1003,6 +1003,26 @@ body.admin-theme .toast {
     font-weight: 700;
 }
 
+.member-auto-kick-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+#manageMembersModal .member-auto-kick-toggle {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0 !important;
+}
+
+.member-auto-kick-toggle svg {
+    width: 16px;
+    height: 16px;
+}
+
 .member-seat-card {
     padding: 1rem;
     border: 1px solid var(--border-base);
@@ -1015,6 +1035,7 @@ body.admin-theme .toast {
 .member-invite-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(200px, 240px);
+    grid-template-rows: auto auto;
     gap: 1rem;
     align-items: start;
 }
@@ -1023,20 +1044,28 @@ body.admin-theme .toast {
 .member-pool-picker {
     display: grid;
     gap: 0.45rem;
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border-base);
+    grid-column: 1;
+    grid-row: 2;
 }
 .member-pool-picker label { margin: 0; }
 .member-pool-picker .form-text { margin-top: 0; }
-.member-invite-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.member-invite-actions {
+    grid-column: 2;
+    grid-row: 2;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+}
 #memberInviteQuotaHint { font-size: 0.75rem; line-height: 1.5; }
 #memberInviteQuotaHint.is-error { color: #b42318; }
 @media (max-width: 640px) {
     .member-auto-kick-settings { align-items: stretch; flex-direction: column; }
     .member-auto-kick-controls { flex-wrap: wrap; }
     .member-auto-kick-controls .btn { flex: 1 0 100%; }
-    .member-invite-form { grid-template-columns: minmax(0, 1fr); }
+    .member-invite-form { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+    .member-pool-picker,
+    .member-invite-actions { grid-column: 1; grid-row: auto; }
+    .member-invite-actions { justify-content: stretch; }
     .member-invite-actions .btn { width: 100%; }
 }
 .member-seat-control { display: flex; align-items: center; gap: 0.4rem; }

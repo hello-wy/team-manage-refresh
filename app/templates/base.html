@@ -873,13 +873,6 @@ eyJ..."></textarea>
                                 oninput="updateMemberInviteAvailability()"
                                 placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com"></textarea>
                             <small class="form-text">每行一个邮箱，或用逗号分隔；自动去重。</small>
-                            <div class="member-pool-picker">
-                                <label for="memberPoolEmail">从账号号池选择</label>
-                                <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
-                                    <option value="">正在读取可用账号...</option>
-                                </select>
-                                <small id="memberPoolEmailHint" class="form-text" aria-live="polite">仅显示最近 7 天未加入过当前 Team 的可邀请账号。</small>
-                            </div>
                         </div>
                         <div class="form-group member-invite-seat">
                             <label for="inviteSeatType">邀请席位类型</label>
@@ -889,6 +882,13 @@ eyJ..."></textarea>
                             </select>
                             <small class="form-text">本批次所有邮箱使用所选类型。</small>
                             <small id="memberInviteQuotaHint" class="form-text" aria-live="polite">正在读取余额...</small>
+                        </div>
+                        <div class="form-group member-pool-picker">
+                            <label for="memberPoolEmail">从账号号池选择</label>
+                            <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
+                                <option value="">正在读取可用账号...</option>
+                            </select>
+                            <small id="memberPoolEmailHint" class="form-text" aria-live="polite">仅显示最近 7 天未加入过当前 Team 的可邀请账号。</small>
                         </div>
                         <div class="member-invite-actions">
                             <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn" disabled>

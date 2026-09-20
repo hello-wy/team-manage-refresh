@@ -2080,7 +2080,7 @@ function importCurrentMemberAuthorization() {
 
 async function importMemberSub2api(teamId, email, button = null) {
     const ctx = memberAuthorizationContext;
-    if (ctx?.busy || !confirm(`确定将 ${email} 导入 sub2api 并绑定所有 OpenAI 分组吗？`)) return;
+    if (ctx?.busy || !confirm(`确定将 ${email} 导入 sub2api 并绑定系统中心配置的 OpenAI 分组吗？`)) return;
     if (ctx) { ctx.busy = true; syncMemberAuthorizationButtons(ctx); }
     if (button) button.disabled = true;
     try {
@@ -2157,6 +2157,12 @@ function renderMemberAuthorizationActions(teamId, member) {
             ? `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger" ${attributes} data-user-id="${escapeHtml(member.user_id || '')}" title="删除成员" aria-label="删除成员"
                 onclick="deleteMember(Number(this.dataset.teamId), this.dataset.userId, this.dataset.email, true)"><i data-lucide="trash-2" aria-hidden="true"></i></button>`
             : '<span title="所有者不可删除"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" disabled aria-label="所有者不可删除"><i data-lucide="lock-keyhole" aria-hidden="true"></i></button></span>';
+    const rotation = member.status === 'joined' && member.role !== 'account-owner'
+        ? `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-info" ${attributes}
+            data-user-id="${escapeHtml(member.user_id || '')}" title="轮转操作" aria-label="轮转操作"
+            onclick="rotateMember(Number(this.dataset.teamId), this.dataset.userId, this.dataset.email)">
+            <i data-lucide="refresh-cw" aria-hidden="true"></i></button>`
+        : '';
     return `<div class="member-auth-actions">
         <button type="button" class="btn btn-sm btn-icon btn-minimal btn-primary" ${attributes} data-member-authorize
             title="自动登录" aria-label="自动登录"
@@ -2165,8 +2171,9 @@ function renderMemberAuthorizationActions(teamId, member) {
             title="${exportHint}" aria-label="导出 sub2api JSON"
             onclick="exportMemberSub2api(Number(this.dataset.teamId), this.dataset.email, this)"><i data-lucide="download" aria-hidden="true"></i></button></span>
         <span title="${exportHint}"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" ${attributes} ${canExport ? '' : 'disabled'}
-            title="导出到 sub2api（所有 OpenAI 分组）" aria-label="导出到 sub2api"
+            title="导出到 sub2api（使用系统中心分组配置）" aria-label="导出到 sub2api"
             onclick="importMemberSub2api(Number(this.dataset.teamId), this.dataset.email, this)"><i data-lucide="upload" aria-hidden="true"></i></button></span>
+        ${rotation}
         ${removal}
     </div>`;
 }
@@ -2190,9 +2197,48 @@ let memberPoolOptionsRequestId = 0;
 
 function renderMemberAutoKickTime(member) {
     if (member.role === 'account-owner') return '<span class="text-muted">不会自动下线</span>';
+    if (member.auto_kick_exempt) return '<span class="text-muted">不会自动下线</span>';
     if (!member.auto_kick_at) return '<span class="text-muted">待同步</span>';
     const overdue = new Date(member.auto_kick_at).getTime() <= Date.now();
     return `<span class="member-auto-kick-time${overdue ? ' is-overdue' : ''}">${formatDateTime(member.auto_kick_at)}</span>`;
+}
+
+function renderMemberAutoKickControl(teamId, member) {
+    if (member.role === 'account-owner' || !member.user_id) return '';
+    const nextExempt = !member.auto_kick_exempt;
+    const label = nextExempt ? '设置为不会自动下线' : '恢复自动下线';
+    const icon = nextExempt ? 'shield-off' : 'clock-3';
+    return `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary member-auto-kick-toggle"
+        data-team-id="${Number(teamId)}" data-user-id="${escapeHtml(member.user_id)}" data-email="${escapeHtml(member.email)}"
+        data-exempt="${nextExempt}" title="${label}" aria-label="${label}"
+        onclick="toggleMemberAutoKickExemption(this)"><i data-lucide="${icon}" aria-hidden="true"></i></button>`;
+}
+
+async function toggleMemberAutoKickExemption(button) {
+    if (!button || button.disabled) return;
+    const teamId = Number(button.dataset.teamId);
+    const userId = button.dataset.userId;
+    const email = button.dataset.email;
+    const exempt = button.dataset.exempt === 'true';
+    const action = exempt ? '设置为不会自动下线' : '恢复自动下线';
+    if (!confirm(`确定要将 ${email} ${action}吗？`)) return;
+
+    button.disabled = true;
+    try {
+        const result = await apiCall(`/admin/teams/${teamId}/members/${encodeURIComponent(userId)}/auto-kick`, {
+            method: 'POST',
+            body: JSON.stringify({exempt}),
+        });
+        if (!result.success || !result.data?.success) {
+            showToast(result.error || result.data?.error || '自动下线设置失败', 'error');
+            return;
+        }
+        showToast(result.data.message, 'success');
+        await loadModalMemberList(teamId);
+    } finally {
+        button.disabled = false;
+        if (window.lucide) lucide.createIcons();
+    }
 }
 
 async function saveMemberAutoKickSettings() {
@@ -2450,7 +2496,12 @@ async function loadModalMemberList(teamId, snapshot = null) {
                             </td>
                             <td>${renderMemberSeatControl(m)}</td>
                             <td>${formatDateTime(m.added_at)}</td>
-                            <td>${renderMemberAutoKickTime(m)}</td>
+                            <td>
+                                <div class="member-auto-kick-cell">
+                                    ${renderMemberAutoKickTime(m)}
+                                    ${renderMemberAutoKickControl(teamId, m)}
+                                </div>
+                            </td>
                             <td style="text-align: right;">
                                 ${renderMemberAuthorizationActions(teamId, m)}
                             </td>
@@ -2628,6 +2679,40 @@ async function deleteMember(teamId, userId, email, inModal = false) {
         }
     } catch (error) {
         showToast(getFriendlyAdminErrorMessage(error.message || '网络错误', 0, 'member'), 'error');
+    }
+}
+
+async function rotateMember(teamId, userId, email) {
+    if (!confirm(`确定轮转成员 "${email}" 吗？\n\n将先踢出当前账号，再从账号池邀请替补，并自动授权、导出到 sub2api。此操作不可撤销。`)) {
+        return;
+    }
+
+    const buttons = Array.from(document.querySelectorAll('[data-team-id]'))
+        .filter(button => button.dataset.teamId === String(Number(teamId))
+            && button.dataset.userId === String(userId));
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+        showToast('正在执行轮转：踢出成员并邀请替补...', 'info');
+        const result = await apiCall(`/admin/teams/${teamId}/members/${encodeURIComponent(userId)}/rotate`, {
+            method: 'POST',
+            body: JSON.stringify({email})
+        });
+        if (!result.success || !result.data.success) {
+            throw new Error(getFriendlyAdminErrorMessage(result.error || result.data?.error || '轮转失败', 0, 'member'));
+        }
+        const data = result.data;
+        if (data.status === 'exported') {
+            showToast(data.message, 'success');
+        } else if (data.status === 'export_pending') {
+            showToast(data.message, 'warning', {duration: 8000});
+        } else {
+            showToast(data.message, 'warning', {duration: 8000});
+        }
+        if (window.currentTeamId === Number(teamId)) await loadModalMemberList(Number(teamId));
+    } catch (error) {
+        showToast(getFriendlyAdminErrorMessage(error.message || '轮转失败', 0, 'member'), 'error');
+    } finally {
+        buttons.forEach(button => { button.disabled = false; });
     }
 }
 

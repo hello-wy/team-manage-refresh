@@ -78,23 +78,88 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
             entries = (await session.execute(select(AccountPoolEntry))).scalars().all()
             self.assertEqual(entries, [])
 
-    async def test_delete_removes_entry_and_history(self):
+    async def test_delete_removes_entry_and_history_from_database(self):
         async with self.sessions() as session:
-            entry = AccountPoolEntry(email="member@example.com")
+            entry = AccountPoolEntry(
+                email="member@example.com",
+                password_encrypted=encryption_service.encrypt_token("old-password"),
+                two_factor_secret_encrypted=encryption_service.encrypt_token("OLDSECRET"),
+            )
             session.add(entry)
             await session.flush()
+            entry_id = entry.id
             session.add(
                 AccountPoolHistory(
-                    account_pool_id=entry.id,
+                    account_pool_id=entry_id,
                     joined_at=get_now(),
                 )
             )
             await session.commit()
 
-            self.assertTrue(await self.service.delete_entry(session, entry.id))
-            self.assertIsNone(await session.get(AccountPoolEntry, entry.id))
+            self.assertTrue(await self.service.delete_entry(session, entry_id))
+            deleted_entry = await session.get(AccountPoolEntry, entry_id)
+            self.assertIsNone(deleted_entry)
+            self.assertIsNone(
+                await self.service.get_credentials(session, "member@example.com")
+            )
             histories = (await session.execute(select(AccountPoolHistory))).scalars().all()
             self.assertEqual(histories, [])
+
+            result = await self.service.add_accounts(
+                session,
+                content="member@example.com----new-password----NEWSECRET",
+            )
+            credentials = await self.service.get_credentials(session, "member@example.com")
+
+            self.assertEqual(result["added"], ["member@example.com"])
+            self.assertEqual(credentials["password"], "new-password")
+            self.assertEqual(credentials["two_factor_secret"], "NEWSECRET")
+            self.assertEqual(len((await session.execute(select(AccountPoolHistory))).scalars().all()), 0)
+
+    async def test_update_credentials_encrypts_and_preserves_omitted_field(self):
+        async with self.sessions() as session:
+            entry = AccountPoolEntry(
+                email="member@example.com",
+                password_encrypted=encryption_service.encrypt_token("old-password"),
+                two_factor_secret_encrypted=encryption_service.encrypt_token(
+                    "JBSWY3DPEHPK3PXP"
+                ),
+            )
+            session.add(entry)
+            await session.commit()
+
+            result = await self.service.update_credentials(
+                session,
+                entry.id,
+                password="new-password",
+            )
+            stored = await session.get(AccountPoolEntry, entry.id)
+
+            self.assertEqual(result["password"], "new-password")
+            self.assertEqual(result["two_factor_secret"], "JBSWY3DPEHPK3PXP")
+            self.assertNotIn("new-password", stored.password_encrypted)
+
+    async def test_update_credentials_rejects_invalid_two_factor_without_changes(self):
+        async with self.sessions() as session:
+            entry = AccountPoolEntry(
+                email="member@example.com",
+                password_encrypted=encryption_service.encrypt_token("old-password"),
+            )
+            session.add(entry)
+            await session.commit()
+
+            with self.assertRaisesRegex(AccountPoolCredentialError, "Base32"):
+                await self.service.update_credentials(
+                    session,
+                    entry.id,
+                    password="new-password",
+                    two_factor_secret="INVALID*SECRET",
+                )
+            await session.refresh(entry)
+            credentials = await self.service.get_credentials(session, entry.email)
+
+            self.assertEqual(credentials["password"], "old-password")
+            self.assertEqual(credentials["two_factor_secret"], "")
 
 
 class AccountPoolCredentialRouteTests(unittest.TestCase):
@@ -137,6 +202,33 @@ class AccountPoolCredentialRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json()["data"], credentials)
+
+    def test_update_credentials_endpoint_returns_saved_values_without_cache(self):
+        app.dependency_overrides[require_admin] = lambda: {
+            "username": "admin",
+            "is_admin": True,
+        }
+        credentials = {
+            "email": "member@example.com",
+            "password": "new-password",
+            "two_factor_secret": "JBSWY3DPEHPK3PXP",
+        }
+        with patch(
+            "app.routes.account_pool_credentials.account_pool_credential_service.update_credentials",
+            new=AsyncMock(return_value=credentials),
+        ) as update:
+            response = self.client.patch(
+                "/admin/account-pool/7/credentials",
+                json={
+                    "password": "new-password",
+                    "two_factor_secret": "JBSWY3DPEHPK3PXP",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.json()["data"], credentials)
+        update.assert_awaited_once()
 
 
 if __name__ == "__main__":

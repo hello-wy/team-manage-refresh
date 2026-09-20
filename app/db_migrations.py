@@ -174,6 +174,25 @@ def run_auto_migration():
             )
             migrations_applied.append("teams.pending_replacements")
 
+        if not table_exists(cursor, "team_replacement_queue"):
+            logger.info("创建 team_replacement_queue 表")
+            cursor.execute(
+                """
+                CREATE TABLE team_replacement_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER NOT NULL,
+                    seat_type VARCHAR(20) NOT NULL DEFAULT 'standard',
+                    created_at DATETIME NOT NULL,
+                    FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX idx_replacement_queue_team "
+                "ON team_replacement_queue(team_id, id)"
+            )
+            migrations_applied.append("team_replacement_queue")
+
         if not column_exists(cursor, "redemption_codes", "pool_type"):
             logger.info("添加 redemption_codes.pool_type 字段")
             cursor.execute("ALTER TABLE redemption_codes ADD COLUMN pool_type VARCHAR(20) DEFAULT 'normal'")
@@ -202,6 +221,7 @@ def run_auto_migration():
                     last_seen_at DATETIME,
                     missing_sync_count INTEGER NOT NULL DEFAULT 0,
                     is_admin_invited BOOLEAN NOT NULL DEFAULT 0,
+                    replacement_export_pending BOOLEAN NOT NULL DEFAULT 0,
                     created_at DATETIME,
                     updated_at DATETIME,
                     FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
@@ -230,8 +250,10 @@ def run_auto_migration():
             "member_role": "VARCHAR(50)",
             "seat_type": "VARCHAR(20)",
             "joined_at": "DATETIME",
+            "auto_kick_exempt": "BOOLEAN NOT NULL DEFAULT 0",
             "auto_kick_at": "DATETIME",
             "last_invited_at": "DATETIME",
+            "replacement_export_pending": "BOOLEAN NOT NULL DEFAULT 0",
         }
         for column_name, column_type in mapping_columns.items():
             if table_exists(cursor, "team_email_mappings") and not column_exists(
@@ -268,8 +290,12 @@ def run_auto_migration():
                     email VARCHAR(255) NOT NULL,
                     password_encrypted TEXT,
                     two_factor_secret_encrypted TEXT,
+                    liveness_status VARCHAR(20),
+                    liveness_checked_at DATETIME,
+                    liveness_message VARCHAR(255),
                     created_at DATETIME NOT NULL,
-                    updated_at DATETIME NOT NULL
+                    updated_at DATETIME NOT NULL,
+                    deleted_at DATETIME
                 )
             """)
             migrations_applied.append("account_pool_entries")
@@ -277,6 +303,10 @@ def run_auto_migration():
         account_pool_credential_columns = {
             "password_encrypted": "TEXT",
             "two_factor_secret_encrypted": "TEXT",
+            "liveness_status": "VARCHAR(20)",
+            "liveness_checked_at": "DATETIME",
+            "liveness_message": "VARCHAR(255)",
+            "deleted_at": "DATETIME",
         }
         if table_exists(cursor, "account_pool_entries"):
             for column_name, column_type in account_pool_credential_columns.items():

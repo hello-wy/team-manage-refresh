@@ -13,6 +13,7 @@ env/
 .idea/
 *.db
 *.sqlite3
+data/
 docker-compose.yml
 Dockerfile
 .dockerignore

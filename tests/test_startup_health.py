@@ -93,6 +93,12 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     team_id INTEGER NOT NULL,
                     account_id VARCHAR(100) NOT NULL
                 );
+                CREATE TABLE account_pool_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                );
             """)
             connection.close()
 
@@ -107,11 +113,16 @@ class MigrationCompatibilityTests(unittest.TestCase):
             connection.close()
 
             self.assertIn("pending_replacements", team_columns)
+            self.assertIn("replacement_export_pending", mapping_columns)
             self.assertIn("last_invited_at", mapping_columns)
             self.assertIn("seat_type", mapping_columns)
             self.assertNotIn("seat_type", pool_columns)
             self.assertIn("password_encrypted", pool_columns)
             self.assertIn("two_factor_secret_encrypted", pool_columns)
+            self.assertIn("deleted_at", pool_columns)
+            self.assertIn("liveness_status", pool_columns)
+            self.assertIn("liveness_checked_at", pool_columns)
+            self.assertIn("liveness_message", pool_columns)
 
     @staticmethod
     def _columns(connection, table_name):

@@ -6,8 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
+from app.models import (
+    AccountPoolEntry, AccountPoolHistory, MemberAuthorization, Team, TeamEmailMapping,
+)
 from app.services.account_pool import AccountPoolService
+from app.services.account_pool_credentials import AccountPoolCredentialService
+from app.services.encryption import encryption_service
 from app.services.team import TeamService
 from app.utils.time_utils import get_now
 
@@ -18,7 +22,9 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
         self.sessions = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
-        self.service = AccountPoolService()
+        self.service = AccountPoolService(
+            AccountPoolCredentialService(encryption_service)
+        )
 
     async def asyncTearDown(self):
         await self.engine.dispose()
@@ -44,6 +50,99 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result["existing"], ["member@example.com"])
             self.assertIsNone(listing["entries"][0]["seat_type"])
+
+    async def test_batch_add_accepts_email_password_and_two_factor_secret(self):
+        async with self.sessions() as session:
+            result = await self.service.add_emails(
+                session,
+                content=(
+                    "NancyCarterH918@gmail.com----OCRvy*pCSdL3RPZi----"
+                    "RV3B7W3PZWC2IPIHPJ2TT6SAATDDCQJ2\n"
+                    "plain@example.com"
+                ),
+            )
+            credential_service = AccountPoolCredentialService(encryption_service)
+            credentials = await credential_service.get_credentials(
+                session, "nancycarterh918@gmail.com"
+            )
+
+            self.assertEqual(
+                result["added"],
+                ["nancycarterh918@gmail.com", "plain@example.com"],
+            )
+            self.assertEqual(credentials["password"], "OCRvy*pCSdL3RPZi")
+            self.assertEqual(
+                credentials["two_factor_secret"],
+                "RV3B7W3PZWC2IPIHPJ2TT6SAATDDCQJ2",
+            )
+
+    async def test_deleted_account_is_hidden_and_not_selected_as_replacement(self):
+        async with self.sessions() as session:
+            await self.service.add_emails(
+                session,
+                emails=["deleted@example.com", "available@example.com"],
+            )
+            deleted_entry = (
+                await session.execute(
+                    select(AccountPoolEntry).where(
+                        AccountPoolEntry.email == "deleted@example.com"
+                    )
+                )
+            ).scalar_one()
+            credential_service = AccountPoolCredentialService(encryption_service)
+            await credential_service.delete_entry(session, deleted_entry.id)
+
+            listing = await self.service.list_entries(session)
+            candidate = await self.service.find_replacement_candidate(1, session)
+
+            self.assertEqual(
+                [entry["email"] for entry in listing["entries"]],
+                ["available@example.com"],
+            )
+            self.assertEqual(candidate.email, "available@example.com")
+
+    async def test_invited_replacement_persists_export_queue(self):
+        async with self.sessions() as session:
+            session.add(Team(
+                id=1, email="owner@example.com", account_id="account-1",
+                access_token_encrypted="token", status="active",
+            ))
+            await session.commit()
+            await self.service.add_emails(session, emails=["member@example.com"])
+
+            result = await self.service.invite_replacement(
+                1, session,
+                invite_member=AsyncMock(return_value={"success": True, "status": "invited"}),
+            )
+            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
+
+            self.assertEqual(result["email"], "member@example.com")
+            self.assertTrue(mapping.replacement_export_pending)
+            self.assertEqual(mapping.status, "invited")
+
+    async def test_reinvite_invalidates_old_authorization_and_export_state(self):
+        async with self.sessions() as session:
+            session.add(Team(
+                id=1, email="owner@example.com", account_id="account-1",
+                access_token_encrypted="token", status="active",
+            ))
+            session.add(MemberAuthorization(
+                team_id=1, email="member@example.com", account_id="account-1",
+                credentials_encrypted="old", export_json_encrypted="old-json",
+                sub2api_account_id=42, sub2api_exported_at=get_now(),
+            ))
+            await session.commit()
+            await self.service.add_emails(session, emails=["member@example.com"])
+
+            await self.service.invite_replacement(
+                1, session,
+                invite_member=AsyncMock(return_value={"success": True, "status": "invited"}),
+            )
+            record = (await session.execute(select(MemberAuthorization))).scalar_one()
+
+            self.assertIsNone(record.credentials_encrypted)
+            self.assertIsNone(record.export_json_encrypted)
+            self.assertIsNone(record.sub2api_exported_at)
 
     async def test_join_and_leave_creates_reopenable_history(self):
         async with self.sessions() as session:
@@ -173,6 +272,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
                 1,
                 "eligible@example.com",
                 session,
+                seat_type="standard",
             )
 
     async def test_invite_options_only_include_currently_available_accounts(self):

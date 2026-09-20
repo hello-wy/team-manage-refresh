@@ -126,6 +126,34 @@ class OpenAIAutomaticLoginService:
         logger.info("成员自动登录完成: identifier=%s", request.identifier)
         return await self._exchange(request, current_url)
 
+    async def verify_credentials(self, request: AutomaticLoginRequest) -> None:
+        """Verify password/TOTP without selecting a workspace or exchanging tokens."""
+        await self._dependencies.clear_session(request.identifier)
+        try:
+            session = await self._dependencies.get_session(request.db_session, request.identifier)
+            device_id = secrets.token_hex(16)
+            self._set_device_cookie(session, device_id)
+            sentinel_token = await self._sentinel(session, device_id)
+            _, current_url = await self._follow(
+                session, request.oauth_draft["authorize_url"], device_id, sentinel_token
+            )
+            current_url = await self._submit_email(
+                session, request.email, current_url, device_id, sentinel_token
+            )
+            current_url = await self._submit_password_and_totp(
+                session, request, current_url, device_id, sentinel_token
+            )
+            if not _is_callback(current_url) and not current_url.rstrip("/").endswith(
+                ("/consent", "/workspace")
+            ):
+                raise OpenAIAutomaticLoginError("登录后未到达授权步骤，无法确认账号验活")
+            if _is_callback(current_url):
+                state = (parse_qs(urlparse(current_url).query).get("state") or [""])[0]
+                if not secrets.compare_digest(state, request.oauth_draft["state"]):
+                    raise OpenAIAutomaticLoginError("账号验活 OAuth state 不匹配")
+        finally:
+            await self._dependencies.clear_session(request.identifier)
+
     async def _sentinel(self, session: Any, device_id: str) -> str:
         try:
             return await self._dependencies.issue_sentinel(session, device_id)

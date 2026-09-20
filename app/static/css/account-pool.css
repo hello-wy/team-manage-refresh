@@ -42,6 +42,19 @@
     white-space: nowrap;
 }
 
+.account-pool-liveness {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 130px;
+    max-width: 220px;
+    justify-items: start;
+}
+
+.account-pool-liveness small {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
 .account-pool-team {
     display: grid;
     gap: 0.2rem;
@@ -53,6 +66,7 @@
 }
 
 .account-pool-secret-button,
+.account-pool-edit-button,
 .account-pool-delete-button {
     width: 32px;
     height: 32px;
@@ -64,6 +78,14 @@
 .account-pool-page .data-table th:nth-child(3),
 .account-pool-page .data-table td:nth-child(3) {
     min-width: 180px;
+}
+
+.account-pool-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.65rem;
+    flex-wrap: wrap;
 }
 
 .account-pool-row-actions {
@@ -102,6 +124,17 @@
     }
 
     .account-pool-form .btn {
+        width: 100%;
+    }
+
+    .account-pool-toolbar-actions,
+    .account-pool-toolbar-actions .search-form,
+    .account-pool-toolbar-actions .input-group-clean,
+    .account-pool-toolbar-actions .dropdown-wrapper {
+        width: 100%;
+    }
+
+    .account-pool-toolbar-actions .btn {
         width: 100%;
     }
 

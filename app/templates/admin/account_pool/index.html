@@ -3,7 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260920-3">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260920-7">
 {% endblock %}
 
 {% block content %}
@@ -20,20 +20,26 @@
                 <span class="page-meta-pill"><i data-lucide="shield-check"></i> 默认一个账号只加入一个 Team</span>
             </div>
         </div>
+        <div class="page-header-actions">
+            <button type="button" class="btn btn-primary" id="accountPoolLivenessBtn">
+                <i data-lucide="activity" style="width: 16px; height: 16px;"></i>
+                <span>立即验活</span>
+            </button>
+        </div>
     </div>
 
     <section class="content-section">
         <div class="section-header">
             <div>
-                <h3>添加账号邮箱</h3>
-                <p class="text-muted">每行一个邮箱，支持一次粘贴多个邮箱。席位类型会在账号实际加入 Team 后自动同步。</p>
+                <h3>添加账号</h3>
+                <p class="text-muted">每行一个账号，支持纯邮箱或“邮箱----密码----2FA”。删除账号会同时删除其凭据和加入历史。</p>
             </div>
         </div>
         <form id="accountPoolForm" class="account-pool-form">
             <div class="form-group">
-                <label for="accountPoolEmails">邮箱列表</label>
-                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com\nbob@example.com"></textarea>
-                <div class="account-pool-hint">支持大小写混合输入，系统会统一转为小写并校验邮箱格式。</div>
+                <label for="accountPoolEmails">账号列表</label>
+                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET\nbob@example.com"></textarea>
+                <div class="account-pool-hint">每行一条；密码和 2FA 会加密保存，邮箱会统一转为小写。</div>
             </div>
             <button type="submit" class="btn btn-primary" id="accountPoolSubmitBtn">
                 <i data-lucide="plus-circle" style="width: 16px; height: 16px;"></i>
@@ -46,15 +52,24 @@
         <div class="workbench-toolbar-row">
             <div class="workbench-toolbar-copy">
                 <h3>账号状态</h3>
-                <p class="text-muted">当前状态来自 Team 成员/邀请同步；历史记录用于追踪曾经加入过的 Team。</p>
+                <p class="text-muted">当前状态来自 Team 成员/邀请同步；验活状态来自定时密码与 2FA 检测。</p>
             </div>
-            <form method="get" class="search-form">
-                <div class="input-group-clean">
-                    <i data-lucide="search" style="width: 14px; height: 14px;"></i>
-                    <input type="text" name="search" value="{{ search or '' }}" placeholder="搜索邮箱...">
-                    {% if status_filter %}<input type="hidden" name="status_filter" value="{{ status_filter }}">{% endif %}
+            <div class="account-pool-toolbar-actions">
+                <form method="get" class="search-form">
+                    <div class="input-group-clean">
+                        <i data-lucide="search" style="width: 14px; height: 14px;"></i>
+                        <input type="text" name="search" value="{{ search or '' }}" placeholder="搜索邮箱...">
+                        {% if status_filter %}<input type="hidden" name="status_filter" value="{{ status_filter }}">{% endif %}
+                    </div>
+                </form>
+                <div class="dropdown-wrapper">
+                    <button type="button" class="btn btn-secondary btn-sm dropdown-toggle" onclick="toggleDropdown('accountPoolColumnToggleDropdown', this)">
+                        <i data-lucide="columns" style="width: 16px; height: 16px;"></i>
+                        列设置
+                    </button>
+                    <div id="accountPoolColumnToggleDropdown" class="dropdown-menu dropdown-menu-floating"></div>
                 </div>
-            </form>
+            </div>
         </div>
 
         {% if entries %}
@@ -67,6 +82,7 @@
                         <th>2FA</th>
                         <th>席位类型</th>
                         <th>当前状态</th>
+                        <th>验活状态</th>
                         <th>当前 Team</th>
                         <th>最近加入时间</th>
                         <th>加入历史</th>
@@ -95,6 +111,15 @@
                                 {% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}
                             </span>
                         </td>
+                        <td data-label="验活状态">
+                            <div class="account-pool-liveness">
+                                <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status == 'invalid' %}status-error{% elif entry.liveness_status == 'error' %}status-pending{% else %}status-banned{% endif %}">
+                                    {% if entry.liveness_status == 'alive' %}正常{% elif entry.liveness_status == 'invalid' %}凭据无效{% elif entry.liveness_status == 'error' %}检测异常{% elif entry.liveness_status == 'missing' %}缺少密码{% else %}未检测{% endif %}
+                                </span>
+                                {% if entry.liveness_checked_at %}<small>{{ entry.liveness_checked_at|format_datetime }}</small>{% endif %}
+                                {% if entry.liveness_message and entry.liveness_status != 'alive' %}<small title="{{ entry.liveness_message }}">{{ entry.liveness_message }}</small>{% endif %}
+                            </div>
+                        </td>
                         <td data-label="当前 Team">
                             {% if entry.team_id %}
                             <div class="account-pool-team">
@@ -112,7 +137,10 @@
                         </td>
                         <td data-label="操作">
                             <div class="account-pool-row-actions">
-                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger account-pool-delete-button" title="删除账号" aria-label="删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
+                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
+                                    <i data-lucide="pencil" aria-hidden="true"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger account-pool-delete-button" title="永久删除账号" aria-label="永久删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
                                     <i data-lucide="trash-2" aria-hidden="true"></i>
                                 </button>
                             </div>
@@ -142,6 +170,35 @@
     </section>
 </div>
 
+<div id="accountPoolCredentialModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i data-lucide="key-round"></i> 编辑账号凭据</h3>
+            <button class="modal-close" type="button" onclick="hideModal('accountPoolCredentialModal')">&times;</button>
+        </div>
+        <form id="accountPoolCredentialForm">
+            <div class="modal-body">
+                <p id="accountPoolCredentialEmail" class="text-muted"></p>
+                <div class="form-group">
+                    <label for="accountPoolCredentialPassword">登录密码</label>
+                    <input id="accountPoolCredentialPassword" class="form-control" type="text" autocomplete="off" maxlength="4096" placeholder="输入新的登录密码">
+                </div>
+                <div class="form-group">
+                    <label for="accountPoolCredentialTwoFactor">2FA 密钥</label>
+                    <input id="accountPoolCredentialTwoFactor" class="form-control" type="text" autocomplete="off" maxlength="2048" placeholder="输入 Base32 密钥">
+                    <div class="account-pool-hint">至少填写一项；未填写的项目会保持原值。</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('accountPoolCredentialModal')">取消</button>
+                <button type="submit" class="btn btn-primary" id="accountPoolCredentialSave">
+                    <i data-lucide="save"></i> 保存
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div id="accountPoolHistoryModal" class="modal-overlay">
     <div class="modal modal-large">
         <div class="modal-header">
@@ -157,5 +214,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260920-3"></script>
+<script src="/static/js/account-pool.js?v=20260920-7"></script>
 {% endblock %}

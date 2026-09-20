@@ -74,7 +74,7 @@ class AccountPoolHistoryService:
         entry_id: int,
     ) -> Optional[dict]:
         entry = await db_session.get(AccountPoolEntry, entry_id)
-        if not entry:
+        if not entry or entry.deleted_at is not None:
             return None
         result = await db_session.execute(
             select(AccountPoolHistory)

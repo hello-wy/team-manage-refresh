@@ -30,6 +30,7 @@
             <div class="settings-nav-group-title">自动化</div>
             <a href="#settings-refresh" class="settings-nav-pill settings-nav-link" data-target="settings-refresh">Token 预刷新</a>
             <a href="#settings-team-auto-refresh" class="settings-nav-pill settings-nav-link" data-target="settings-team-auto-refresh">Team 自动刷新</a>
+            <a href="#settings-account-pool-liveness" class="settings-nav-pill settings-nav-link" data-target="settings-account-pool-liveness">账号验活</a>
             <a href="#settings-warranty-auto-kick" class="settings-nav-pill settings-nav-link" data-target="settings-warranty-auto-kick">自动踢人</a>
         </div>
         <div class="settings-nav-group">
@@ -192,6 +193,22 @@
 </div>
 
 
+<!-- 账号号池验活配置 -->
+<div class="content-section settings-panel" id="settings-account-pool-liveness">
+    <div class="section-header">
+        <h3>账号号池验活</h3>
+    </div>
+    <form id="accountPoolLivenessForm" class="settings-form">
+        <div class="form-group">
+            <label for="accountPoolLivenessCron">执行时间 (cron)</label>
+            <input type="text" id="accountPoolLivenessCron" name="cron" required
+                value="{{ account_pool_liveness_cron }}" placeholder="30 2 * * *" class="form-control">
+            <p class="form-help">五段 cron：分 时 日 月 周；默认每天 02:30，时区 {{ account_pool_liveness_timezone }}。星期数字 0 表示周一，6 表示周日。仅检测已录入的账号，不会修改 Team 成员状态。</p>
+        </div>
+        <button type="submit" class="btn btn-primary">保存验活时间</button>
+    </form>
+</div>
+
 <!-- 自动踢人配置 -->
 <div class="content-section settings-panel" id="settings-warranty-auto-kick">
     <div class="section-header">
@@ -350,6 +367,26 @@
                 placeholder="{{ '已配置，留空保持不变' if sub2api_has_api_key else '请输入管理员 API Key' }}">
             <p class="form-help">用于将已授权并入组的成员导入 sub2api。密钥不会回显。</p>
         </div>
+        <div class="form-group">
+            <label>导出分组</label>
+            <label class="checkbox-label">
+                <input type="radio" name="sub2api_group_mode" value="all"
+                    {% if sub2api_group_mode != 'selected' %}checked{% endif %}>
+                <span>全部 OpenAI 分组（默认，包含以后新增的分组）</span>
+            </label>
+            <label class="checkbox-label">
+                <input type="radio" name="sub2api_group_mode" value="selected"
+                    {% if sub2api_group_mode == 'selected' %}checked{% endif %}>
+                <span>仅指定分组</span>
+            </label>
+            <div class="sub2api-group-toolbar">
+                <button type="button" id="sub2apiLoadGroups" class="btn btn-secondary btn-sm">
+                    <i data-lucide="refresh-cw"></i> 获取 OpenAI 分组
+                </button>
+                <span id="sub2apiGroupStatus" class="form-help" role="status" aria-live="polite">点击按钮读取目标 sub2api 的分组。</span>
+            </div>
+            <div id="sub2apiGroupList" class="sub2api-group-list" hidden></div>
+        </div>
         <button type="submit" class="btn btn-primary">保存 sub2api 配置</button>
     </form>
 </div>
@@ -479,6 +516,24 @@
         color: var(--text-main);
         border-color: var(--primary);
         background: var(--primary-soft);
+    }
+
+    .sub2api-group-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-top: 0.75rem;
+    }
+
+    .sub2api-group-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.5rem 1rem;
+        margin-top: 0.75rem;
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
     }
 </style>
 {% endblock %}
@@ -697,6 +752,23 @@
         }
     });
 
+    document.getElementById('accountPoolLivenessForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const cron = document.getElementById('accountPoolLivenessCron').value.trim();
+        try {
+            const response = await fetch('/admin/settings/account-pool-liveness', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({cron})
+            });
+            const data = await response.json();
+            showToast(response.ok && data.success ? data.message : (data.error || '保存失败'),
+                response.ok && data.success ? 'success' : 'error');
+        } catch (error) {
+            showToast('网络错误', 'error');
+        }
+    });
+
     // 续期提醒天数允许在自动踢人未启用时也调整：admin 可以先把阈值设好，
     // 之后再翻开关，避免"想保存改的天数"必须先开自动踢人这种反直觉操作。
 
@@ -858,20 +930,100 @@
         }
     });
 
+    let sub2apiSavedGroupIds = [];
+    try { sub2apiSavedGroupIds = JSON.parse({{ sub2api_group_ids|tojson }}); } catch (error) {}
+    const sub2apiGroupState = {
+        groups: [],
+        selectedIds: new Set(Array.isArray(sub2apiSavedGroupIds) ? sub2apiSavedGroupIds.map(Number) : [])
+    };
+
+    function getSub2apiGroupMode() {
+        return document.querySelector('input[name="sub2api_group_mode"]:checked')?.value || 'all';
+    }
+
+    function renderSub2apiGroups() {
+        const container = document.getElementById('sub2apiGroupList');
+        const selectedMode = getSub2apiGroupMode() === 'selected';
+        container.hidden = sub2apiGroupState.groups.length === 0;
+        container.innerHTML = '';
+        sub2apiGroupState.groups.forEach(group => {
+            const label = document.createElement('label');
+            label.className = 'checkbox-label';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = String(group.id);
+            checkbox.disabled = !selectedMode;
+            checkbox.checked = !selectedMode || sub2apiGroupState.selectedIds.has(group.id);
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) sub2apiGroupState.selectedIds.add(group.id);
+                else sub2apiGroupState.selectedIds.delete(group.id);
+            });
+            const text = document.createElement('span');
+            text.textContent = group.name;
+            label.append(checkbox, text);
+            container.appendChild(label);
+        });
+    }
+
+    document.querySelectorAll('input[name="sub2api_group_mode"]').forEach(input => {
+        input.addEventListener('change', () => {
+            if (getSub2apiGroupMode() === 'selected' && sub2apiGroupState.selectedIds.size === 0) {
+                sub2apiGroupState.groups.forEach(group => sub2apiGroupState.selectedIds.add(group.id));
+            }
+            renderSub2apiGroups();
+        });
+    });
+
+    document.getElementById('sub2apiLoadGroups').addEventListener('click', async () => {
+        const button = document.getElementById('sub2apiLoadGroups');
+        const status = document.getElementById('sub2apiGroupStatus');
+        button.disabled = true;
+        status.textContent = '正在获取 OpenAI 分组...';
+        try {
+            const response = await fetch('/admin/settings/sub2api/groups', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    base_url: document.getElementById('sub2apiBaseUrl').value.trim(),
+                    api_key: document.getElementById('sub2apiApiKey').value.trim()
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || '获取分组失败');
+            sub2apiGroupState.groups = data.groups;
+            if (getSub2apiGroupMode() === 'selected' && sub2apiGroupState.selectedIds.size === 0) {
+                data.groups.forEach(group => sub2apiGroupState.selectedIds.add(group.id));
+            }
+            renderSub2apiGroups();
+            status.textContent = `已获取 ${data.groups.length} 个 OpenAI 分组。`;
+        } catch (error) {
+            status.textContent = error.message || '获取分组失败';
+            showToast(status.textContent, 'error');
+        } finally {
+            button.disabled = false;
+        }
+    });
+
     document.getElementById('sub2apiForm').addEventListener('submit', async (event) => {
         event.preventDefault();
         const base_url = document.getElementById('sub2apiBaseUrl').value.trim();
         const api_key = document.getElementById('sub2apiApiKey').value.trim();
+        const group_mode = getSub2apiGroupMode();
+        const group_ids = group_mode === 'selected' ? Array.from(sub2apiGroupState.selectedIds) : [];
+        if (group_mode === 'selected' && group_ids.length === 0) {
+            showToast('请至少选择一个 sub2api 分组', 'error');
+            return;
+        }
         try {
             const response = await fetch('/admin/settings/sub2api', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({base_url, api_key})
+                body: JSON.stringify({base_url, api_key, group_mode, group_ids})
             });
             const data = await response.json();
             if (!response.ok || !data.success) throw new Error(data.error || '保存失败');
             document.getElementById('sub2apiBaseUrl').value = data.base_url;
             document.getElementById('sub2apiApiKey').value = '';
             document.getElementById('sub2apiApiKey').placeholder = '已配置，留空保持不变';
+            sub2apiGroupState.selectedIds = new Set(data.group_ids || []);
             showToast(data.message, 'success');
         } catch (error) {
             showToast(error.message || '网络错误', 'error');

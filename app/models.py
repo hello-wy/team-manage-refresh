@@ -46,6 +46,7 @@ class Team(Base):
     redemption_records = relationship("RedemptionRecord", back_populates="team", cascade="all, delete-orphan")
     email_mappings = relationship("TeamEmailMapping", back_populates="team", cascade="all, delete-orphan")
     member_authorizations = relationship("MemberAuthorization", back_populates="team", cascade="all, delete-orphan")
+    replacement_queue = relationship("TeamReplacementQueue", back_populates="team", cascade="all, delete-orphan")
 
     # 索引
     __table_args__ = (
@@ -72,6 +73,19 @@ class MemberAuthorization(Base):
     oauth_expires_at = Column(DateTime)
     team = relationship("Team", back_populates="member_authorizations")
     __table_args__ = (Index("idx_member_authorization", "team_id", "email", unique=True),)
+
+
+class TeamReplacementQueue(Base):
+    """待补位任务，保留被踢成员的席位类型。"""
+    __tablename__ = "team_replacement_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    seat_type = Column(String(20), nullable=False, default="standard")
+    created_at = Column(DateTime, default=get_now, nullable=False)
+
+    team = relationship("Team", back_populates="replacement_queue")
+    __table_args__ = (Index("idx_replacement_queue_team", "team_id", "id"),)
 
 
 class TeamSeatHold(Base):
@@ -122,10 +136,20 @@ class TeamEmailMapping(Base):
         nullable=False,
         comment="是否由后台管理员手工邀请（永久标记，自动同步流程不会覆盖）",
     )
+    replacement_export_pending = Column(
+        Boolean, default=False, nullable=False,
+        comment="轮转补位邀请后待自动授权并导入 sub2api",
+    )
     upstream_user_id = Column(String(255), comment="上游成员用户 ID")
     member_role = Column(String(50), comment="上游成员角色")
     seat_type = Column(String(20), comment="成员实际席位类型: standard/premium")
     joined_at = Column(DateTime, comment="成员实际加入 Team 的时间")
+    auto_kick_exempt = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="是否免除成员自动下线",
+    )
     auto_kick_at = Column(DateTime, comment="成员计划自动踢出时间")
     last_invited_at = Column(DateTime, comment="最近一次向该 Team 发送邀请的时间")
     last_seen_at = Column(DateTime, default=get_now, comment="最后一次确认该状态的时间")
@@ -153,8 +177,12 @@ class AccountPoolEntry(Base):
     email = Column(String(255), nullable=False, comment="成员邮箱(统一存小写)")
     password_encrypted = Column(Text, comment="加密存储的 ChatGPT 登录密码")
     two_factor_secret_encrypted = Column(Text, comment="加密存储的 2FA 密钥")
+    liveness_status = Column(String(20), comment="验活结果: alive/invalid/error/missing")
+    liveness_checked_at = Column(DateTime, comment="最近一次验活时间")
+    liveness_message = Column(String(255), comment="最近一次验活结果说明")
     created_at = Column(DateTime, default=get_now, nullable=False)
     updated_at = Column(DateTime, default=get_now, onupdate=get_now, nullable=False)
+    deleted_at = Column(DateTime, comment="历史软删除时间；新删除操作直接物理删除")
 
     histories = relationship(
         "AccountPoolHistory",

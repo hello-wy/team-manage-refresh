@@ -686,7 +686,7 @@ class TeamService:
 
     @staticmethod
     def _member_auto_kick_at(mapping, hours):
-        if mapping.member_role == "account-owner" or not mapping.joined_at:
+        if mapping.auto_kick_exempt or mapping.member_role == "account-owner" or not mapping.joined_at:
             return None
         return mapping.joined_at + timedelta(hours=hours)
 
@@ -2516,6 +2516,7 @@ class TeamService:
                 member["auto_kick_at"] = (
                     mapping.auto_kick_at.isoformat() if mapping and mapping.auto_kick_at else None
                 )
+                member["auto_kick_exempt"] = bool(mapping and mapping.auto_kick_exempt)
             return {
                 "success": True,
                 "members": all_members,

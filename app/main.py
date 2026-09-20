@@ -16,6 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import logging
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -30,6 +31,8 @@ from app.services.auth import auth_service
 from app.services.team import team_service
 from app.services.member_auto_kick import member_auto_kick_service
 from app.services.account_pool import account_pool_service
+from app.services.account_pool_liveness import AccountPoolLivenessService
+from app.services.replacement_export import ReplacementExportService
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -60,6 +63,8 @@ DEFAULT_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 12
 MIN_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 1
 MAX_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 24 * 7
 MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES = 1
+DEFAULT_ACCOUNT_POOL_LIVENESS_CRON = "30 2 * * *"
+ACCOUNT_POOL_LIVENESS_JOB_ID = "account_pool_liveness"
 
 
 def _safe_int(value, default):
@@ -236,6 +241,52 @@ def configure_member_auto_kick_job() -> int:
     return MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES
 
 
+def account_pool_liveness_trigger(expression: str) -> CronTrigger:
+    trigger = CronTrigger.from_crontab(expression, timezone=settings.timezone)
+    if trigger.get_next_fire_time(None, datetime.now(trigger.timezone)) is None:
+        raise ValueError("cron 表达式没有可执行时间")
+    return trigger
+
+
+def configure_account_pool_liveness_job(expression: str) -> None:
+    trigger = account_pool_liveness_trigger(expression)
+    if scheduler.get_job(ACCOUNT_POOL_LIVENESS_JOB_ID):
+        scheduler.reschedule_job(ACCOUNT_POOL_LIVENESS_JOB_ID, trigger=trigger)
+    else:
+        scheduler.add_job(
+            scheduled_account_pool_liveness,
+            trigger=trigger,
+            id=ACCOUNT_POOL_LIVENESS_JOB_ID,
+            max_instances=1,
+            replace_existing=True,
+        )
+    if not scheduler.running:
+        scheduler.start()
+
+
+async def configure_account_pool_liveness_job_from_settings() -> str:
+    from app.services.settings import settings_service
+
+    async with AsyncSessionLocal() as session:
+        expression = await settings_service.get_setting(
+            session, "account_pool_liveness_cron", DEFAULT_ACCOUNT_POOL_LIVENESS_CRON
+        )
+    configure_account_pool_liveness_job(expression)
+    return expression
+
+
+async def scheduled_account_pool_liveness() -> dict[str, int]:
+    from app.routes.admin import automatic_login_service, chatgpt_service
+    from app.services.account_pool_credentials import account_pool_credential_service
+
+    service = AccountPoolLivenessService(
+        account_pool_credential_service, automatic_login_service, chatgpt_service
+    )
+    counts = await service.check_all(AsyncSessionLocal)
+    logger.info("账号号池验活完成: %s", counts)
+    return counts
+
+
 async def configure_warranty_auto_kick_job_from_settings() -> tuple[bool, int]:
     """从系统设置读取质保过期自动踢人配置并应用到定时任务。"""
     from app.services.settings import settings_service
@@ -399,13 +450,20 @@ async def scheduled_member_auto_kick():
             stats = await member_auto_kick_service.run_due_members(
                 session,
                 team_service.delete_team_member,
-                invite_replacement=lambda team_id, db_session: (
+                invite_replacement=lambda team_id, db_session, seat_type: (
                     account_pool_service.invite_replacement(
                         team_id,
                         db_session,
                         invite_member=team_service.add_team_member,
+                        seat_type=seat_type,
                     )
                 ),
+            )
+            export_stats = await member_auto_kick_service.process_pending_exports(
+                session,
+                ReplacementExportService(
+                    admin.member_authorization_service, admin.sub2api_service
+                ).complete,
             )
         log_method = logger.info if stats["success"] else logger.warning
         log_method(
@@ -419,6 +477,12 @@ async def scheduled_member_auto_kick():
             stats["replacement_unavailable"],
             stats["replacement_failed"],
             stats["replacement_pending"],
+        )
+        export_log = logger.info if export_stats["success"] else logger.warning
+        export_log(
+            "轮转账号自动授权与 sub2api 导入: scanned=%s exported=%s waiting=%s failed=%s",
+            export_stats["scanned"], export_stats["exported"],
+            export_stats["waiting"], export_stats["failed"],
         )
     except Exception:
         logger.exception("成员自动踢人任务执行失败")
@@ -493,6 +557,9 @@ async def lifespan(app: FastAPI):
             "定时任务已启动: 每 %s 分钟检查成员计划下线时间",
             member_auto_kick_interval,
         )
+
+        liveness_cron = await configure_account_pool_liveness_job_from_settings()
+        logger.info("账号号池验活任务已启动: cron=%s timezone=%s", liveness_cron, settings.timezone)
 
         logger.info("数据库初始化完成")
     except Exception as exc:

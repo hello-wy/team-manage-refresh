@@ -119,6 +119,32 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exchange.await_args.kwargs["code"], "test-code")
         self.assertEqual(exchange.await_args.kwargs["code_verifier"], "test-verifier")
 
+    async def test_verify_credentials_stops_before_workspace_and_closes_session(self):
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(302, headers={"location": "/log-in"}),
+                FakeResponse(200), FakeResponse(200), FakeResponse(200),
+            ],
+            post_responses=[
+                FakeResponse(200, payload={"continue_url": "/log-in/password"}),
+                FakeResponse(200, payload={"continue_url": "/workspace"}),
+            ],
+        )
+        clear_session = AsyncMock()
+        exchange = AsyncMock()
+        service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+            get_session=AsyncMock(return_value=session),
+            clear_session=clear_session,
+            exchange_code=exchange,
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
+        ))
+
+        await service.verify_credentials(self.request())
+
+        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(clear_session.await_count, 2)
+        exchange.assert_not_awaited()
+
     async def test_callback_state_mismatch_is_rejected_before_exchange(self):
         session = FakeSession(
             get_responses=[

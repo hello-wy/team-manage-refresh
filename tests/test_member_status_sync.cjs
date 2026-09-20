@@ -38,6 +38,7 @@ function harness() {
         renderMemberSeatControl: () => '',
         renderMemberSeatType: () => '',
         renderMemberAutoKickTime: () => '',
+        renderMemberAutoKickControl: () => '',
         renderMemberAuthorizationActions: () => '',
         renderMemberAuthorizationStatus: () => '',
         memberAccountCredentials: {reset() {}},
