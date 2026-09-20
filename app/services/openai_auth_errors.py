@@ -15,7 +15,9 @@ STAGE_LABELS = {
     "workspace_select": "Team 工作区选择失败",
 }
 CODE_MESSAGES = {
-    "invalid_username_or_password": "OpenAI 拒绝了账号或密码，请更新账号号池中的登录密码后重试",
+    "invalid_username_or_password": (
+        "OpenAI 拒绝了账号登录，可能是密码错误、账号停用或封禁"
+    ),
 }
 
 

@@ -37,6 +37,7 @@ class FakeSession:
         self.get_responses = list(get_responses)
         self.post_responses = list(post_responses)
         self.posts = []
+        self.post_headers = []
 
     async def get(self, url, **kwargs):
         response = self.get_responses.pop(0)
@@ -45,6 +46,7 @@ class FakeSession:
 
     async def post(self, url, **kwargs):
         self.posts.append((url, kwargs.get("json")))
+        self.post_headers.append(kwargs.get("headers") or {})
         response = self.post_responses.pop(0)
         response.url = response.url or url
         return response
@@ -102,6 +104,7 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             get_session=AsyncMock(return_value=session),
             clear_session=AsyncMock(),
             exchange_code=exchange,
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
         ))
 
         with patch("app.services.openai_automatic_login.generate_totp", return_value="123456"):
@@ -109,6 +112,10 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(session.posts[-1][1]["code"], "123456")
+        self.assertTrue(all(
+            headers.get("openai-sentinel-token") == "sentinel-token"
+            for headers in session.post_headers
+        ))
         self.assertEqual(exchange.await_args.kwargs["code"], "test-code")
         self.assertEqual(exchange.await_args.kwargs["code_verifier"], "test-verifier")
 
@@ -131,6 +138,7 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             get_session=AsyncMock(return_value=session),
             clear_session=AsyncMock(),
             exchange_code=exchange,
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
         ))
 
         with self.assertRaisesRegex(OpenAIAutomaticLoginError, "state"):
@@ -157,11 +165,12 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             get_session=AsyncMock(return_value=session),
             clear_session=AsyncMock(),
             exchange_code=AsyncMock(),
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
         ))
 
         with self.assertLogs("app.services.openai_auth_errors", level="WARNING") as logs:
             with self.assertRaisesRegex(
-                OpenAIAutomaticLoginError, "请更新账号号池中的登录密码"
+                OpenAIAutomaticLoginError, "密码错误、账号停用或封禁"
             ) as raised:
                 await service.login(self.request())
 
@@ -169,3 +178,35 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("invalid_username_or_password", output)
         self.assertNotIn("member-password", output)
         self.assertNotIn("secret-token", output)
+
+    async def test_workspace_selection_relies_on_upstream_response(self):
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(302, headers={"location": "/log-in"}),
+                FakeResponse(200),
+                FakeResponse(200),
+                FakeResponse(200),
+            ],
+            post_responses=[
+                FakeResponse(200, payload={"continue_url": "/log-in/password"}),
+                FakeResponse(200, payload={"continue_url": "/workspace"}),
+                FakeResponse(200, payload={
+                    "continue_url": (
+                        "http://localhost:1455/auth/callback?"
+                        "code=test-code&state=test-state"
+                    )
+                }),
+            ],
+        )
+        exchange = AsyncMock(return_value={"success": True})
+        service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+            get_session=AsyncMock(return_value=session),
+            clear_session=AsyncMock(),
+            exchange_code=exchange,
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
+        ))
+
+        result = await service.login(self.request())
+
+        self.assertTrue(result["success"])
+        self.assertEqual(session.posts[-1][1], {"workspace_id": "team-account"})

@@ -1,13 +1,13 @@
 """OpenAI OAuth automatic login using email, password and TOTP."""
-import base64
-import json
 import logging
 import secrets
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from app.services.openai_auth_errors import auth_failure_message
+from app.services.openai_auth_session import auth_session_claims
+from app.services.openai_sentinel import OpenAISentinelError, issue_sentinel_token
 from app.utils.totp import TotpError, generate_totp
 
 AUTH_ORIGIN = "https://auth.openai.com"
@@ -27,6 +27,7 @@ class AutomaticLoginDependencies:
     get_session: Callable[..., Awaitable[Any]]
     clear_session: Callable[[str], Awaitable[None]]
     exchange_code: Callable[..., Awaitable[dict[str, Any]]]
+    issue_sentinel: Callable[[Any, str], Awaitable[str]] = issue_sentinel_token
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,9 @@ def _is_callback(url: str) -> bool:
     return parsed.netloc == CALLBACK_HOST and bool(query.get("code"))
 
 
-def _auth_headers(device_id: str, referer: str, *, json_request: bool = False) -> dict[str, str]:
+def _auth_headers(
+    device_id: str, referer: str, *, json_request: bool = False, sentinel_token: str = ""
+) -> dict[str, str]:
     headers = {
         "Accept": "application/json" if json_request else "text/html,application/xhtml+xml",
         "Accept-Language": "en-US,en;q=0.9",
@@ -71,6 +74,8 @@ def _auth_headers(device_id: str, referer: str, *, json_request: bool = False) -
     }
     if json_request:
         headers["Content-Type"] = "application/json"
+    if sentinel_token:
+        headers["openai-sentinel-token"] = sentinel_token
     return headers
 
 
@@ -94,31 +99,6 @@ def _is_mfa_challenge(payload: dict[str, Any], next_url: str) -> bool:
     return str(page.get("type") or "").lower() == "mfa_challenge" or "/mfa-challenge/" in next_url.lower()
 
 
-def _decode_jwt_segment(segment: str) -> dict[str, Any]:
-    try:
-        padded = segment + "=" * (-len(segment) % 4)
-        return json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-    except Exception:
-        return {}
-
-
-def _auth_session_claims(session: Any) -> dict[str, Any]:
-    try:
-        cookie = unquote(str(session.cookies.get("oai-client-auth-session") or ""))
-    except Exception:
-        return {}
-    segments = cookie.split(".")
-    return _decode_jwt_segment(segments[1]) if len(segments) > 1 else {}
-
-
-def _workspace_ids(session: Any) -> set[str]:
-    claims = _auth_session_claims(session)
-    workspaces = claims.get("workspaces") if isinstance(claims, dict) else []
-    if not isinstance(workspaces, list):
-        return set()
-    return {str(item.get("id") or "") for item in workspaces if isinstance(item, dict)} - {""}
-
-
 class OpenAIAutomaticLoginService:
     def __init__(self, dependencies: AutomaticLoginDependencies):
         self._dependencies = dependencies
@@ -128,18 +108,31 @@ class OpenAIAutomaticLoginService:
         session = await self._dependencies.get_session(request.db_session, request.identifier)
         device_id = secrets.token_hex(16)
         self._set_device_cookie(session, device_id)
-        _, current_url = await self._follow(session, request.oauth_draft["authorize_url"], device_id)
-        current_url = await self._submit_email(session, request.email, current_url, device_id)
+        sentinel_token = await self._sentinel(session, device_id)
+        _, current_url = await self._follow(
+            session, request.oauth_draft["authorize_url"], device_id, sentinel_token
+        )
+        current_url = await self._submit_email(
+            session, request.email, current_url, device_id, sentinel_token
+        )
         current_url = await self._submit_password_and_totp(
-            session, request, current_url, device_id
+            session, request, current_url, device_id, sentinel_token
         )
         current_url = await self._select_workspace(
-            session, current_url, request.account_id, device_id
+            session, current_url, request.account_id, device_id, sentinel_token
         )
         if not _is_callback(current_url):
             raise OpenAIAutomaticLoginError("自动登录未取得 OAuth 回调，请检查账号登录状态")
         logger.info("成员自动登录完成: identifier=%s", request.identifier)
         return await self._exchange(request, current_url)
+
+    async def _sentinel(self, session: Any, device_id: str) -> str:
+        try:
+            return await self._dependencies.issue_sentinel(session, device_id)
+        except OpenAISentinelError as exc:
+            raise OpenAIAutomaticLoginError(
+                f"自动登录 Sentinel 初始化失败（{exc}）"
+            ) from exc
 
     @staticmethod
     def _set_device_cookie(session: Any, device_id: str) -> None:
@@ -148,7 +141,9 @@ class OpenAIAutomaticLoginService:
         except Exception as exc:
             raise OpenAIAutomaticLoginError("无法初始化自动登录会话") from exc
 
-    async def _follow(self, session: Any, start_url: str, device_id: str) -> tuple[Any, str]:
+    async def _follow(
+        self, session: Any, start_url: str, device_id: str, sentinel_token: str
+    ) -> tuple[Any, str]:
         current_url = urljoin(AUTH_ORIGIN, str(start_url or ""))
         response = None
         for _ in range(MAX_REDIRECTS):
@@ -156,7 +151,7 @@ class OpenAIAutomaticLoginService:
                 return response, current_url
             response = await session.get(
                 current_url,
-                headers=_auth_headers(device_id, current_url),
+                headers=_auth_headers(device_id, current_url, sentinel_token=sentinel_token),
                 allow_redirects=False,
             )
             if response.status_code not in REDIRECT_STATUSES:
@@ -168,11 +163,14 @@ class OpenAIAutomaticLoginService:
         raise OpenAIAutomaticLoginError("自动登录重定向次数过多")
 
     async def _submit_email(
-        self, session: Any, email: str, current_url: str, device_id: str
+        self, session: Any, email: str, current_url: str,
+        device_id: str, sentinel_token: str,
     ) -> str:
         response = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/authorize/continue",
-            headers=_auth_headers(device_id, current_url, json_request=True),
+            headers=_auth_headers(
+                device_id, current_url, json_request=True, sentinel_token=sentinel_token
+            ),
             json={"username": {"value": email, "kind": "email"}},
             allow_redirects=False,
         )
@@ -183,17 +181,20 @@ class OpenAIAutomaticLoginService:
         next_url = _next_url(response)
         if not next_url:
             raise OpenAIAutomaticLoginError("账号提交后未返回登录步骤")
-        _, current_url = await self._follow(session, next_url, device_id)
+        _, current_url = await self._follow(session, next_url, device_id, sentinel_token)
         if "password" not in current_url.lower():
             raise OpenAIAutomaticLoginError("该账号未进入密码登录流程，无法执行自动登录")
         return current_url
 
     async def _submit_password_and_totp(
-        self, session: Any, request: AutomaticLoginRequest, current_url: str, device_id: str
+        self, session: Any, request: AutomaticLoginRequest, current_url: str,
+        device_id: str, sentinel_token: str,
     ) -> str:
         response = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/password/verify",
-            headers=_auth_headers(device_id, current_url, json_request=True),
+            headers=_auth_headers(
+                device_id, current_url, json_request=True, sentinel_token=sentinel_token
+            ),
             json={"password": request.password},
             allow_redirects=False,
         )
@@ -205,22 +206,23 @@ class OpenAIAutomaticLoginService:
         next_url = _next_url(response)
         if _is_mfa_challenge(payload, next_url):
             next_url = await self._complete_totp(
-                session, request.totp_secret, payload, next_url, device_id
+                session, request.totp_secret, payload, next_url, device_id, sentinel_token
             )
         if not next_url:
             raise OpenAIAutomaticLoginError("密码验证后未返回下一步")
-        _, current_url = await self._follow(session, next_url, device_id)
+        _, current_url = await self._follow(session, next_url, device_id, sentinel_token)
         if "email-verification" in current_url.lower():
             raise OpenAIAutomaticLoginError("该账号还要求邮箱验证码，当前自动登录仅支持密码和 2FA")
         return current_url
 
     async def _complete_totp(
-        self, session: Any, secret: str, payload: dict[str, Any], referer: str, device_id: str
+        self, session: Any, secret: str, payload: dict[str, Any], referer: str,
+        device_id: str, sentinel_token: str,
     ) -> str:
         factor_id = _mfa_factor_id(payload)
         if not factor_id:
             factor_id = _mfa_factor_id({
-                "oai-client-auth-session": _auth_session_claims(session)
+                "oai-client-auth-session": auth_session_claims(session)
             })
         if not factor_id:
             raise OpenAIAutomaticLoginError("2FA 挑战未返回 TOTP 因子")
@@ -228,7 +230,9 @@ class OpenAIAutomaticLoginService:
             code = generate_totp(secret)
         except TotpError as exc:
             raise OpenAIAutomaticLoginError(str(exc)) from exc
-        headers = _auth_headers(device_id, referer, json_request=True)
+        headers = _auth_headers(
+            device_id, referer, json_request=True, sentinel_token=sentinel_token
+        )
         issue = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/mfa/issue_challenge",
             headers=headers,
@@ -248,18 +252,18 @@ class OpenAIAutomaticLoginService:
         return _next_url(verify)
 
     async def _select_workspace(
-        self, session: Any, current_url: str, account_id: str, device_id: str
+        self, session: Any, current_url: str, account_id: str,
+        device_id: str, sentinel_token: str,
     ) -> str:
         if _is_callback(current_url):
             return current_url
         if not current_url.rstrip("/").endswith(("/consent", "/workspace")):
             return current_url
-        workspace_ids = _workspace_ids(session)
-        if account_id not in workspace_ids:
-            raise OpenAIAutomaticLoginError("登录账号无权访问当前 Team 工作区")
         response = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/workspace/select",
-            headers=_auth_headers(device_id, current_url, json_request=True),
+            headers=_auth_headers(
+                device_id, current_url, json_request=True, sentinel_token=sentinel_token
+            ),
             json={"workspace_id": account_id},
             allow_redirects=False,
         )
@@ -267,7 +271,9 @@ class OpenAIAutomaticLoginService:
             raise OpenAIAutomaticLoginError(
                 auth_failure_message("workspace_select", response)
             )
-        _, selected_url = await self._follow(session, _next_url(response), device_id)
+        _, selected_url = await self._follow(
+            session, _next_url(response), device_id, sentinel_token
+        )
         return selected_url
 
     async def _exchange(
