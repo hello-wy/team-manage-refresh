@@ -9,6 +9,20 @@
     const HMAC_ALGORITHM = 'HMAC';
     const HASH_ALGORITHM = 'SHA-1';
     const COUNTER_BYTES = 8;
+    const BITS_PER_BYTE = 8;
+    const WORD_BYTES = 4;
+    const SHA1_BLOCK_BYTES = 64;
+    const SHA1_LENGTH_BYTES = 8;
+    const SHA1_SCHEDULE_WORDS = 80;
+    const SHA1_INITIAL_WORDS = Object.freeze([
+        0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0,
+    ]);
+    const SHA1_ROUND_CONSTANTS = Object.freeze([
+        0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6,
+    ]);
+    const HMAC_INNER_PAD = 0x36;
+    const HMAC_OUTER_PAD = 0x5c;
+    const UINT32_RANGE = 0x100000000;
 
     function extractSecret(value) {
         const raw = String(value || '').trim();
@@ -49,6 +63,121 @@
         return bytes;
     }
 
+    function rotateLeft(value, amount) {
+        return ((value << amount) | (value >>> (32 - amount))) >>> 0;
+    }
+
+    function readUint32(bytes, offset) {
+        return (
+            (bytes[offset] << 24)
+            | (bytes[offset + 1] << 16)
+            | (bytes[offset + 2] << 8)
+            | bytes[offset + 3]
+        ) >>> 0;
+    }
+
+    function writeUint32(bytes, offset, value) {
+        bytes[offset] = value >>> 24;
+        bytes[offset + 1] = value >>> 16;
+        bytes[offset + 2] = value >>> 8;
+        bytes[offset + 3] = value;
+    }
+
+    function padSha1Message(message) {
+        const contentBytes = message.length + 1 + SHA1_LENGTH_BYTES;
+        const paddedLength = Math.ceil(contentBytes / SHA1_BLOCK_BYTES) * SHA1_BLOCK_BYTES;
+        const padded = new Uint8Array(paddedLength);
+        const bitLength = message.length * BITS_PER_BYTE;
+        padded.set(message);
+        padded[message.length] = 0x80;
+        writeUint32(padded, paddedLength - SHA1_LENGTH_BYTES, Math.floor(bitLength / UINT32_RANGE));
+        writeUint32(padded, paddedLength - WORD_BYTES, bitLength >>> 0);
+        return padded;
+    }
+
+    function buildSha1Schedule(message, offset) {
+        const schedule = new Uint32Array(SHA1_SCHEDULE_WORDS);
+        const blockWords = SHA1_BLOCK_BYTES / WORD_BYTES;
+        for (let index = 0; index < blockWords; index += 1) {
+            schedule[index] = readUint32(message, offset + (index * WORD_BYTES));
+        }
+        for (let index = blockWords; index < SHA1_SCHEDULE_WORDS; index += 1) {
+            schedule[index] = rotateLeft(
+                schedule[index - 3] ^ schedule[index - 8]
+                ^ schedule[index - 14] ^ schedule[index - 16],
+                1
+            );
+        }
+        return schedule;
+    }
+
+    function getSha1RoundValue(index, second, third, fourth) {
+        if (index < 20) return (second & third) | (~second & fourth);
+        if (index < 40) return second ^ third ^ fourth;
+        if (index < 60) return (second & third) | (second & fourth) | (third & fourth);
+        return second ^ third ^ fourth;
+    }
+
+    function compressSha1(state, schedule) {
+        let [first, second, third, fourth, fifth] = state;
+        for (let index = 0; index < SHA1_SCHEDULE_WORDS; index += 1) {
+            const constant = SHA1_ROUND_CONSTANTS[Math.floor(index / 20)];
+            const next = (
+                rotateLeft(first, 5) + getSha1RoundValue(index, second, third, fourth)
+                + fifth + constant + schedule[index]
+            ) >>> 0;
+            fifth = fourth;
+            fourth = third;
+            third = rotateLeft(second, 30);
+            second = first;
+            first = next;
+        }
+        return new Uint32Array([
+            (state[0] + first) >>> 0,
+            (state[1] + second) >>> 0,
+            (state[2] + third) >>> 0,
+            (state[3] + fourth) >>> 0,
+            (state[4] + fifth) >>> 0,
+        ]);
+    }
+
+    function sha1(message) {
+        const padded = padSha1Message(message);
+        let state = new Uint32Array(SHA1_INITIAL_WORDS);
+        for (let offset = 0; offset < padded.length; offset += SHA1_BLOCK_BYTES) {
+            state = compressSha1(state, buildSha1Schedule(padded, offset));
+        }
+        const digest = new Uint8Array(state.length * WORD_BYTES);
+        state.forEach((value, index) => writeUint32(digest, index * WORD_BYTES, value));
+        return digest;
+    }
+
+    function concatenateBytes(...arrays) {
+        const result = new Uint8Array(arrays.reduce((length, bytes) => length + bytes.length, 0));
+        let offset = 0;
+        arrays.forEach(bytes => {
+            result.set(bytes, offset);
+            offset += bytes.length;
+        });
+        return result;
+    }
+
+    function buildHmacPad(key, padValue) {
+        const normalizedKey = key.length > SHA1_BLOCK_BYTES ? sha1(key) : key;
+        const pad = new Uint8Array(SHA1_BLOCK_BYTES);
+        pad.fill(padValue);
+        normalizedKey.forEach((value, index) => {
+            pad[index] ^= value;
+        });
+        return pad;
+    }
+
+    function hmacSha1(key, message) {
+        const inner = buildHmacPad(key, HMAC_INNER_PAD);
+        const outer = buildHmacPad(key, HMAC_OUTER_PAD);
+        return sha1(concatenateBytes(outer, sha1(concatenateBytes(inner, message))));
+    }
+
     function truncateDigest(digest, digits) {
         const bytes = new Uint8Array(digest);
         const offset = bytes[bytes.length - 1] & 0x0f;
@@ -77,15 +206,19 @@
         const timestamp = options.timestamp ?? Date.now();
         const periodSeconds = options.periodSeconds ?? DEFAULT_PERIOD_SECONDS;
         const digits = options.digits ?? DEFAULT_DIGITS;
-        const cryptoProvider = options.crypto ?? environment.crypto;
-        if (!cryptoProvider?.subtle) throw new Error('当前浏览器不支持 Web Crypto');
-        const key = await cryptoProvider.subtle.importKey(
-            'raw', decodeBase32(secret),
-            {name: HMAC_ALGORITHM, hash: HASH_ALGORITHM}, false, ['sign']
-        );
-        const digest = await cryptoProvider.subtle.sign(
-            HMAC_ALGORITHM, key, buildCounter(timestamp, periodSeconds)
-        );
+        const secretBytes = decodeBase32(secret);
+        const counter = buildCounter(timestamp, periodSeconds);
+        const cryptoProvider = options.crypto === undefined ? environment.crypto : options.crypto;
+        let digest;
+        if (cryptoProvider?.subtle) {
+            const key = await cryptoProvider.subtle.importKey(
+                'raw', secretBytes,
+                {name: HMAC_ALGORITHM, hash: HASH_ALGORITHM}, false, ['sign']
+            );
+            digest = await cryptoProvider.subtle.sign(HMAC_ALGORITHM, key, counter);
+        } else {
+            digest = hmacSha1(secretBytes, counter);
+        }
         return truncateDigest(digest, digits);
     }
 

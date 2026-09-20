@@ -26,6 +26,29 @@ test('uses the runtime Web Crypto provider by default', async () => {
     }
 });
 
+test('generates the same code when Web Crypto is unavailable', async () => {
+    const code = await totp.generate(RFC_SECRET, {
+        crypto: null,
+        digits: 8,
+        timestamp: 59000,
+    });
+    assert.equal(code, '94287082');
+});
+
+test('surfaces Web Crypto failures when the provider is available', async () => {
+    const cryptoProvider = {
+        subtle: {
+            importKey: async () => {
+                throw new Error('native crypto failure');
+            },
+        },
+    };
+    await assert.rejects(
+        totp.generate(RFC_SECRET, {crypto: cryptoProvider, timestamp: 59000}),
+        /native crypto failure/
+    );
+});
+
 test('normalizes spaced secrets and otpauth URLs', () => {
     assert.equal(totp.normalizeSecret('jbsw y3dp-ehpk3pxp'), 'JBSWY3DPEHPK3PXP');
     assert.equal(
