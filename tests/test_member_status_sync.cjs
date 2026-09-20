@@ -39,6 +39,8 @@ function harness() {
         renderMemberSeatType: () => '',
         renderMemberAutoKickTime: () => '',
         renderMemberAuthorizationActions: () => '',
+        renderMemberAuthorizationStatus: () => '',
+        memberAccountCredentials: {reset() {}},
         escapeHtml: value => String(value),
         formatDateTime: () => '',
         getFriendlyAdminErrorMessage: value => value,

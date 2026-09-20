@@ -19,6 +19,7 @@ from app.routes import admin
 from app.services.chatgpt import ChatGPTService
 from app.services.encryption import encryption_service
 from app.services.member_authorization import MemberAuthorizationError, MemberAuthorizationService, REDIRECT_URI
+from app.services.openai_automatic_login import OpenAIAutomaticLoginError
 from app.services.team import TeamService
 from app.utils.time_utils import get_now
 
@@ -58,7 +59,15 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.teams = TeamService()
         self.teams.chatgpt_service = self.remote
         self.teams.ensure_access_token = AsyncMock(return_value="owner-token")
-        self.service = MemberAuthorizationService(self.teams)
+        self.automatic_login = SimpleNamespace(login=AsyncMock(return_value=tokens()))
+        self.credential_service = SimpleNamespace(get_credentials=AsyncMock(return_value={
+            "email": EMAIL,
+            "password": "member-password",
+            "two_factor_secret": "JBSWY3DPEHPK3PXP",
+        }))
+        self.service = MemberAuthorizationService(
+            self.teams, self.automatic_login, self.credential_service
+        )
 
     async def asyncTearDown(self):
         await self.db.close()
@@ -96,6 +105,43 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(MemberAuthorizationError, "等待"):
             await self.service.export(1, EMAIL, self.db)
 
+    async def test_automatic_login_saves_same_json_and_refreshes_it_on_repeat(self):
+        first = await self.service.automatic_login(1, EMAIL, self.db)
+        self.assertTrue(first["authorized"])
+        self.assertTrue(first["json_saved"])
+        record = await self.record()
+        first_updated_at = record.export_json_updated_at
+        self.assertIn("test-member-refresh", encryption_service.decrypt_token(
+            record.export_json_encrypted
+        ))
+
+        refreshed = {**tokens(), "refresh_token": "refreshed-member-token"}
+        self.automatic_login.login.return_value = refreshed
+        second = await self.service.automatic_login(1, EMAIL, self.db)
+        saved = encryption_service.decrypt_token(record.export_json_encrypted)
+        self.assertTrue(second["authorized"])
+        self.assertIn("refreshed-member-token", saved)
+        self.assertNotIn("test-member-refresh", saved)
+        self.assertGreaterEqual(record.export_json_updated_at, first_updated_at)
+        self.assertEqual(self.automatic_login.login.await_count, 2)
+        self.assertEqual(len((await self.db.execute(select(MemberAuthorization))).scalars().all()), 1)
+
+    async def test_automatic_login_requires_saved_password_and_totp(self):
+        self.credential_service.get_credentials.return_value = {"password": "", "two_factor_secret": ""}
+        with self.assertRaisesRegex(MemberAuthorizationError, "登录密码"):
+            await self.service.automatic_login(1, EMAIL, self.db)
+        self.credential_service.get_credentials.return_value = {
+            "password": "member-password", "two_factor_secret": ""
+        }
+        with self.assertRaisesRegex(MemberAuthorizationError, "2FA"):
+            await self.service.automatic_login(1, EMAIL, self.db)
+
+    async def test_automatic_login_protocol_error_is_exposed_without_credentials(self):
+        self.automatic_login.login.side_effect = OpenAIAutomaticLoginError("2FA 验证失败（HTTP 400）")
+        with self.assertRaisesRegex(MemberAuthorizationError, "2FA 验证失败") as error:
+            await self.service.automatic_login(1, EMAIL, self.db)
+        self.assertNotIn("member-password", str(error.exception))
+
     async def test_joined_authorized_member_exports_native_sub2api_format(self):
         await self.authorize()
         self.join()
@@ -103,6 +149,7 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((payload["type"], payload["version"], payload["proxies"]), ("sub2api-data", 1, []))
         account = payload["accounts"][0]
         self.assertEqual((account["platform"], account["type"]), ("openai", "oauth"))
+        self.assertEqual(account["concurrency"], 10)
         self.assertEqual(account["credentials"]["chatgpt_account_id"], ACCOUNT)
         self.assertEqual(account["credentials"]["email"], EMAIL)
         self.assertEqual(account["credentials"]["chatgpt_user_id"], "member-user")
@@ -275,7 +322,7 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
         self.client.close()
 
     def test_all_endpoints_require_admin(self):
-        for action in ("authorize", "callback", "check", "export"):
+        for action in ("authorize", "automatic-login", "callback", "check", "export"):
             result = self.client.post(f"/admin/teams/1/members/authorization/{action}",
                                       json={"email": EMAIL, "callback_url": "test"})
             self.assertIn(result.status_code, (401, 403))

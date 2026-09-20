@@ -1,11 +1,11 @@
 <div id="memberAuthorizationModal" class="modal-overlay" inert>
     <div class="modal member-authorization-modal" role="dialog" aria-modal="true" aria-labelledby="memberAuthorizationTitle">
         <div class="modal-header">
-            <h3 id="memberAuthorizationTitle">成员 ChatGPT 授权</h3>
+            <h3 id="memberAuthorizationTitle">成员自动登录与授权</h3>
             <button type="button" class="modal-close" aria-label="关闭成员授权" onclick="closeMemberAuthorization()">&times;</button>
         </div>
         <div class="modal-body member-authorization-body">
-            <p class="form-text">使用所选成员邮箱登录。接受邀请后，授权时请选择当前 Team 工作区。</p>
+            <p class="form-text">自动登录使用账号号池中保存的密码和 2FA；手动授权仍可通过回调完成。</p>
             <div class="member-authorization-fields">
                 <div class="form-group">
                     <label for="memberAuthEmail">授权成员邮箱</label>
@@ -31,7 +31,13 @@
                     <totp-code id="memberAuthTotp" wide></totp-code>
                 </div>
             </div>
-            <button type="button" class="btn btn-primary" id="memberAuthGenerateBtn" onclick="generateMemberAuthorization()">获取授权链接</button>
+            <div class="member-login-actions">
+                <button type="button" class="btn btn-primary" id="memberAuthAutoLoginBtn" onclick="automaticLoginMember()">
+                    <i data-lucide="log-in" aria-hidden="true"></i>
+                    自动登录
+                </button>
+                <button type="button" class="btn btn-secondary" id="memberAuthGenerateBtn" onclick="generateMemberAuthorization()">手动授权</button>
+            </div>
             <div class="form-group">
                 <label for="memberAuthUrl">授权链接</label>
                 <input id="memberAuthUrl" class="form-control" readonly placeholder="获取后自动复制，链接有效期 15 分钟">

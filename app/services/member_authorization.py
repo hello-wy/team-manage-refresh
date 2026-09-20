@@ -1,13 +1,19 @@
 """成员独立授权、实时入组验证及 sub2api 数据导出。"""
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy import select, update
 
 from app.models import MemberAuthorization, Team
+from app.services.account_pool_credentials import AccountPoolCredentialError
 from app.services.encryption import encryption_service
+from app.services.member_authorization_payload import build_member_export_payload
+from app.services.openai_automatic_login import (
+    AutomaticLoginRequest,
+    OpenAIAutomaticLoginError,
+)
 from app.utils.jwt_parser import JWTParser
 from app.utils.seat_lock import seat_account_lock
 from app.utils.time_utils import get_now
@@ -21,9 +27,11 @@ class MemberAuthorizationError(ValueError):
 
 
 class MemberAuthorizationService:
-    def __init__(self, team_service):
+    def __init__(self, team_service, automatic_login_service, credential_service):
         self.teams = team_service
         self.remote = team_service.chatgpt_service
+        self.automatic_login_service = automatic_login_service
+        self.credential_service = credential_service
         self.jwt = JWTParser()
 
     async def _team(self, team_id, db):
@@ -37,6 +45,26 @@ class MemberAuthorizationService:
             MemberAuthorization.team_id == team.id, MemberAuthorization.email == email,
             MemberAuthorization.account_id == team.account_id,
         ))).scalar_one_or_none()
+
+    async def _authorization_record(self, team, email, db):
+        record = (await db.execute(select(MemberAuthorization).where(
+            MemberAuthorization.team_id == team.id, MemberAuthorization.email == email,
+        ))).scalar_one_or_none()
+        if record is None:
+            record = MemberAuthorization(
+                team_id=team.id, email=email, account_id=team.account_id
+            )
+            db.add(record)
+            return record
+        if record.account_id != team.account_id:
+            record.account_id = team.account_id
+            record.credentials_encrypted = None
+            record.authorized_at = None
+            record.export_json_encrypted = None
+            record.export_json_updated_at = None
+            record.sub2api_account_id = None
+            record.sub2api_exported_at = None
+        return record
 
     async def _membership(self, team, email, db):
         """仅信任即时上游列表，不使用本地映射或 Token 的套餐声明判定入组。"""
@@ -59,20 +87,7 @@ class MemberAuthorizationService:
         async with seat_account_lock(team.account_id):
             if await self._membership(team, email, db) == "absent":
                 raise MemberAuthorizationError("该邮箱不在当前 Team 的成员或待邀请列表中")
-            record = (await db.execute(select(MemberAuthorization).where(
-                MemberAuthorization.team_id == team.id, MemberAuthorization.email == email,
-            ))).scalar_one_or_none()
-            if record is None:
-                record = MemberAuthorization(team_id=team.id, email=email, account_id=team.account_id)
-                db.add(record)
-            elif record.account_id != team.account_id:
-                record.account_id = team.account_id
-                record.credentials_encrypted = None
-                record.authorized_at = None
-                record.export_json_encrypted = None
-                record.export_json_updated_at = None
-                record.sub2api_account_id = None
-                record.sub2api_exported_at = None
+            record = await self._authorization_record(team, email, db)
             draft = self.remote.create_oauth_authorize_url(CLIENT_ID, REDIRECT_URI)
             record.oauth_state = draft["state"]
             record.verifier_encrypted = encryption_service.encrypt_token(draft["code_verifier"])
@@ -96,36 +111,9 @@ class MemberAuthorizationService:
 
     def _export_payload(self, team, email, credentials):
         claims, identity = self._identity(credentials, email)
-        auth = claims.get("https://api.openai.com/auth") or identity.get(
-            "https://api.openai.com/auth"
-        ) or {}
-        exported_credentials = {
-            **credentials,
-            "email": email,
-            "chatgpt_account_id": team.account_id,
-            "plan_type": "team",
-            "expires_at": datetime.fromtimestamp(
-                claims["exp"], timezone.utc
-            ).isoformat().replace("+00:00", "Z"),
-        }
-        user_id = auth.get("chatgpt_user_id") or auth.get("user_id")
-        if user_id:
-            exported_credentials["chatgpt_user_id"] = user_id
-        return {
-            "type": "sub2api-data",
-            "version": 1,
-            "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "proxies": [],
-            "accounts": [{
-                "name": f"{email} - {team.team_name or team.account_id}",
-                "platform": "openai",
-                "type": "oauth",
-                "credentials": exported_credentials,
-                "concurrency": 1,
-                "priority": 1,
-                "rate_multiplier": 1,
-            }],
-        }
+        return build_member_export_payload(
+            team, email, credentials, claims, identity
+        )
 
     async def _save_export_json(self, record, payload, db):
         record.export_json_encrypted = encryption_service.encrypt_token(
@@ -133,6 +121,58 @@ class MemberAuthorizationService:
         )
         record.export_json_updated_at = get_now()
         await db.commit()
+
+    async def _store_credentials(self, record, team, email, result, db):
+        credentials = {
+            key: result.get(key) or ""
+            for key in ("access_token", "refresh_token", "id_token")
+        }
+        credentials["client_id"] = CLIENT_ID
+        self._identity(credentials, email)
+        if not credentials["refresh_token"]:
+            raise MemberAuthorizationError("授权未返回 Refresh Token，请重新登录")
+        record.credentials_encrypted = encryption_service.encrypt_token(
+            json.dumps(credentials)
+        )
+        record.authorized_at = get_now()
+        record.oauth_state = None
+        record.verifier_encrypted = None
+        record.oauth_expires_at = None
+        payload = self._export_payload(team, email, credentials)
+        await self._save_export_json(record, payload, db)
+
+    async def automatic_login(self, team_id, email, db):
+        team = await self._team(team_id, db)
+        async with seat_account_lock(team.account_id):
+            if await self._membership(team, email, db) == "absent":
+                raise MemberAuthorizationError("该邮箱不在当前 Team 的成员或待邀请列表中")
+            try:
+                account = await self.credential_service.get_credentials(db, email)
+            except AccountPoolCredentialError as exc:
+                raise MemberAuthorizationError(str(exc)) from exc
+            if not account or not account.get("password"):
+                raise MemberAuthorizationError("账号号池未保存该成员的登录密码")
+            if not account.get("two_factor_secret"):
+                raise MemberAuthorizationError("账号号池未保存该成员的 2FA 密钥")
+            record = await self._authorization_record(team, email, db)
+            await db.flush()
+            draft = self.remote.create_oauth_authorize_url(CLIENT_ID, REDIRECT_URI)
+            draft.update({"client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI})
+            request = AutomaticLoginRequest(
+                email=email,
+                password=account["password"],
+                totp_secret=account["two_factor_secret"],
+                account_id=team.account_id,
+                oauth_draft=draft,
+                db_session=db,
+                identifier=f"member-auto-login-{record.id}",
+            )
+            try:
+                result = await self.automatic_login_service.login(request)
+            except OpenAIAutomaticLoginError as exc:
+                raise MemberAuthorizationError(str(exc)) from exc
+            await self._store_credentials(record, team, email, result, db)
+        return await self.check(team_id, email, db)
 
     async def callback(self, team_id, email, callback_url, db):
         team = await self._team(team_id, db)
@@ -165,15 +205,7 @@ class MemberAuthorizationService:
             )
             if not result.get("success"):
                 raise MemberAuthorizationError("授权码兑换失败，请重新获取授权链接后重试")
-            credentials = {key: result.get(key) or "" for key in ("access_token", "refresh_token", "id_token")}
-            credentials["client_id"] = CLIENT_ID
-            self._identity(credentials, email)
-            if not credentials["refresh_token"]:
-                raise MemberAuthorizationError("授权未返回 Refresh Token，请重新授权")
-            record.credentials_encrypted = encryption_service.encrypt_token(json.dumps(credentials))
-            record.authorized_at = get_now()
-            payload = self._export_payload(team, email, credentials)
-            await self._save_export_json(record, payload, db)
+            await self._store_credentials(record, team, email, result, db)
         return await self.check(team_id, email, db)
 
     async def _credentials(self, record, email, db):

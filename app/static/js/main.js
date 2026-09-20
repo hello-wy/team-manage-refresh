@@ -1926,6 +1926,7 @@ document.addEventListener('keydown', (event) => {
 
 function syncMemberAuthorizationButtons(ctx) {
     if (memberAuthorizationContext !== ctx) return;
+    document.getElementById('memberAuthAutoLoginBtn').disabled = ctx.busy;
     document.getElementById('memberAuthGenerateBtn').disabled = ctx.busy;
     document.getElementById('memberAuthParseBtn').disabled = ctx.busy || !ctx.hasLink;
     document.getElementById('memberAuthCheckBtn').disabled = ctx.busy;
@@ -1990,19 +1991,25 @@ async function applyMemberAuthorizationResponse(ctx, action, data, notify) {
             await loadModalMemberList(ctx.teamId, data.members_snapshot);
         }
     }
+    if (memberAuthorizationContext !== ctx) return;
     if (data.membership === 'joined' && data.authorized && notify && !ctx.joinNotified) {
         showToast(`${ctx.email} 已成功加入当前 Team，成员状态和人数已更新。`, 'success', {
             title: '邀请已完成', duration: 6500
         });
         ctx.joinNotified = true;
     }
-    if (memberAuthorizationContext !== ctx) return;
     if (action !== 'authorize') {
         applyMemberAuthorizationStatus(ctx, data);
         if (action === 'callback') {
             ctx.hasLink = false;
             document.getElementById('memberAuthCallback').value = '';
             document.getElementById('memberAuthUrl').value = '';
+        }
+        if (action === 'automatic-login') {
+            ctx.hasLink = false;
+            document.getElementById('memberAuthCallback').value = '';
+            document.getElementById('memberAuthUrl').value = '';
+            if (notify) showToast(`${ctx.email} 自动登录完成，JSON 已刷新`, 'success');
         }
         return;
     }
@@ -2032,7 +2039,11 @@ async function requestMemberAuthorization(action, {notify = true} = {}) {
     ctx.busy = true;
     ctx.canExport = false;
     syncMemberAuthorizationButtons(ctx);
-    memberAuthorizationMessage(action === 'callback' ? '正在解析授权并判定邀请结果...' : '正在读取...');
+    const pendingMessages = {
+        'automatic-login': '正在使用账号、密码和 2FA 自动登录...',
+        callback: '正在解析授权并判定邀请结果...'
+    };
+    memberAuthorizationMessage(pendingMessages[action] || '正在读取...');
     try {
         const result = await apiCall(`/admin/teams/${ctx.teamId}/members/authorization/${action}`, {
             method: 'POST', body: JSON.stringify(payload)
@@ -2054,6 +2065,7 @@ async function requestMemberAuthorization(action, {notify = true} = {}) {
 }
 
 function generateMemberAuthorization() { return requestMemberAuthorization('authorize'); }
+function automaticLoginMember() { return requestMemberAuthorization('automatic-login'); }
 function parseMemberAuthorization() { return requestMemberAuthorization('callback'); }
 function checkMemberAuthorization() { return requestMemberAuthorization('check'); }
 function exportCurrentMemberAuthorization() {
@@ -2147,7 +2159,7 @@ function renderMemberAuthorizationActions(teamId, member) {
             : '<span title="所有者不可删除"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" disabled aria-label="所有者不可删除"><i data-lucide="lock-keyhole" aria-hidden="true"></i></button></span>';
     return `<div class="member-auth-actions">
         <button type="button" class="btn btn-sm btn-icon btn-minimal btn-primary" ${attributes} data-member-authorize
-            title="${member.authorized ? '查看授权 / 判定邀请结果' : 'ChatGPT 授权'}" aria-label="ChatGPT 授权"
+            title="自动登录" aria-label="自动登录"
             onclick="openMemberAuthorization(Number(this.dataset.teamId), this.dataset.email)"><i data-lucide="key-round" aria-hidden="true"></i></button>
         <span title="${exportHint}"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" ${attributes} ${canExport ? '' : 'disabled'}
             title="${exportHint}" aria-label="导出 sub2api JSON"

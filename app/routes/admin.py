@@ -29,6 +29,11 @@ from app.services.settings import (
 )
 from app.services.cliproxyapi import cliproxyapi_service
 from app.services.member_authorization import MemberAuthorizationService, MemberAuthorizationError
+from app.services.account_pool_credentials import account_pool_credential_service
+from app.services.openai_automatic_login import (
+    AutomaticLoginDependencies,
+    OpenAIAutomaticLoginService,
+)
 from app.services.sub2api import sub2api_service, Sub2apiError, DEFAULT_BASE_URL, normalize_base_url
 from app.services.encryption import encryption_service
 from app.services.member_auto_kick import (
@@ -51,7 +56,16 @@ router = APIRouter(
 
 # 服务实例
 team_service = TeamService()
-member_authorization_service = MemberAuthorizationService(team_service)
+automatic_login_service = OpenAIAutomaticLoginService(
+    AutomaticLoginDependencies(
+        get_session=team_service.chatgpt_service._get_session,
+        clear_session=team_service.chatgpt_service.clear_session,
+        exchange_code=team_service.chatgpt_service.exchange_oauth_code,
+    )
+)
+member_authorization_service = MemberAuthorizationService(
+    team_service, automatic_login_service, account_pool_credential_service
+)
 redemption_service = RedemptionService()
 
 
@@ -957,6 +971,10 @@ async def _member_authorization_action(action, team_id, payload, db):
     try:
         if action == "callback":
             data = await member_authorization_service.callback(team_id, payload.email, payload.callback_url, db)
+        elif action == "automatic-login":
+            data = await member_authorization_service.automatic_login(
+                team_id, payload.email, db
+            )
         else:
             data = await getattr(member_authorization_service, action)(team_id, payload.email, db)
         if action == "export":
@@ -979,6 +997,16 @@ async def _member_authorization_action(action, team_id, payload, db):
 async def authorize_member(team_id: int, payload: MemberAuthorizationRequest,
                            db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin)):
     return await _member_authorization_action("authorize", team_id, payload, db)
+
+
+@router.post("/teams/{team_id}/members/authorization/automatic-login")
+async def automatic_login_member(
+    team_id: int,
+    payload: MemberAuthorizationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    return await _member_authorization_action("automatic-login", team_id, payload, db)
 
 
 @router.post("/teams/{team_id}/members/authorization/callback")
