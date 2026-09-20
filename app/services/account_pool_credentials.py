@@ -10,7 +10,6 @@ from app.models import AccountPoolEntry, AccountPoolHistory
 from app.services.encryption import encryption_service
 
 ACCOUNT_NAME_SEPARATOR = "----"
-ACCOUNT_POOL_SEAT_TYPES = {"default", "premium"}
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -58,17 +57,14 @@ class AccountPoolCredentialService:
         db_session: AsyncSession,
         *,
         names: list[str],
-        seat_type: str = "default",
     ) -> dict[str, object]:
-        if seat_type not in ACCOUNT_POOL_SEAT_TYPES:
-            raise AccountPoolCredentialError("不支持的席位类型")
         records, invalid = self.parse_export_names(names)
         if invalid:
             raise AccountPoolCredentialError(f"存在 {len(invalid)} 条无效账号名称")
         if not records:
             raise AccountPoolCredentialError("未发现可导入的账号凭据")
         entries = await self._entries_by_email(db_session, records)
-        added, updated = self._apply_records(db_session, entries, records, seat_type)
+        added, updated = self._apply_records(db_session, entries, records)
         await db_session.commit()
         return {"added": added, "updated": updated, "total": len(records)}
 
@@ -88,18 +84,16 @@ class AccountPoolCredentialService:
         db_session: AsyncSession,
         entries: dict[str, AccountPoolEntry],
         records: list[AccountPoolCredentialRecord],
-        seat_type: str,
     ) -> tuple[list[str], list[str]]:
         added: list[str] = []
         updated: list[str] = []
         for record in records:
             entry = entries.get(record.email)
             if entry is None:
-                entry = AccountPoolEntry(email=record.email, seat_type=seat_type)
+                entry = AccountPoolEntry(email=record.email)
                 db_session.add(entry)
                 added.append(record.email)
             else:
-                entry.seat_type = seat_type
                 updated.append(record.email)
             entry.password_encrypted = self._cipher.encrypt_token(record.password)
             entry.two_factor_secret_encrypted = self._cipher.encrypt_token(record.two_factor_secret)

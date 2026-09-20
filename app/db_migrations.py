@@ -198,6 +198,7 @@ def run_auto_migration():
                     email VARCHAR(255) NOT NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'invited',
                     source VARCHAR(20) NOT NULL DEFAULT 'sync',
+                    seat_type VARCHAR(20),
                     last_seen_at DATETIME,
                     missing_sync_count INTEGER NOT NULL DEFAULT 0,
                     is_admin_invited BOOLEAN NOT NULL DEFAULT 0,
@@ -227,6 +228,7 @@ def run_auto_migration():
         mapping_columns = {
             "upstream_user_id": "VARCHAR(255)",
             "member_role": "VARCHAR(50)",
+            "seat_type": "VARCHAR(20)",
             "joined_at": "DATETIME",
             "auto_kick_at": "DATETIME",
             "last_invited_at": "DATETIME",
@@ -264,7 +266,6 @@ def run_auto_migration():
                 CREATE TABLE account_pool_entries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) NOT NULL,
-                    seat_type VARCHAR(20) NOT NULL DEFAULT 'default',
                     password_encrypted TEXT,
                     two_factor_secret_encrypted TEXT,
                     created_at DATETIME NOT NULL,
@@ -272,16 +273,6 @@ def run_auto_migration():
                 )
             """)
             migrations_applied.append("account_pool_entries")
-
-        if table_exists(cursor, "account_pool_entries") and not column_exists(
-            cursor, "account_pool_entries", "seat_type"
-        ):
-            logger.info("添加 account_pool_entries.seat_type 字段")
-            cursor.execute(
-                "ALTER TABLE account_pool_entries "
-                "ADD COLUMN seat_type VARCHAR(20) NOT NULL DEFAULT 'default'"
-            )
-            migrations_applied.append("account_pool_entries.seat_type")
 
         account_pool_credential_columns = {
             "password_encrypted": "TEXT",

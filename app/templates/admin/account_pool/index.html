@@ -3,7 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260920">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260920-2">
 {% endblock %}
 
 {% block content %}
@@ -26,7 +26,7 @@
         <div class="section-header">
             <div>
                 <h3>添加账号邮箱</h3>
-                <p class="text-muted">每行一个邮箱，支持一次粘贴多个邮箱。重复邮箱会更新为本次选择的席位类型。</p>
+                <p class="text-muted">每行一个邮箱，支持一次粘贴多个邮箱。席位类型会在账号实际加入 Team 后自动同步。</p>
             </div>
         </div>
         <form id="accountPoolForm" class="account-pool-form">
@@ -34,13 +34,6 @@
                 <label for="accountPoolEmails">邮箱列表</label>
                 <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com\nbob@example.com"></textarea>
                 <div class="account-pool-hint">支持大小写混合输入，系统会统一转为小写并校验邮箱格式。</div>
-            </div>
-            <div class="form-group">
-                <label for="accountPoolSeatType">席位类型</label>
-                <select id="accountPoolSeatType" class="form-control">
-                    <option value="default">标准席位</option>
-                    <option value="premium">高级席位</option>
-                </select>
             </div>
             <button type="submit" class="btn btn-primary" id="accountPoolSubmitBtn">
                 <i data-lucide="plus-circle" style="width: 16px; height: 16px;"></i>
@@ -95,8 +88,8 @@
                             </button>
                         </td>
                         <td data-label="席位类型">
-                            <span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">
-                                {% if entry.seat_type == 'premium' %}高级{% else %}标准{% endif %}
+                            <span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% elif entry.seat_type == 'standard' %}status-active{% else %}status-banned{% endif %}">
+                                {% if entry.seat_type == 'premium' %}高级{% elif entry.seat_type == 'standard' %}标准{% else %}待加入后同步{% endif %}
                             </span>
                         </td>
                         <td data-label="当前状态">
@@ -166,5 +159,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260920"></script>
+<script src="/static/js/account-pool.js?v=20260920-2"></script>
 {% endblock %}

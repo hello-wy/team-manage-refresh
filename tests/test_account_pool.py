@@ -36,18 +36,14 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(repeat["success"])
             self.assertEqual(repeat["existing"], ["alice@example.com"])
 
-    async def test_existing_email_can_update_seat_type(self):
+    async def test_existing_email_is_not_assigned_a_seat_type(self):
         async with self.sessions() as session:
             await self.service.add_emails(session, emails=["member@example.com"])
-            result = await self.service.add_emails(
-                session,
-                emails=["member@example.com"],
-                seat_type="premium",
-            )
-            entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
+            result = await self.service.add_emails(session, emails=["member@example.com"])
+            listing = await self.service.list_entries(session)
 
-            self.assertEqual(result["updated"], ["member@example.com"])
-            self.assertEqual(entry.seat_type, "premium")
+            self.assertEqual(result["existing"], ["member@example.com"])
+            self.assertIsNone(listing["entries"][0]["seat_type"])
 
     async def test_join_and_leave_creates_reopenable_history(self):
         async with self.sessions() as session:
@@ -67,7 +63,13 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
 
             joined_at = get_now() - timedelta(hours=1)
             team_service = TeamService.__new__(TeamService)
-            members = {"member@example.com": {"id": "user-1", "created_time": joined_at.isoformat()}}
+            members = {
+                "member@example.com": {
+                    "id": "user-1",
+                    "seat_type": "prolite",
+                    "created_time": joined_at.isoformat(),
+                }
+            }
             await team_service._reconcile_team_email_mappings(
                 1, set(members), set(), session, joined_members=members
             )
@@ -77,11 +79,15 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(histories[0].left_at)
 
             mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
+            self.assertEqual(mapping.seat_type, "premium")
+            listing = await self.service.list_entries(session)
+            self.assertEqual(listing["entries"][0]["seat_type"], "premium")
             mapping.missing_sync_count = 3
             await team_service._reconcile_team_email_mappings(1, set(), set(), session)
             await session.commit()
             history = (await session.execute(select(AccountPoolHistory))).scalar_one()
             self.assertIsNotNone(history.left_at)
+            self.assertIsNone(mapping.seat_type)
 
     async def test_current_membership_has_one_team_priority(self):
         async with self.sessions() as session:
@@ -93,13 +99,19 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
             await self.service.add_emails(session, emails=["member@example.com"])
             session.add_all([
-                TeamEmailMapping(team_id=1, email="member@example.com", status="joined"),
+                TeamEmailMapping(
+                    team_id=1,
+                    email="member@example.com",
+                    status="joined",
+                    seat_type="standard",
+                ),
                 TeamEmailMapping(team_id=2, email="member@example.com", status="invited"),
             ])
             await session.commit()
             listing = await self.service.list_entries(session)
             self.assertEqual(listing["entries"][0]["status"], "conflict")
             self.assertEqual(listing["entries"][0]["team_id"], 1)
+            self.assertEqual(listing["entries"][0]["seat_type"], "standard")
 
     async def test_replacement_skips_active_and_recently_invited_accounts(self):
         async with self.sessions() as session:
@@ -124,11 +136,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 emails=["active@example.com", "recent@example.com"],
             )
-            await self.service.add_emails(
-                session,
-                emails=["eligible@example.com"],
-                seat_type="premium",
-            )
+            await self.service.add_emails(session, emails=["eligible@example.com"])
             now = get_now()
             session.add_all([
                 TeamEmailMapping(
@@ -165,7 +173,6 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
                 1,
                 "eligible@example.com",
                 session,
-                seat_type="premium",
             )
 
     async def test_invite_options_only_include_currently_available_accounts(self):
@@ -184,11 +191,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
                     "old@example.com",
                 ],
             )
-            await self.service.add_emails(
-                session,
-                emails=["available@example.com"],
-                seat_type="premium",
-            )
+            await self.service.add_emails(session, emails=["available@example.com"])
             entries = {
                 entry.email: entry
                 for entry in (await session.execute(select(AccountPoolEntry))).scalars().all()
@@ -217,12 +220,10 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             options = await self.service.list_invite_options(1, session)
 
             self.assertEqual(
-                [(option["email"], option["seat_type"]) for option in options],
-                [
-                    ("old@example.com", "default"),
-                    ("available@example.com", "premium"),
-                ],
+                [option["email"] for option in options],
+                ["available@example.com", "old@example.com"],
             )
+            self.assertTrue(all(set(option) == {"id", "email"} for option in options))
 
     async def test_invite_options_return_none_for_unknown_team(self):
         async with self.sessions() as session:

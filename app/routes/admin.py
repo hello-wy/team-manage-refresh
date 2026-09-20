@@ -176,9 +176,6 @@ class AccountPoolAddRequest(BaseModel):
     """账号号池批量录入请求。"""
     emails: List[str] = Field(default_factory=list, description="邮箱列表")
     content: str = Field("", description="换行分隔的邮箱文本")
-    seat_type: Literal["default", "premium"] = Field(
-        "default", description="账号邀请席位类型"
-    )
 
 
 class MemberSeatTypeRequest(BaseModel):
@@ -376,7 +373,6 @@ async def add_account_pool_emails(
         db,
         emails=payload.emails,
         content=payload.content,
-        seat_type=payload.seat_type,
     )
     return JSONResponse(status_code=200 if result["success"] else 400, content=result)
 

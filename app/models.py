@@ -124,6 +124,7 @@ class TeamEmailMapping(Base):
     )
     upstream_user_id = Column(String(255), comment="上游成员用户 ID")
     member_role = Column(String(50), comment="上游成员角色")
+    seat_type = Column(String(20), comment="成员实际席位类型: standard/premium")
     joined_at = Column(DateTime, comment="成员实际加入 Team 的时间")
     auto_kick_at = Column(DateTime, comment="成员计划自动踢出时间")
     last_invited_at = Column(DateTime, comment="最近一次向该 Team 发送邀请的时间")
@@ -150,12 +151,6 @@ class AccountPoolEntry(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), nullable=False, comment="成员邮箱(统一存小写)")
-    seat_type = Column(
-        String(20),
-        default="default",
-        nullable=False,
-        comment="邀请席位类型: default/premium",
-    )
     password_encrypted = Column(Text, comment="加密存储的 ChatGPT 登录密码")
     two_factor_secret_encrypted = Column(Text, comment="加密存储的 2FA 密钥")
     created_at = Column(DateTime, default=get_now, nullable=False)

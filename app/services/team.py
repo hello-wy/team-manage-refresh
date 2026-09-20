@@ -548,6 +548,7 @@ class TeamService:
         if status != TEAM_EMAIL_STATUS_JOINED:
             mapping.upstream_user_id = None
             mapping.member_role = None
+            mapping.seat_type = None
             mapping.joined_at = None
             mapping.auto_kick_at = None
         if is_admin_invited:
@@ -676,6 +677,8 @@ class TeamService:
         mapping.missing_sync_count = 0
         mapping.upstream_user_id = member.get("id") or mapping.upstream_user_id
         mapping.member_role = member.get("role") or mapping.member_role
+        seat_type = normalize_seat_type(member.get("seat_type"))
+        mapping.seat_type = seat_type if seat_type != "unknown" else None
         joined_at = self._parse_remote_datetime(member.get("created_time"))
         mapping.joined_at = joined_at or mapping.joined_at
         hours = int((team.member_auto_kick_hours if team else None) or 2)
@@ -695,6 +698,7 @@ class TeamService:
         mapping.missing_sync_count = 0
         mapping.upstream_user_id = None
         mapping.member_role = None
+        mapping.seat_type = None
         mapping.joined_at = None
         mapping.auto_kick_at = None
 
@@ -708,6 +712,7 @@ class TeamService:
                 mapping.status = TEAM_EMAIL_STATUS_REMOVED
                 mapping.source = "sync"
                 mapping.last_seen_at = seen_at
+                mapping.seat_type = None
                 mapping.auto_kick_at = None
 
     async def ensure_access_token(self, team: Team, db_session: AsyncSession, force_refresh: bool = False) -> Optional[str]:

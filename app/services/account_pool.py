@@ -13,7 +13,6 @@ from app.utils.time_utils import get_now
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ACTIVE_MAPPING_STATUSES = ("invited", "joined")
-ACCOUNT_POOL_SEAT_TYPES = {"default", "premium"}
 TEAM_REINVITE_COOLDOWN_DAYS = 7
 TEAM_REJOIN_COOLDOWN_DAYS = 7
 
@@ -26,13 +25,6 @@ class AccountPoolService:
     @staticmethod
     def normalize_email(value: Any) -> str:
         return str(value or "").strip().lower()
-
-    @staticmethod
-    def normalize_seat_type(value: Any) -> str:
-        seat_type = str(value or "default").strip().lower()
-        if seat_type not in ACCOUNT_POOL_SEAT_TYPES:
-            raise ValueError("不支持的席位类型")
-        return seat_type
 
     @classmethod
     def parse_emails(cls, emails: Optional[list[str]] = None, content: str = "") -> tuple[list[str], list[str]]:
@@ -60,9 +52,7 @@ class AccountPoolService:
         *,
         emails: Optional[list[str]] = None,
         content: str = "",
-        seat_type: str = "default",
     ) -> dict[str, Any]:
-        normalized_seat_type = self.normalize_seat_type(seat_type)
         normalized, invalid = self.parse_emails(emails, content)
         if not normalized:
             return {
@@ -78,15 +68,11 @@ class AccountPoolService:
         )
         existing = {entry.email: entry for entry in result.scalars().all()}
         added = []
-        updated = []
         for email in normalized:
             entry = existing.get(email)
             if entry:
-                if entry.seat_type != normalized_seat_type:
-                    entry.seat_type = normalized_seat_type
-                    updated.append(email)
                 continue
-            entry = AccountPoolEntry(email=email, seat_type=normalized_seat_type)
+            entry = AccountPoolEntry(email=email)
             db_session.add(entry)
             existing[email] = entry
             added.append(email)
@@ -98,19 +84,16 @@ class AccountPoolService:
         await db_session.commit()
         return {
             "success": bool(normalized),
-            "message": self._build_add_message(normalized, added, updated),
+            "message": self._build_add_message(normalized, added),
             "added": added,
-            "updated": updated,
-            "existing": [
-                email for email in normalized if email not in added and email not in updated
-            ],
+            "updated": [],
+            "existing": [email for email in normalized if email not in added],
             "invalid": invalid,
         }
 
     @staticmethod
-    def _build_add_message(normalized, added, updated) -> str:
-        unchanged = len(normalized) - len(added) - len(updated)
-        return f"新增 {len(added)} 个邮箱，更新 {len(updated)} 个，未变化 {unchanged} 个"
+    def _build_add_message(normalized, added) -> str:
+        return f"新增 {len(added)} 个邮箱，已存在 {len(normalized) - len(added)} 个"
 
     async def find_replacement_candidate(
         self,
@@ -163,10 +146,10 @@ class AccountPoolService:
         result = await db_session.execute(
             select(AccountPoolEntry)
             .where(*conditions)
-            .order_by(AccountPoolEntry.seat_type.asc(), AccountPoolEntry.email.asc())
+            .order_by(AccountPoolEntry.email.asc())
         )
         return [
-            {"id": entry.id, "email": entry.email, "seat_type": entry.seat_type}
+            {"id": entry.id, "email": entry.email}
             for entry in result.scalars().all()
         ]
 
@@ -185,7 +168,6 @@ class AccountPoolService:
             team_id,
             candidate.email,
             db_session,
-            seat_type=candidate.seat_type,
         )
         if not result.get("success") or result.get("status") != "invited":
             return {
@@ -298,11 +280,15 @@ class AccountPoolService:
             elif invited:
                 status = "invited"
             current = active[0] if active else (None, None)
+            seat_type = next(
+                (mapping.seat_type for mapping, _ in joined if mapping.seat_type),
+                None,
+            )
             histories = histories_by_entry.get(entry.id, [])
             items.append({
                 "id": entry.id,
                 "email": entry.email,
-                "seat_type": entry.seat_type,
+                "seat_type": seat_type,
                 "status": status,
                 "team_id": current[1].id if current[1] else None,
                 "team_name": current[1].team_name if current[1] else None,

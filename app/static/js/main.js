@@ -2234,11 +2234,7 @@ function getMemberInviteEmails(form) {
     return [...new Map(values.map(email => [email.toLowerCase(), email])).values()];
 }
 
-function handleMemberPoolSelection(select) {
-    const option = select.options[select.selectedIndex];
-    const seatType = option?.dataset.seatType;
-    const seatSelect = document.getElementById('inviteSeatType');
-    if (seatType && seatSelect) seatSelect.value = seatType;
+function handleMemberPoolSelection() {
     updateMemberInviteAvailability();
 }
 
@@ -2262,10 +2258,7 @@ async function loadMemberPoolOptions(teamId) {
     const entries = (result.data.entries || []).filter(entry => !memberExistingEmails.has(entry.email.toLowerCase()));
     select.innerHTML = '<option value="">不使用号池账号</option>';
     entries.forEach(entry => {
-        const label = entry.seat_type === 'premium' ? '高级席位' : '标准席位';
-        const option = new Option(`${entry.email} · ${label}`, entry.email);
-        option.dataset.seatType = entry.seat_type;
-        select.add(option);
+        select.add(new Option(entry.email, entry.email));
     });
     select.disabled = entries.length === 0;
     hint.textContent = entries.length

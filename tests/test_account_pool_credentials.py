@@ -50,18 +50,16 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_import_updates_existing_entry(self):
         async with self.sessions() as session:
-            session.add(AccountPoolEntry(email="member@example.com", seat_type="default"))
+            session.add(AccountPoolEntry(email="member@example.com"))
             await session.commit()
 
             result = await self.service.import_export_names(
                 session,
                 names=["member@example.com----new-password----NEWSECRET"],
-                seat_type="premium",
             )
             entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
 
             self.assertEqual(result["updated"], ["member@example.com"])
-            self.assertEqual(entry.seat_type, "premium")
             self.assertEqual(
                 (await self.service.get_credentials(session, entry.email))["password"],
                 "new-password",
@@ -82,7 +80,7 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_removes_entry_and_history(self):
         async with self.sessions() as session:
-            entry = AccountPoolEntry(email="member@example.com", seat_type="default")
+            entry = AccountPoolEntry(email="member@example.com")
             session.add(entry)
             await session.flush()
             session.add(

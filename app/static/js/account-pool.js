@@ -84,10 +84,7 @@ async function submitAccountPoolForm(event) {
     try {
         const response = await fetch('/admin/account-pool', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                content,
-                seat_type: document.getElementById('accountPoolSeatType').value
-            })
+            body: JSON.stringify({content})
         });
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');
