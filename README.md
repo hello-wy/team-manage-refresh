@@ -341,21 +341,19 @@ docker run -d --name watchtower \
 
 ### GitHub Push 自动部署到 Netcup
 
-仓库已配置 GitHub Actions：每次 `main` 分支 push 后，会使用当前 GitHub 仓库根目录 `.` 构建多架构镜像并推送到 GHCR，然后通过 SSH 连接 Netcup，使用服务器本地的 `/opt/team-manage-refresh/.env` 执行 `docker compose pull` 和 `docker compose up -d`。服务器不需要拉取或构建源码。
+仓库已配置 GitHub Actions：每次 `main` 分支 push 后，会使用当前 GitHub 仓库根目录 `.` 构建多架构镜像并推送到 GHCR，然后通过 SSH 连接 Netcup，使用旧部署目录 `/root/team-manage-refresh` 中的 `.env` 和 `data` 执行 `docker compose pull` 和 `docker compose up -d`。服务器不需要拉取或构建源码。
 
 #### 1. 初始化 Netcup 服务器
 
 在服务器上执行一次：
 
 ```bash
-sudo mkdir -p /opt/team-manage-refresh/data
-sudo chown -R "$USER":"$USER" /opt/team-manage-refresh
-cd /opt/team-manage-refresh
+sudo mkdir -p /root/team-manage-refresh/data
+cd /root/team-manage-refresh
 curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/docker-compose.yml -o docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/.env.example -o .env
 ```
 
-编辑服务器本地 `.env`，至少设置 `SESSION_SECRET_KEY`、`ENCRYPTION_KEY`、`ADMIN_PASSWORD`、`DEBUG=False`，然后确认服务器上的 SSH 用户可以执行 Docker 命令。后续 GitHub Actions 只更新镜像和 `docker-compose.yml`，不会覆盖这个 `.env` 文件。
+已有部署必须保留 `/root/team-manage-refresh/.env` 和 `/root/team-manage-refresh/data`，不要用 `.env.example` 覆盖。当前服务器的 `.env` 配置 `APP_PORT=7508`，后续 GitHub Actions 只更新镜像，不会覆盖 `.env` 或数据库。
 
 #### 2. 配置 GitHub Actions Secrets
 
@@ -367,7 +365,7 @@ curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/.
 | `NETCUP_PORT` | SSH 端口，默认 `22` |
 | `NETCUP_USER` | SSH 登录用户名 |
 | `NETCUP_SSH_KEY` | 对应用户的私钥全文，建议使用专用部署密钥 |
-| `NETCUP_DEPLOY_PATH` | 服务器部署目录，例如 `/opt/team-manage-refresh` |
+| `NETCUP_DEPLOY_PATH` | 服务器现有部署目录：`/root/team-manage-refresh` |
 
 GHCR 登录使用当前 workflow 的 `GITHUB_TOKEN`，不需要额外配置 GHCR 用户名或 token。配置完成后，向 `main` push 一次即可在 Actions 页面查看构建和部署日志。
 
