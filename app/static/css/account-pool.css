@@ -61,6 +61,11 @@
     padding: 0;
 }
 
+.account-pool-page .data-table th:nth-child(3),
+.account-pool-page .data-table td:nth-child(3) {
+    min-width: 180px;
+}
+
 .account-pool-row-actions {
     display: flex;
     align-items: center;

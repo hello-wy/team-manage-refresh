@@ -27,13 +27,8 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label for="memberAuthTwoFactorSecret">2FA 密钥</label>
-                    <div class="member-account-credential-control">
-                        <input id="memberAuthTwoFactorSecret" class="form-control" readonly placeholder="打开成员授权后自动读取">
-                        <button type="button" class="btn btn-secondary btn-icon" title="复制 2FA 密钥" aria-label="复制 2FA 密钥" onclick="memberAccountCredentials.copy('two_factor_secret', '2FA 密钥')">
-                            <i data-lucide="copy" aria-hidden="true"></i>
-                        </button>
-                    </div>
+                    <label>2FA 验证码</label>
+                    <totp-code id="memberAuthTotp" wide></totp-code>
                 </div>
             </div>
             <button type="button" class="btn btn-primary" id="memberAuthGenerateBtn" onclick="generateMemberAuthorization()">获取授权链接</button>

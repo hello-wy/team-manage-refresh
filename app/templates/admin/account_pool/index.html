@@ -83,9 +83,7 @@
                             </button>
                         </td>
                         <td data-label="2FA">
-                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" title="复制 2FA 密钥" aria-label="复制 2FA 密钥" onclick='copyAccountPoolCredential({{ entry.email|tojson }}, "two_factor_secret", "2FA 密钥")'>
-                                <i data-lucide="copy" aria-hidden="true"></i>
-                            </button>
+                            <totp-code data-email="{{ entry.email }}"></totp-code>
                         </td>
                         <td data-label="席位类型">
                             <span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% elif entry.seat_type == 'standard' %}status-active{% else %}status-banned{% endif %}">
@@ -159,5 +157,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260920-2"></script>
+<script src="/static/js/account-pool.js?v=20260920-3"></script>
 {% endblock %}

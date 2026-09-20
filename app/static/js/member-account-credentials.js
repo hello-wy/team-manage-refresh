@@ -1,14 +1,18 @@
 window.memberAccountCredentials = (() => {
     const fields = {
-        password: 'memberAuthPassword',
-        two_factor_secret: 'memberAuthTwoFactorSecret'
+        password: 'memberAuthPassword'
     };
+
+    function totpElement() {
+        return document.getElementById('memberAuthTotp');
+    }
 
     function setValues(values = {}) {
         Object.entries(fields).forEach(([key, id]) => {
             const input = document.getElementById(id);
             if (input) input.value = values[key] || '';
         });
+        totpElement()?.setSecret(values.two_factor_secret || '');
     }
 
     function setPlaceholders(message) {
@@ -21,20 +25,17 @@ window.memberAccountCredentials = (() => {
     async function load(context) {
         setValues();
         setPlaceholders('正在从账号号池读取...');
+        totpElement()?.showLoading('读取中');
         try {
-            const response = await fetch(
-                `/admin/account-pool/credentials?email=${encodeURIComponent(context.email)}`,
-                {credentials: 'same-origin', cache: 'no-store'}
-            );
-            const payload = await response.json();
-            if (!response.ok || !payload.success) throw new Error(payload.error || '读取账号凭据失败');
+            const credentials = await window.accountPoolCredentialStore.load(context.email);
             if (memberAuthorizationContext !== context) return;
-            setValues(payload.data);
+            setValues(credentials);
             setPlaceholders('未保存');
         } catch (error) {
             if (memberAuthorizationContext !== context) return;
             setValues();
             setPlaceholders(error.message || '读取账号凭据失败');
+            totpElement()?.showError(error.message || '读取失败');
         }
     }
 

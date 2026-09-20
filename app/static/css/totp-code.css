@@ -1,0 +1,124 @@
+.totp-code {
+    --totp-progress: 1;
+    display: block;
+    width: min(100%, 210px);
+    min-width: 0;
+}
+
+.totp-code-frame {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    background: conic-gradient(
+        from -90deg,
+        var(--primary) calc(var(--totp-progress) * 1turn),
+        var(--border-base) 0
+    );
+    box-shadow: var(--shadow-sm);
+}
+
+.totp-code button {
+    min-width: 0;
+    min-height: 36px;
+    border: 0;
+    color: var(--text-main);
+    background: var(--bg-surface);
+    cursor: pointer;
+}
+
+.totp-code-value {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45rem;
+    padding: 0.42rem 0.62rem;
+    border-radius: calc(var(--radius-md) - 3px) 0 0 calc(var(--radius-md) - 3px);
+    font: inherit;
+}
+
+.totp-code-digits {
+    overflow: hidden;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.totp-code-seconds {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.totp-code-copy {
+    display: grid;
+    place-items: center;
+    border-radius: 0 calc(var(--radius-md) - 3px) calc(var(--radius-md) - 3px) 0;
+}
+
+.totp-code-copy svg {
+    width: 15px;
+    height: 15px;
+}
+
+.totp-code button:hover:not(:disabled) {
+    background: var(--primary-soft);
+    color: var(--primary);
+}
+
+.totp-code button:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 1px;
+}
+
+.totp-code button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.totp-code[data-state="loading"] .totp-code-frame,
+.totp-code[data-state="idle"] .totp-code-frame {
+    background: var(--border-base);
+}
+
+.totp-code[data-state="empty"] .totp-code-frame,
+.totp-code[data-state="error"] .totp-code-frame {
+    background: var(--danger);
+}
+
+.totp-code[data-state="loading"] .totp-code-digits,
+.totp-code[data-state="idle"] .totp-code-digits,
+.totp-code[data-state="empty"] .totp-code-digits,
+.totp-code[data-state="error"] .totp-code-digits {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.totp-code[data-copied="true"] .totp-code-copy {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.totp-code[wide] {
+    width: 100%;
+}
+
+.totp-code[wide] .totp-code-frame {
+    grid-template-columns: minmax(0, 1fr) 40px;
+}
+
+.totp-code[wide] button {
+    min-height: 40px;
+}
+
+.totp-code[wide] .totp-code-digits {
+    font-size: 1rem;
+}

@@ -8,21 +8,9 @@ function accountPoolFormatDate(value) {
     });
 }
 
-async function fetchAccountPoolCredentials(email) {
-    const response = await fetch(
-        `/admin/account-pool/credentials?email=${encodeURIComponent(email)}`,
-        {credentials: 'same-origin', cache: 'no-store'}
-    );
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-        throw new Error(payload.error || '读取账号凭据失败');
-    }
-    return payload.data;
-}
-
 async function copyAccountPoolCredential(email, field, label) {
     try {
-        const credentials = await fetchAccountPoolCredentials(email);
+        const credentials = await window.accountPoolCredentialStore.load(email);
         const value = credentials[field];
         if (!value) throw new Error(`该账号未保存${label}`);
         await copyToClipboard(value);
