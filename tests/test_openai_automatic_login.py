@@ -136,3 +136,36 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(OpenAIAutomaticLoginError, "state"):
             await service.login(self.request())
         exchange.assert_not_awaited()
+
+    async def test_invalid_password_error_is_actionable_and_redacted(self):
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(302, headers={"location": "/log-in"}),
+                FakeResponse(200),
+                FakeResponse(200),
+            ],
+            post_responses=[
+                FakeResponse(200, payload={"continue_url": "/log-in/password"}),
+                FakeResponse(401, payload={"error": {
+                    "code": "invalid_username_or_password",
+                    "type": "invalid_request_error",
+                    "message": "password=member-password token=secret-token",
+                }}),
+            ],
+        )
+        service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+            get_session=AsyncMock(return_value=session),
+            clear_session=AsyncMock(),
+            exchange_code=AsyncMock(),
+        ))
+
+        with self.assertLogs("app.services.openai_auth_errors", level="WARNING") as logs:
+            with self.assertRaisesRegex(
+                OpenAIAutomaticLoginError, "请更新账号号池中的登录密码"
+            ) as raised:
+                await service.login(self.request())
+
+        output = " ".join(logs.output) + str(raised.exception)
+        self.assertIn("invalid_username_or_password", output)
+        self.assertNotIn("member-password", output)
+        self.assertNotIn("secret-token", output)

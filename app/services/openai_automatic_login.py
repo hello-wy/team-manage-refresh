@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
+from app.services.openai_auth_errors import auth_failure_message
 from app.utils.totp import TotpError, generate_totp
 
 AUTH_ORIGIN = "https://auth.openai.com"
@@ -176,7 +177,9 @@ class OpenAIAutomaticLoginService:
             allow_redirects=False,
         )
         if response.status_code != 200:
-            raise OpenAIAutomaticLoginError(f"账号提交失败（HTTP {response.status_code}）")
+            raise OpenAIAutomaticLoginError(
+                auth_failure_message("authorize_continue", response)
+            )
         next_url = _next_url(response)
         if not next_url:
             raise OpenAIAutomaticLoginError("账号提交后未返回登录步骤")
@@ -195,7 +198,9 @@ class OpenAIAutomaticLoginService:
             allow_redirects=False,
         )
         if response.status_code != 200:
-            raise OpenAIAutomaticLoginError(f"密码验证失败（HTTP {response.status_code}）")
+            raise OpenAIAutomaticLoginError(auth_failure_message(
+                "password_verify", response, identifier=request.identifier
+            ))
         payload = _json_body(response)
         next_url = _next_url(response)
         if _is_mfa_challenge(payload, next_url):
@@ -231,7 +236,7 @@ class OpenAIAutomaticLoginService:
             allow_redirects=False,
         )
         if issue.status_code not in {200, 201, 202, 204}:
-            raise OpenAIAutomaticLoginError(f"2FA 挑战创建失败（HTTP {issue.status_code}）")
+            raise OpenAIAutomaticLoginError(auth_failure_message("mfa_issue", issue))
         verify = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/mfa/verify",
             headers=headers,
@@ -239,7 +244,7 @@ class OpenAIAutomaticLoginService:
             allow_redirects=False,
         )
         if verify.status_code != 200:
-            raise OpenAIAutomaticLoginError(f"2FA 验证失败（HTTP {verify.status_code}）")
+            raise OpenAIAutomaticLoginError(auth_failure_message("mfa_verify", verify))
         return _next_url(verify)
 
     async def _select_workspace(
@@ -259,7 +264,9 @@ class OpenAIAutomaticLoginService:
             allow_redirects=False,
         )
         if response.status_code != 200:
-            raise OpenAIAutomaticLoginError(f"Team 工作区选择失败（HTTP {response.status_code}）")
+            raise OpenAIAutomaticLoginError(
+                auth_failure_message("workspace_select", response)
+            )
         _, selected_url = await self._follow(session, _next_url(response), device_id)
         return selected_url
 
