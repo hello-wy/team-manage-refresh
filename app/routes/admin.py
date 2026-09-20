@@ -449,7 +449,7 @@ async def account_pool_invite_options(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """返回最近 7 天未加入过指定 Team 的可邀请号池账号。"""
+    """返回号池账号，并标记最近 7 天是否加入过指定 Team。"""
     entries = await account_pool_service.list_invite_options(team_id, db)
     if entries is None:
         return JSONResponse(

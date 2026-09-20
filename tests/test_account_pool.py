@@ -321,9 +321,19 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 [option["email"] for option in options],
-                ["available@example.com", "old@example.com"],
+                ["available@example.com", "old@example.com", "recent@example.com"],
             )
-            self.assertTrue(all(set(option) == {"id", "email"} for option in options))
+            self.assertEqual(
+                {
+                    option["email"]: option["recently_joined"]
+                    for option in options
+                },
+                {
+                    "available@example.com": False,
+                    "old@example.com": False,
+                    "recent@example.com": True,
+                },
+            )
 
     async def test_invite_options_return_none_for_unknown_team(self):
         async with self.sessions() as session:

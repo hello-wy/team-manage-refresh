@@ -2296,6 +2296,18 @@ function handleMemberPoolSelection() {
     updateMemberInviteAvailability();
 }
 
+function appendMemberPoolOptions(select, label, entries, disabled = false) {
+    if (!entries.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    entries.forEach(entry => {
+        const option = new Option(entry.email, entry.email);
+        option.disabled = disabled;
+        group.appendChild(option);
+    });
+    select.appendChild(group);
+}
+
 async function loadMemberPoolOptions(teamId) {
     const select = document.getElementById('memberPoolEmail');
     const hint = document.getElementById('memberPoolEmailHint');
@@ -2303,7 +2315,7 @@ async function loadMemberPoolOptions(teamId) {
     const requestId = ++memberPoolOptionsRequestId;
     select.disabled = true;
     select.innerHTML = '<option value="">正在读取可用账号...</option>';
-    hint.textContent = '仅显示最近 7 天未加入过当前 Team 的可邀请账号。';
+    hint.textContent = '上方显示 7 天内加入过的账号，下方显示当前可邀请账号。';
 
     const result = await apiCall(`/admin/account-pool/options?team_id=${encodeURIComponent(teamId)}`);
     if (requestId !== memberPoolOptionsRequestId || window.currentTeamId !== teamId) return;
@@ -2315,13 +2327,16 @@ async function loadMemberPoolOptions(teamId) {
 
     const entries = (result.data.entries || []).filter(entry => !memberExistingEmails.has(entry.email.toLowerCase()));
     select.innerHTML = '<option value="">不使用号池账号</option>';
-    entries.forEach(entry => {
-        select.add(new Option(entry.email, entry.email));
-    });
+    const recentlyJoined = entries.filter(entry => entry.recently_joined);
+    const availableEntries = entries.filter(entry => !entry.recently_joined);
+    appendMemberPoolOptions(select, '7 天内加入过（不可选）', recentlyJoined, true);
+    appendMemberPoolOptions(select, '7 天内未加入过（可选）', availableEntries);
     select.disabled = entries.length === 0;
-    hint.textContent = entries.length
-        ? `可选 ${entries.length} 个；均为最近 7 天未加入过当前 Team 的账号。`
-        : '当前没有符合 7 天限制的可邀请号池账号。';
+    hint.textContent = availableEntries.length
+        ? `可选 ${availableEntries.length} 个；上方另有 ${recentlyJoined.length} 个账号在 7 天限制内。`
+        : recentlyJoined.length
+            ? '当前没有可邀请账号；上方账号均处于 7 天限制内。'
+            : '当前没有可邀请的号池账号。';
     updateMemberInviteAvailability();
 }
 

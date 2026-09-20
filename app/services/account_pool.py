@@ -97,15 +97,9 @@ class AccountPoolService:
             TeamEmailMapping.email == AccountPoolEntry.email,
             TeamEmailMapping.status.in_(ACTIVE_MAPPING_STATUSES),
         )
-        recent_team_join = select(AccountPoolHistory.id).where(
-            AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
-            AccountPoolHistory.team_id == team_id,
-            AccountPoolHistory.joined_at > cutoff,
-        )
         conditions = [
             AccountPoolEntry.deleted_at.is_(None),
             ~active_mapping.exists(),
-            ~recent_team_join.exists(),
         ]
         owner_email = self.normalize_email(team.email)
         if owner_email:
@@ -116,9 +110,30 @@ class AccountPoolService:
             .where(*conditions)
             .order_by(AccountPoolEntry.email.asc())
         )
+        entries = result.scalars().all()
+        if not entries:
+            return []
+
+        recent_result = await db_session.execute(
+            select(
+                AccountPoolHistory.account_pool_id,
+                func.max(AccountPoolHistory.joined_at),
+            )
+            .where(
+                AccountPoolHistory.account_pool_id.in_([entry.id for entry in entries]),
+                AccountPoolHistory.team_id == team_id,
+                AccountPoolHistory.joined_at > cutoff,
+            )
+            .group_by(AccountPoolHistory.account_pool_id)
+        )
+        recent_entry_ids = {account_pool_id for account_pool_id, _ in recent_result.all()}
         return [
-            {"id": entry.id, "email": entry.email}
-            for entry in result.scalars().all()
+            {
+                "id": entry.id,
+                "email": entry.email,
+                "recently_joined": entry.id in recent_entry_ids,
+            }
+            for entry in entries
         ]
 
     async def invite_replacement(
