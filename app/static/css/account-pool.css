@@ -1,6 +1,15 @@
 .account-pool-page {
     display: grid;
     gap: 1rem;
+    min-width: 0;
+}
+
+.account-pool-page > *,
+.account-pool-form,
+.account-pool-form > *,
+.account-pool-page .workbench-toolbar-row,
+.account-pool-page .workbench-toolbar-copy {
+    min-width: 0;
 }
 
 .account-pool-form {
@@ -15,6 +24,7 @@
 }
 
 .account-pool-form textarea {
+    width: 100%;
     min-height: 118px;
     resize: vertical;
 }
@@ -84,5 +94,14 @@
     .account-pool-form,
     .account-pool-history-item {
         grid-template-columns: 1fr;
+    }
+
+    .account-pool-form .btn {
+        width: 100%;
+    }
+
+    .account-pool-page .page-meta-pill {
+        max-width: 100%;
+        white-space: normal;
     }
 }
