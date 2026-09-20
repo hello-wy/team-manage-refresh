@@ -1,0 +1,58 @@
+<div id="memberAuthorizationModal" class="modal-overlay" inert>
+    <div class="modal member-authorization-modal" role="dialog" aria-modal="true" aria-labelledby="memberAuthorizationTitle">
+        <div class="modal-header">
+            <h3 id="memberAuthorizationTitle">成员 ChatGPT 授权</h3>
+            <button type="button" class="modal-close" aria-label="关闭成员授权" onclick="closeMemberAuthorization()">&times;</button>
+        </div>
+        <div class="modal-body member-authorization-body">
+            <p class="form-text">使用所选成员邮箱登录。接受邀请后，授权时请选择当前 Team 工作区。</p>
+            <div class="member-authorization-fields">
+                <div class="form-group">
+                    <label for="memberAuthEmail">授权成员邮箱</label>
+                    <input id="memberAuthEmail" class="form-control" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="memberAuthAccount">Team 工作区 ID</label>
+                    <input id="memberAuthAccount" class="form-control" readonly placeholder="判定后自动填充">
+                </div>
+            </div>
+            <div class="member-account-credential-fields">
+                <div class="form-group">
+                    <label for="memberAuthPassword">登录密码</label>
+                    <div class="member-account-credential-control">
+                        <input id="memberAuthPassword" class="form-control" readonly placeholder="打开成员授权后自动读取">
+                        <button type="button" class="btn btn-secondary btn-icon" title="复制登录密码" aria-label="复制登录密码" onclick="memberAccountCredentials.copy('password', '登录密码')">
+                            <i data-lucide="copy" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="memberAuthTwoFactorSecret">2FA 密钥</label>
+                    <div class="member-account-credential-control">
+                        <input id="memberAuthTwoFactorSecret" class="form-control" readonly placeholder="打开成员授权后自动读取">
+                        <button type="button" class="btn btn-secondary btn-icon" title="复制 2FA 密钥" aria-label="复制 2FA 密钥" onclick="memberAccountCredentials.copy('two_factor_secret', '2FA 密钥')">
+                            <i data-lucide="copy" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="btn btn-primary" id="memberAuthGenerateBtn" onclick="generateMemberAuthorization()">获取授权链接</button>
+            <div class="form-group">
+                <label for="memberAuthUrl">授权链接</label>
+                <input id="memberAuthUrl" class="form-control" readonly placeholder="获取后自动复制，链接有效期 15 分钟">
+            </div>
+            <div class="form-group">
+                <label for="memberAuthCallback">完整回调 URL</label>
+                <textarea id="memberAuthCallback" class="form-control" rows="3" placeholder="登录后粘贴完整 http://localhost:1455/auth/callback?... URL"></textarea>
+            </div>
+            <div class="member-authorization-actions">
+                <button type="button" id="memberAuthParseBtn" class="btn btn-primary" onclick="parseMemberAuthorization()" disabled>解析并自动填充</button>
+                <button type="button" id="memberAuthCheckBtn" class="btn btn-secondary" onclick="checkMemberAuthorization()">判定邀请结果</button>
+                <button type="button" id="memberAuthExportBtn" class="btn btn-secondary" onclick="exportCurrentMemberAuthorization()" disabled>导出 sub2api JSON</button>
+                <button type="button" id="memberAuthImportBtn" class="btn btn-secondary" onclick="importCurrentMemberAuthorization()" disabled>导出到 sub2api</button>
+            </div>
+            <p id="memberAuthStatus" class="member-authorization-status" role="status" aria-live="polite"></p>
+            <small class="form-text">授权完成后会自动加密保存 JSON 状态。仅已授权且已确认加入当前 Team 的成员可下载或导出到 sub2api。</small>
+        </div>
+    </div>
+</div>

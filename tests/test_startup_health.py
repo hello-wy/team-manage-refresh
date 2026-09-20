@@ -109,6 +109,8 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertIn("pending_replacements", team_columns)
             self.assertIn("last_invited_at", mapping_columns)
             self.assertIn("seat_type", pool_columns)
+            self.assertIn("password_encrypted", pool_columns)
+            self.assertIn("two_factor_secret_encrypted", pool_columns)
 
     @staticmethod
     def _columns(connection, table_name):

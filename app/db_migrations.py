@@ -265,6 +265,8 @@ def run_auto_migration():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) NOT NULL,
                     seat_type VARCHAR(20) NOT NULL DEFAULT 'default',
+                    password_encrypted TEXT,
+                    two_factor_secret_encrypted TEXT,
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL
                 )
@@ -280,6 +282,18 @@ def run_auto_migration():
                 "ADD COLUMN seat_type VARCHAR(20) NOT NULL DEFAULT 'default'"
             )
             migrations_applied.append("account_pool_entries.seat_type")
+
+        account_pool_credential_columns = {
+            "password_encrypted": "TEXT",
+            "two_factor_secret_encrypted": "TEXT",
+        }
+        if table_exists(cursor, "account_pool_entries"):
+            for column_name, column_type in account_pool_credential_columns.items():
+                if not column_exists(cursor, "account_pool_entries", column_name):
+                    cursor.execute(
+                        f"ALTER TABLE account_pool_entries ADD COLUMN {column_name} {column_type}"
+                    )
+                    migrations_applied.append(f"account_pool_entries.{column_name}")
 
         if not table_exists(cursor, "account_pool_histories"):
             logger.info("创建 account_pool_histories 表")

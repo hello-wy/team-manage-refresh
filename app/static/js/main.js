@@ -1888,6 +1888,7 @@ function closeMemberAuthorization() {
 function resetMemberAuthorization() {
     const ctx = memberAuthorizationContext;
     if (ctx?.pollTimer) clearTimeout(ctx.pollTimer);
+    memberAccountCredentials.reset();
     memberAuthorizationContext = null;
     const membersModal = document.getElementById('manageMembersModal');
     if (membersModal) membersModal.inert = false;
@@ -1954,7 +1955,10 @@ async function openMemberAuthorization(teamId, email) {
     showModal('memberAuthorizationModal');
     document.querySelector('#memberAuthorizationModal .modal-close').focus();
     document.getElementById('manageMembersModal').inert = true;
-    await requestMemberAuthorization('check', {notify: false});
+    await Promise.all([
+        requestMemberAuthorization('check', {notify: false}),
+        memberAccountCredentials.load(ctx)
+    ]);
 }
 
 function applyMemberAuthorizationStatus(ctx, data) {

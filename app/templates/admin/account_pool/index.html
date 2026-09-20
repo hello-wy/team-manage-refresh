@@ -3,82 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<style>
-    .account-pool-page {
-        display: grid;
-        gap: 1rem;
-    }
-
-    .account-pool-form {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 160px auto;
-        gap: 1rem;
-        align-items: end;
-    }
-
-    .account-pool-form .form-group {
-        margin: 0;
-    }
-
-    .account-pool-form textarea {
-        min-height: 118px;
-        resize: vertical;
-    }
-
-    .account-pool-hint {
-        margin-top: 0.45rem;
-        color: var(--text-muted);
-        font-size: 0.82rem;
-    }
-
-    .account-pool-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        white-space: nowrap;
-    }
-
-    .account-pool-team {
-        display: grid;
-        gap: 0.2rem;
-        min-width: 170px;
-    }
-
-    .account-pool-team small {
-        color: var(--text-muted);
-    }
-
-    .account-pool-empty {
-        padding: 3rem 1rem;
-        text-align: center;
-        color: var(--text-muted);
-    }
-
-    .account-pool-history-list {
-        display: grid;
-        gap: 0.65rem;
-    }
-
-    .account-pool-history-item {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 0.75rem;
-        padding: 0.85rem 0.95rem;
-        border: 1px solid var(--border-base);
-        border-radius: var(--radius-md);
-        background: var(--surface-elev-1);
-    }
-
-    @media (max-width: 700px) {
-        .account-pool-form {
-            grid-template-columns: 1fr;
-        }
-
-        .account-pool-history-item {
-            grid-template-columns: 1fr;
-        }
-    }
-</style>
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260920">
 {% endblock %}
 
 {% block content %}
@@ -145,17 +70,30 @@
                 <thead>
                     <tr>
                         <th>邮箱</th>
+                        <th>密码</th>
+                        <th>2FA</th>
                         <th>席位类型</th>
                         <th>当前状态</th>
                         <th>当前 Team</th>
                         <th>最近加入时间</th>
                         <th>加入历史</th>
+                        <th style="text-align: right;">操作</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for entry in entries %}
-                    <tr>
+                    <tr data-account-pool-row="{{ entry.id }}">
                         <td data-label="邮箱"><strong>{{ entry.email }}</strong></td>
+                        <td data-label="密码">
+                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" title="复制登录密码" aria-label="复制登录密码" onclick='copyAccountPoolCredential({{ entry.email|tojson }}, "password", "登录密码")'>
+                                <i data-lucide="copy" aria-hidden="true"></i>
+                            </button>
+                        </td>
+                        <td data-label="2FA">
+                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" title="复制 2FA 密钥" aria-label="复制 2FA 密钥" onclick='copyAccountPoolCredential({{ entry.email|tojson }}, "two_factor_secret", "2FA 密钥")'>
+                                <i data-lucide="copy" aria-hidden="true"></i>
+                            </button>
+                        </td>
                         <td data-label="席位类型">
                             <span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">
                                 {% if entry.seat_type == 'premium' %}高级{% else %}标准{% endif %}
@@ -180,6 +118,13 @@
                                 <i data-lucide="history" style="width: 14px; height: 14px;"></i>
                                 查看 {{ entry.history_count }} 次
                             </button>
+                        </td>
+                        <td data-label="操作">
+                            <div class="account-pool-row-actions">
+                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger account-pool-delete-button" title="删除账号" aria-label="删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
+                                    <i data-lucide="trash-2" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -221,72 +166,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-    function accountPoolFormatDate(value) {
-        if (!value) return '-';
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return value;
-        return date.toLocaleString('zh-CN', {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'});
-    }
-
-    async function loadAccountPoolHistory(entryId, email) {
-        const content = document.getElementById('accountPoolHistoryContent');
-        const emailNode = document.getElementById('accountPoolHistoryEmail');
-        emailNode.textContent = email;
-        content.textContent = '加载中...';
-        showModal('accountPoolHistoryModal');
-        try {
-            const response = await fetch(`/admin/account-pool/${entryId}/history`);
-            const payload = await response.json();
-            if (!response.ok || !payload.success) throw new Error(payload.error || '加载历史失败');
-            const histories = payload.data.histories || [];
-            content.innerHTML = histories.length ? histories.map(history => `
-                <div class="account-pool-history-item">
-                    <div>
-                        <strong>${escapeHtml(history.team_name || `Team #${history.team_id || '-'}`)}</strong>
-                        <div class="text-muted small">${escapeHtml(history.team_email || 'Team 邮箱未知')}</div>
-                    </div>
-                    <div class="text-muted small">加入：${accountPoolFormatDate(history.joined_at)}<br>离开：${accountPoolFormatDate(history.left_at)}</div>
-                </div>
-            `).join('') : '<div class="text-muted">暂无加入历史。</div>';
-            if (window.lucide) lucide.createIcons();
-        } catch (error) {
-            content.textContent = error.message || '加载历史失败';
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-        document.querySelectorAll('.account-pool-history-btn').forEach(button => {
-            button.addEventListener('click', () => loadAccountPoolHistory(button.dataset.entryId, button.dataset.email));
-        });
-        document.getElementById('accountPoolForm')?.addEventListener('submit', async event => {
-            event.preventDefault();
-            const input = document.getElementById('accountPoolEmails');
-            const seatType = document.getElementById('accountPoolSeatType').value;
-            const button = document.getElementById('accountPoolSubmitBtn');
-            const content = input.value.trim();
-            if (!content) {
-                showToast('请先输入邮箱', 'warning');
-                return;
-            }
-            button.disabled = true;
-            try {
-                const response = await fetch('/admin/account-pool', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({content, seat_type: seatType})
-                });
-                const payload = await response.json();
-                if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');
-                showToast(payload.message, 'success');
-                input.value = '';
-                setTimeout(() => location.reload(), 500);
-            } catch (error) {
-                showToast(error.message || '添加失败', 'error');
-            } finally {
-                button.disabled = false;
-            }
-        });
-    });
-</script>
+<script src="/static/js/account-pool.js?v=20260920"></script>
 {% endblock %}

@@ -36,6 +36,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css?v=20260919-account-pool-picker">
+    <link rel="stylesheet" href="/static/css/member-account-credentials.css?v=20260920">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     {% block extra_css %}{% endblock %}
@@ -943,48 +944,12 @@ eyJ..."></textarea>
             </div>
         </div>
     </div>
-    <div id="memberAuthorizationModal" class="modal-overlay" inert>
-        <div class="modal member-authorization-modal" role="dialog" aria-modal="true" aria-labelledby="memberAuthorizationTitle">
-            <div class="modal-header">
-                <h3 id="memberAuthorizationTitle">成员 ChatGPT 授权</h3>
-                <button type="button" class="modal-close" aria-label="关闭成员授权" onclick="closeMemberAuthorization()">&times;</button>
-            </div>
-            <div class="modal-body member-authorization-body">
-                    <p class="form-text">使用所选成员邮箱登录。接受邀请后，授权时请选择当前 Team 工作区。</p>
-                    <div class="member-authorization-fields">
-                        <div class="form-group">
-                            <label for="memberAuthEmail">授权成员邮箱</label>
-                            <input id="memberAuthEmail" class="form-control" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label for="memberAuthAccount">Team 工作区 ID</label>
-                            <input id="memberAuthAccount" class="form-control" readonly placeholder="判定后自动填充">
-                        </div>
-                    </div>
-                    <button type="button" class="btn btn-primary" id="memberAuthGenerateBtn" onclick="generateMemberAuthorization()">获取授权链接</button>
-                    <div class="form-group">
-                        <label for="memberAuthUrl">授权链接</label>
-                        <input id="memberAuthUrl" class="form-control" readonly placeholder="获取后自动复制，链接有效期 15 分钟">
-                    </div>
-                    <div class="form-group">
-                        <label for="memberAuthCallback">完整回调 URL</label>
-                        <textarea id="memberAuthCallback" class="form-control" rows="3" placeholder="登录后粘贴完整 http://localhost:1455/auth/callback?... URL"></textarea>
-                    </div>
-                    <div class="member-authorization-actions">
-                        <button type="button" id="memberAuthParseBtn" class="btn btn-primary" onclick="parseMemberAuthorization()" disabled>解析并自动填充</button>
-                        <button type="button" id="memberAuthCheckBtn" class="btn btn-secondary" onclick="checkMemberAuthorization()">判定邀请结果</button>
-                        <button type="button" id="memberAuthExportBtn" class="btn btn-secondary" onclick="exportCurrentMemberAuthorization()" disabled>导出 sub2api JSON</button>
-                        <button type="button" id="memberAuthImportBtn" class="btn btn-secondary" onclick="importCurrentMemberAuthorization()" disabled>导出到 sub2api</button>
-                    </div>
-                    <p id="memberAuthStatus" class="member-authorization-status" role="status" aria-live="polite"></p>
-                    <small class="form-text">授权完成后会自动加密保存 JSON 状态。仅已授权且已确认加入当前 Team 的成员可下载或导出到 sub2api。</small>
-            </div>
-        </div>
-    </div>
+    {% include "admin/_member_authorization_modal.html" %}
     <div id="toast" class="toast"></div>
 
     <script>window.SYSTEM_UI_THEME = {{ ui_theme|default("ocean")|tojson }};</script>
-    <script src="/static/js/main.js?v=20260919-account-pool-picker"></script>
+    <script src="/static/js/member-account-credentials.js?v=20260920"></script>
+    <script src="/static/js/main.js?v=20260920-account-pool-credentials"></script>
     <script>
         lucide.createIcons();
     </script>

@@ -1,0 +1,88 @@
+.account-pool-page {
+    display: grid;
+    gap: 1rem;
+}
+
+.account-pool-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 160px auto;
+    gap: 1rem;
+    align-items: end;
+}
+
+.account-pool-form .form-group {
+    margin: 0;
+}
+
+.account-pool-form textarea {
+    min-height: 118px;
+    resize: vertical;
+}
+
+.account-pool-hint {
+    margin-top: 0.45rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.account-pool-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+
+.account-pool-team {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 170px;
+}
+
+.account-pool-team small {
+    color: var(--text-muted);
+}
+
+.account-pool-secret-button,
+.account-pool-delete-button {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+}
+
+.account-pool-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    white-space: nowrap;
+}
+
+.account-pool-empty {
+    padding: 3rem 1rem;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.account-pool-history-list {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.account-pool-history-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    padding: 0.85rem 0.95rem;
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-md);
+    background: var(--surface-elev-1);
+}
+
+@media (max-width: 700px) {
+    .account-pool-form,
+    .account-pool-history-item {
+        grid-template-columns: 1fr;
+    }
+}

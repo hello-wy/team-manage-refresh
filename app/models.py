@@ -156,6 +156,8 @@ class AccountPoolEntry(Base):
         nullable=False,
         comment="邀请席位类型: default/premium",
     )
+    password_encrypted = Column(Text, comment="加密存储的 ChatGPT 登录密码")
+    two_factor_secret_encrypted = Column(Text, comment="加密存储的 2FA 密钥")
     created_at = Column(DateTime, default=get_now, nullable=False)
     updated_at = Column(DateTime, default=get_now, onupdate=get_now, nullable=False)
 
