@@ -2296,13 +2296,12 @@ function handleMemberPoolSelection() {
     updateMemberInviteAvailability();
 }
 
-function appendMemberPoolOptions(select, label, entries, disabled = false) {
+function appendMemberPoolOptions(select, label, entries) {
     if (!entries.length) return;
     const group = document.createElement('optgroup');
     group.label = label;
     entries.forEach(entry => {
         const option = new Option(entry.email, entry.email);
-        option.disabled = disabled;
         group.appendChild(option);
     });
     select.appendChild(group);
@@ -2329,13 +2328,13 @@ async function loadMemberPoolOptions(teamId) {
     select.innerHTML = '<option value="">不使用号池账号</option>';
     const recentlyJoined = entries.filter(entry => entry.recently_joined);
     const availableEntries = entries.filter(entry => !entry.recently_joined);
-    appendMemberPoolOptions(select, '7 天内加入过（不可选）', recentlyJoined, true);
-    appendMemberPoolOptions(select, '7 天内未加入过（可选）', availableEntries);
+    appendMemberPoolOptions(select, '7 天内加入过', recentlyJoined);
+    appendMemberPoolOptions(select, '7 天内未加入过', availableEntries);
     select.disabled = entries.length === 0;
     hint.textContent = availableEntries.length
-        ? `可选 ${availableEntries.length} 个；上方另有 ${recentlyJoined.length} 个账号在 7 天限制内。`
+        ? `可选 ${entries.length} 个；上方 ${recentlyJoined.length} 个账号为 7 天内加入过。`
         : recentlyJoined.length
-            ? '当前没有可邀请账号；上方账号均处于 7 天限制内。'
+            ? `可选 ${recentlyJoined.length} 个；这些账号均为 7 天内加入过。`
             : '当前没有可邀请的号池账号。';
     updateMemberInviteAvailability();
 }
