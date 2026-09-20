@@ -220,12 +220,13 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(MemberAuthorizationError, "读取失败"):
             await self.service.export(1, EMAIL, self.db)
 
-    async def test_account_access_must_be_verified(self):
+    async def test_joined_member_exports_when_account_enumeration_omits_workspace(self):
         await self.authorize()
         self.join()
         self.remote.get_account_info.return_value = {"success": True, "accounts": []}
-        with self.assertRaisesRegex(MemberAuthorizationError, "无法访问"):
-            await self.service.export(1, EMAIL, self.db)
+        payload = await self.service.export(1, EMAIL, self.db)
+        self.assertEqual(payload["accounts"][0]["credentials"]["chatgpt_account_id"], ACCOUNT)
+        self.remote.get_account_info.assert_not_awaited()
 
     async def test_target_email_must_be_in_team_or_pending_invites(self):
         with self.assertRaisesRegex(MemberAuthorizationError, "不在当前"):

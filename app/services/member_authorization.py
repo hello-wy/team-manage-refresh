@@ -232,11 +232,6 @@ class MemberAuthorizationService:
                 data["message"] = "已授权，等待成员接受邀请后重新判定" if data["membership"] == "invited" else "成员已不在当前 Team，无法导出"
             else:
                 credentials = await self._credentials(record, email, db)
-                accessible = await self.remote.get_account_info(credentials["access_token"], db, identifier=f"member-oauth-{record.id}")
-                if not accessible.get("success"):
-                    raise MemberAuthorizationError("成员工作区访问验证失败，请稍后重新判定")
-                if not any(a.get("account_id") == team.account_id for a in accessible.get("accounts", [])):
-                    raise MemberAuthorizationError("该成员授权无法访问当前 Team，请接受邀请后重新授权")
                 data["can_export"] = True
                 data["message"] = "已确认加入当前 Team，可以导出 sub2api JSON"
         except MemberAuthorizationError as exc:
