@@ -300,23 +300,33 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             ))
             await session.commit()
 
-            stats = await self.service.run_due_members(
-                session,
-                AsyncMock(return_value={"success": True}),
-                invite_replacement=AsyncMock(
-                    return_value={"success": False, "status": "failed"}
-                ),
-            )
+            with self.assertLogs("app.services.member_auto_kick", "WARNING") as logs:
+                stats = await self.service.run_due_members(
+                    session,
+                    AsyncMock(return_value={"success": True}),
+                    invite_replacement=AsyncMock(return_value={
+                        "success": False,
+                        "status": "failed",
+                        "email": "candidate@example.com",
+                        "error_code": "seat_operation_pending",
+                        "status_code": 409,
+                        "error": "已有未确认邀请",
+                    }),
+                )
 
             self.assertFalse(stats["success"])
             self.assertEqual(stats["kicked"], 1)
             self.assertEqual(stats["replacement_failed"], 1)
             self.assertEqual(stats["replacement_pending"], 1)
+            self.assertIn("email=candidate@example.com", logs.output[0])
+            self.assertIn("error_code=seat_operation_pending", logs.output[0])
+            self.assertIn("status_code=409", logs.output[0])
 
     async def test_pending_replacement_retries_on_next_scan(self):
         async with self.session_factory() as session:
             team = await self._seed_team(session)
             team.pending_replacements = 1
+            session.add(TeamReplacementQueue(team_id=team.id, seat_type="premium"))
             await session.commit()
 
             unavailable = await self.service.run_due_members(
@@ -338,6 +348,44 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(invited["replacement_invited"], 1)
             self.assertEqual(invited["replacement_pending"], 0)
+
+    async def test_pending_count_is_repaired_from_replacement_queue(self):
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            team.pending_replacements = 2
+            session.add(TeamReplacementQueue(team_id=team.id, seat_type="premium"))
+            await session.commit()
+
+            with self.assertLogs("app.services.member_auto_kick", "ERROR") as logs:
+                stats = await self.service.run_due_members(
+                    session,
+                    AsyncMock(),
+                    invite_replacement=AsyncMock(
+                        return_value={"success": True, "status": "no_candidate"}
+                    ),
+                )
+
+            self.assertEqual(team.pending_replacements, 1)
+            self.assertEqual(stats["replacement_pending"], 1)
+            self.assertEqual(stats["replacement_unavailable"], 1)
+            self.assertIn("自动补位队列不一致", logs.output[0])
+
+    async def test_missing_queue_is_not_invited_as_standard(self):
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            team.pending_replacements = 1
+            await session.commit()
+            invite_replacement = AsyncMock()
+
+            stats = await self.service.run_due_members(
+                session,
+                AsyncMock(),
+                invite_replacement=invite_replacement,
+            )
+
+            self.assertEqual(team.pending_replacements, 0)
+            self.assertEqual(stats["replacement_pending"], 0)
+            invite_replacement.assert_not_awaited()
 
 
 if __name__ == "__main__":

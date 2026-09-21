@@ -190,6 +190,22 @@ class SeatBalancePersistenceTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await service.get_team_seat_balance(team, db))["success"])
             self.assertEqual(len((await db.execute(select(TeamSeatHold))).scalars().all()), 1)
 
+    async def test_pending_hold_error_includes_hold_context(self):
+        async with self.sessions() as db:
+            service = self.service()
+            team = await db.get(Team, 1)
+            await service._reserve_member_seat(
+                team, "invite", "new@example.com", "premium", db
+            )
+            result = await service._reserve_member_seat(
+                team, "invite", "new@example.com", "premium", db
+            )
+
+            self.assertEqual(result["error_code"], "seat_operation_pending")
+            self.assertEqual(result["pending_operation"], "invite")
+            self.assertEqual(result["pending_seat_type"], "premium")
+            self.assertIsNotNone(result["pending_since"])
+
     async def test_definite_rejection_releases_reservation(self):
         self.remote.update_member_seat_type.return_value = {"success": False, "status_code": 403, "error": "forbidden"}
         result = await self.change("one")

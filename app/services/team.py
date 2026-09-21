@@ -2327,11 +2327,18 @@ class TeamService:
         return None
 
     async def _reserve_member_seat(self, team, operation, target, seat_type, db_session):
-        existing = await db_session.execute(select(TeamSeatHold.id).where(
+        existing = await db_session.execute(select(TeamSeatHold).where(
             TeamSeatHold.account_id == team.account_id, TeamSeatHold.operation == operation, TeamSeatHold.target == target,
         ))
-        if existing.scalar_one_or_none() is not None:
-            return self._admin_error("seat_operation_pending", "该成员或邀请已有未确认操作，请刷新核实后重试")
+        hold = existing.scalar_one_or_none()
+        if hold:
+            return self._admin_error(
+                "seat_operation_pending",
+                "该成员或邀请已有未确认操作，请刷新核实后重试",
+                pending_operation=hold.operation,
+                pending_seat_type=hold.seat_type,
+                pending_since=hold.created_at.isoformat(),
+            )
         db_session.add(TeamSeatHold(account_id=team.account_id, operation=operation, target=target, seat_type=seat_type))
         await db_session.commit()
         return None
@@ -2888,6 +2895,9 @@ class TeamService:
 
             invite_data = invite_result.get("data", {})
             if "account_invites" in invite_data and not invite_data.get("account_invites"):
+                await self._release_member_seat(
+                    team.account_id, "invite", normalized_email, db_session
+                )
                 await self._handle_api_error(
                     {"success": False, "error": "官方拦截下发(响应空列表)", "error_code": "ghost_success"},
                     team,

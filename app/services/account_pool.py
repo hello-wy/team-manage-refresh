@@ -160,6 +160,8 @@ class AccountPoolService:
                 "status": "failed",
                 "email": candidate.email,
                 "error": result.get("error") or result.get("message") or "邀请失败",
+                "error_code": result.get("error_code"),
+                "status_code": result.get("status_code"),
             }
         await mark_replacement_pending(db_session, team_id, candidate.email)
         return {"success": True, "status": "invited", "email": candidate.email}

@@ -120,6 +120,30 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(mapping.replacement_export_pending)
             self.assertEqual(mapping.status, "invited")
 
+    async def test_failed_replacement_preserves_upstream_error_details(self):
+        async with self.sessions() as session:
+            session.add(Team(
+                id=1, email="owner@example.com", account_id="account-1",
+                access_token_encrypted="token", status="active",
+            ))
+            await session.commit()
+            await self.service.add_emails(session, emails=["member@example.com"])
+
+            result = await self.service.invite_replacement(
+                1,
+                session,
+                invite_member=AsyncMock(return_value={
+                    "success": False,
+                    "error": "请求冲突",
+                    "error_code": "seat_operation_pending",
+                    "status_code": 409,
+                }),
+            )
+
+            self.assertEqual(result["email"], "member@example.com")
+            self.assertEqual(result["error_code"], "seat_operation_pending")
+            self.assertEqual(result["status_code"], 409)
+
     async def test_reinvite_invalidates_old_authorization_and_export_state(self):
         async with self.sessions() as session:
             session.add(Team(

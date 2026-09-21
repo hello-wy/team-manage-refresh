@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Awaitable, Callable, Dict, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Team, TeamEmailMapping, TeamReplacementQueue
@@ -196,10 +196,18 @@ class MemberAutoKickService:
     ) -> None:
         result = await db_session.execute(
             select(Team)
-            .where(Team.pending_replacements > 0)
+            .outerjoin(TeamReplacementQueue)
+            .where(
+                (Team.pending_replacements > 0)
+                | TeamReplacementQueue.id.is_not(None)
+            )
+            .distinct()
             .order_by(Team.id.asc())
         )
         for team in result.scalars().all():
+            await self._reconcile_replacement_queue(team, db_session)
+            if not team.pending_replacements:
+                continue
             await self._fill_team_replacements(
                 team,
                 db_session=db_session,
@@ -215,27 +223,65 @@ class MemberAutoKickService:
         invite_replacement,
         stats,
     ) -> None:
-        while int(team.pending_replacements or 0) > 0:
+        while True:
             queue_item = await self._next_queue_item(team.id, db_session)
-            seat_type = queue_item.seat_type if queue_item else "standard"
+            if not queue_item:
+                return
             replacement = await self._invite_replacement(
                 team.id,
-                seat_type,
+                queue_item.seat_type,
                 db_session,
                 invite_replacement,
             )
             status = replacement.get("status")
             if status == "no_candidate":
-                stats["replacement_unavailable"] += int(team.pending_replacements)
+                stats["replacement_unavailable"] += int(team.pending_replacements or 0)
                 return
             if status != "invited":
                 stats["replacement_failed"] += 1
+                self._log_replacement_failure(team, queue_item, replacement)
                 return
             team.pending_replacements -= 1
-            if queue_item:
-                await db_session.delete(queue_item)
+            await db_session.delete(queue_item)
             stats["replacement_invited"] += 1
             await db_session.commit()
+
+    @staticmethod
+    async def _reconcile_replacement_queue(team, db_session) -> None:
+        result = await db_session.execute(
+            select(func.count(TeamReplacementQueue.id)).where(
+                TeamReplacementQueue.team_id == team.id
+            )
+        )
+        queue_count = int(result.scalar_one())
+        pending_count = int(team.pending_replacements or 0)
+        if pending_count == queue_count:
+            return
+        logger.error(
+            "自动补位队列不一致，已按队列修复: team=%s name=%s pending=%s queue=%s",
+            team.id,
+            team.team_name,
+            pending_count,
+            queue_count,
+        )
+        team.pending_replacements = queue_count
+        await db_session.commit()
+
+    @staticmethod
+    def _log_replacement_failure(team, queue_item, replacement) -> None:
+        logger.warning(
+            "自动补位邀请失败: team=%s name=%s queue_id=%s seat_type=%s "
+            "email=%s status=%s error_code=%s status_code=%s error=%s",
+            team.id,
+            team.team_name,
+            queue_item.id,
+            queue_item.seat_type,
+            replacement.get("email"),
+            replacement.get("status"),
+            replacement.get("error_code"),
+            replacement.get("status_code"),
+            replacement.get("error"),
+        )
 
     @staticmethod
     async def _next_queue_item(team_id, db_session):
@@ -250,9 +296,9 @@ class MemberAutoKickService:
     @staticmethod
     async def _pending_replacement_count(db_session) -> int:
         result = await db_session.execute(
-            select(Team.pending_replacements).where(Team.pending_replacements > 0)
+            select(func.count(TeamReplacementQueue.id))
         )
-        return sum(int(value or 0) for value in result.scalars().all())
+        return int(result.scalar_one())
 
     async def process_pending_exports(
         self, db_session: AsyncSession, complete: CompleteReplacement
@@ -298,8 +344,13 @@ class MemberAutoKickService:
             return await invite_replacement(team_id, db_session, seat_type)
         except Exception:
             await db_session.rollback()
-            logger.exception("成员自动补位异常: team=%s", team_id)
-            return {"success": False, "status": "failed"}
+            logger.exception("成员自动补位异常: team=%s seat_type=%s", team_id, seat_type)
+            return {
+                "success": False,
+                "status": "failed",
+                "error_code": "replacement_exception",
+                "error": "自动补位调用异常，请查看服务日志",
+            }
 
     async def _joined_mappings(
         self,
