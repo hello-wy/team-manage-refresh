@@ -6565,6 +6565,30 @@ body.admin-theme.auth-page .auth-sticker-dot-3 {
         display: none;
     }
 }
+
+/* The cartoon overlay defines a two-column layout after the shared mobile rules.
+   Collapse it again so the login card stays inside narrow viewports. */
+@media (max-width: 900px) {
+    body.admin-theme.auth-page .auth-layout {
+        grid-template-columns: minmax(0, 1fr);
+        width: 100%;
+    }
+
+    body.admin-theme.auth-page .auth-hero {
+        display: none;
+    }
+
+    body.admin-theme.auth-page .auth-card-wrap {
+        width: 100%;
+        min-width: 0;
+        justify-content: center;
+    }
+
+    body.admin-theme.auth-page .auth-card {
+        width: 100%;
+        min-width: 0;
+    }
+}
 /* ================================================================ */
 
 /* === 登录页主题切换 FAB（右上角图标按钮） === */
