@@ -235,5 +235,36 @@ class AccountPoolService:
     async def get_history(self, db_session: AsyncSession, entry_id: int) -> Optional[dict[str, Any]]:
         return await account_pool_history_service.get_history(db_session, entry_id)
 
+    async def get_login_targets(
+        self,
+        db_session: AsyncSession,
+        entry_id: int,
+    ) -> Optional[dict[str, Any]]:
+        entry = await db_session.get(AccountPoolEntry, entry_id)
+        if entry is None or entry.deleted_at is not None:
+            return None
+        result = await db_session.execute(
+            select(TeamEmailMapping, Team)
+            .join(Team, Team.id == TeamEmailMapping.team_id)
+            .where(
+                TeamEmailMapping.email == entry.email,
+                TeamEmailMapping.status.in_(ACTIVE_MAPPING_STATUSES),
+            )
+            .order_by(Team.id.asc())
+        )
+        targets = []
+        seen_team_ids = set()
+        for mapping, team in result.all():
+            if team.id in seen_team_ids:
+                continue
+            seen_team_ids.add(team.id)
+            targets.append({
+                "id": team.id,
+                "name": team.team_name,
+                "email": team.email,
+                "status": mapping.status,
+            })
+        return {"entry_id": entry.id, "email": entry.email, "teams": targets}
+
 
 account_pool_service = AccountPoolService(account_pool_credential_service)

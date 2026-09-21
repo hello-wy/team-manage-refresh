@@ -41,6 +41,18 @@ def _row(entry: AccountPoolEntry, mappings, histories) -> dict[str, Any]:
     joined = [item for item in mappings if item[0].status == "joined"]
     invited = [item for item in mappings if item[0].status == "invited"]
     active = joined + invited
+    team_options = []
+    seen_team_ids = set()
+    for mapping, team in active:
+        if team.id in seen_team_ids:
+            continue
+        seen_team_ids.add(team.id)
+        team_options.append({
+            "id": team.id,
+            "name": team.team_name,
+            "email": team.email,
+            "status": mapping.status,
+        })
     status = "unassigned"
     if len({team.id for _, team in active}) > 1:
         status = "conflict"
@@ -48,7 +60,7 @@ def _row(entry: AccountPoolEntry, mappings, histories) -> dict[str, Any]:
         status = "joined"
     elif invited:
         status = "invited"
-    current = active[0] if active else (None, None)
+    current = active[0] if len(team_options) == 1 else (None, None)
     seat_type = next((mapping.seat_type for mapping, _ in joined if mapping.seat_type), None)
     return {
         "id": entry.id,
@@ -58,6 +70,7 @@ def _row(entry: AccountPoolEntry, mappings, histories) -> dict[str, Any]:
         "team_id": current[1].id if current[1] else None,
         "team_name": current[1].team_name if current[1] else None,
         "team_email": current[1].email if current[1] else None,
+        "team_options": team_options,
         "joined_at": max((history.joined_at for history in histories), default=None),
         "history_count": len(histories),
         "liveness_status": entry.liveness_status,

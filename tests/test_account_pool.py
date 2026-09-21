@@ -233,8 +233,32 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
             listing = await self.service.list_entries(session)
             self.assertEqual(listing["entries"][0]["status"], "conflict")
-            self.assertEqual(listing["entries"][0]["team_id"], 1)
+            self.assertIsNone(listing["entries"][0]["team_id"])
+            self.assertEqual(
+                [team["id"] for team in listing["entries"][0]["team_options"]],
+                [1, 2],
+            )
             self.assertEqual(listing["entries"][0]["seat_type"], "standard")
+
+    async def test_login_targets_include_all_active_teams_without_defaulting(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner-1@example.com", team_name="Alpha", access_token_encrypted="token-1"),
+                Team(id=2, email="owner-2@example.com", team_name="Beta", access_token_encrypted="token-2"),
+            ])
+            await session.commit()
+            await self.service.add_emails(session, emails=["member@example.com"])
+            session.add_all([
+                TeamEmailMapping(team_id=1, email="member@example.com", status="joined"),
+                TeamEmailMapping(team_id=2, email="member@example.com", status="joined"),
+            ])
+            await session.commit()
+            entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
+
+            targets = await self.service.get_login_targets(session, entry.id)
+
+            self.assertEqual(targets["email"], "member@example.com")
+            self.assertEqual([team["id"] for team in targets["teams"]], [1, 2])
 
     async def test_replacement_skips_active_and_recently_invited_accounts(self):
         async with self.sessions() as session:

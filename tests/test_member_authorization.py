@@ -347,3 +347,28 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(check.await_args.args[1], EMAIL)
         self.assertEqual(self.client.post("/admin/teams/1/members/authorization/callback", json={"email": EMAIL}).status_code, 422)
+
+    def test_account_pool_automatic_login_downloads_json_for_selected_team(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        target = {"entry_id": 7, "email": EMAIL, "teams": [{"id": 3, "name": "Target", "email": "owner@example.com", "status": "joined"}]}
+        payload = {"type": "sub2api-data", "accounts": []}
+        with patch.object(admin.account_pool_service, "get_login_targets", new=AsyncMock(return_value=target)), \
+             patch.object(admin.member_authorization_service, "automatic_login", new=AsyncMock()), \
+             patch.object(admin.member_authorization_service, "export", new=AsyncMock(return_value=payload)) as export:
+            response = self.client.post("/admin/account-pool/7/automatic-login", json={})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment", response.headers["content-disposition"])
+        self.assertEqual(json.loads(response.content), payload)
+        export.assert_awaited_once_with(3, EMAIL, unittest.mock.ANY)
+
+    def test_account_pool_automatic_login_requires_team_when_multiple_exist(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        target = {"entry_id": 7, "email": EMAIL, "teams": [{"id": 3}, {"id": 4}]}
+        with patch.object(admin.account_pool_service, "get_login_targets", new=AsyncMock(return_value=target)), \
+             patch.object(admin.member_authorization_service, "automatic_login", new=AsyncMock()) as login:
+            response = self.client.post("/admin/account-pool/7/automatic-login", json={})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("选择目标 Team", response.json()["error"])
+        login.assert_not_awaited()

@@ -221,6 +221,11 @@ class AccountPoolAddRequest(BaseModel):
     content: str = Field("", description="换行分隔的邮箱文本")
 
 
+class AccountPoolAutomaticLoginRequest(BaseModel):
+    """账号号池自动登录目标 Team。"""
+    team_id: Optional[int] = Field(None, gt=0, description="目标 Team ID；仅有一个当前 Team 时可省略")
+
+
 class MemberSeatTypeRequest(BaseModel):
     seat_type: Literal["default", "premium"]
     expected_seat_type: Literal["default", "standard", "premium"]
@@ -422,6 +427,51 @@ async def add_account_pool_emails(
         content=payload.content,
     )
     return JSONResponse(status_code=200 if result["success"] else 400, content=result)
+
+
+@router.post("/account-pool/{entry_id}/automatic-login")
+async def automatic_login_account_pool_entry(
+    entry_id: int,
+    payload: AccountPoolAutomaticLoginRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """自动登录账号池成员并下载其当前 Team 的 sub2api JSON。"""
+    headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    target = await account_pool_service.get_login_targets(db, entry_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"}, headers=headers)
+
+    teams = target["teams"]
+    if payload.team_id is None and len(teams) != 1:
+        message = "该账号没有唯一的当前 Team，请先选择目标 Team" if teams else "该账号当前没有加入或受邀的 Team"
+        return JSONResponse(
+            status_code=409,
+            content={"success": False, "error": message, "teams": teams},
+            headers=headers,
+        )
+    team_id = payload.team_id or teams[0]["id"]
+    if team_id not in {team["id"] for team in teams}:
+        return JSONResponse(status_code=400, content={"success": False, "error": "目标 Team 不是该账号的当前 Team"}, headers=headers)
+
+    try:
+        await member_authorization_service.automatic_login(team_id, target["email"], db)
+        data = await member_authorization_service.export(team_id, target["email"], db)
+        return Response(
+            content=json.dumps(data, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={
+                **headers,
+                "Content-Disposition": f'attachment; filename="sub2api-account-pool-{entry_id}.json"',
+            },
+        )
+    except MemberAuthorizationError as exc:
+        await db.rollback()
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
+    except Exception:
+        await db.rollback()
+        logger.exception("账号池自动登录导出失败 (entry=%s, team=%s)", entry_id, team_id)
+        return JSONResponse(status_code=500, content={"success": False, "error": "自动登录导出失败，请检查服务端日志"}, headers=headers)
 
 
 @router.post("/account-pool/liveness")

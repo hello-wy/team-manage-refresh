@@ -96,6 +96,30 @@
     white-space: nowrap;
 }
 
+.account-pool-auto-login-button {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+}
+
+.account-pool-team-picker-options {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.account-pool-team-picker-option {
+    display: grid;
+    gap: 0.2rem;
+    justify-items: start;
+    text-align: left;
+}
+
+.account-pool-team-picker-option small {
+    color: var(--text-muted);
+}
+
 .account-pool-empty {
     padding: 3rem 1rem;
     text-align: center;

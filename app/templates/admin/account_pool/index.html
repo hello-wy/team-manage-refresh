@@ -124,7 +124,12 @@
                             {% if entry.team_id %}
                             <div class="account-pool-team">
                                 <span>{{ entry.team_name or ('Team #' ~ entry.team_id) }}</span>
-                                <small>{{ entry.team_email or '-' }}</small>
+                                <small>{{ entry.team_email or '-' }} · ID {{ entry.team_id }}</small>
+                            </div>
+                            {% elif entry.team_options|length > 1 %}
+                            <div class="account-pool-team">
+                                <span>多个 Team</span>
+                                <small>自动登录前需选择目标 Team</small>
                             </div>
                             {% else %}-{% endif %}
                         </td>
@@ -137,6 +142,19 @@
                         </td>
                         <td data-label="操作">
                             <div class="account-pool-row-actions">
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
+                                    title="自动登录并下载 JSON"
+                                    aria-label="自动登录并下载 JSON"
+                                    data-entry-id="{{ entry.id }}"
+                                    data-email="{{ entry.email }}"
+                                    data-team-id="{{ entry.team_id or '' }}"
+                                    data-team-options='{{ entry.team_options|tojson }}'
+                                    {% if not entry.team_options %}disabled{% endif %}
+                                >
+                                    <i data-lucide="download" aria-hidden="true"></i>
+                                </button>
                                 <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
                                     <i data-lucide="pencil" aria-hidden="true"></i>
                                 </button>
@@ -211,8 +229,21 @@
         </div>
     </div>
 </div>
+
+<div id="accountPoolTeamPickerModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i data-lucide="layers"></i> 选择目标 Team</h3>
+            <button class="modal-close" type="button" onclick="hideModal('accountPoolTeamPickerModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="accountPoolTeamPickerEmail" class="text-muted"></p>
+            <div id="accountPoolTeamPickerOptions" class="account-pool-team-picker-options"></div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260920-7"></script>
+<script src="/static/js/account-pool.js?v=20260921-1"></script>
 {% endblock %}

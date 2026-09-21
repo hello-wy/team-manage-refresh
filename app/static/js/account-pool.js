@@ -107,6 +107,61 @@ async function runAccountPoolLiveness() {
     }
 }
 
+function accountPoolTeamLabel(team) {
+    return `${team.name || `Team #${team.id}`} · ID ${team.id}`;
+}
+
+function openAccountPoolTeamPicker(entryId, email, teams) {
+    const options = document.getElementById('accountPoolTeamPickerOptions');
+    document.getElementById('accountPoolTeamPickerEmail').textContent = email;
+    options.innerHTML = teams.map(team => `
+        <button type="button" class="btn btn-secondary account-pool-team-picker-option" data-team-id="${team.id}">
+            <span>${escapeHtml(accountPoolTeamLabel(team))}</span>
+            <small>${escapeHtml(team.email || 'Team 邮箱未知')} · ${team.status === 'joined' ? '已加入' : '待接受邀请'}</small>
+        </button>
+    `).join('');
+    options.querySelectorAll('[data-team-id]').forEach(button => {
+        button.addEventListener('click', () => {
+            hideModal('accountPoolTeamPickerModal');
+            runAccountPoolAutomaticLogin(entryId, email, Number(button.dataset.teamId), button);
+        });
+    });
+    showModal('accountPoolTeamPickerModal');
+    if (window.lucide) lucide.createIcons();
+}
+
+async function runAccountPoolAutomaticLogin(entryId, email, teamId, button) {
+    if (!confirm(`确定让 ${email} 自动登录并获取 Team #${teamId} 的 JSON 吗？`)) return;
+    const original = button.innerHTML;
+    button.disabled = true;
+    if (button.querySelector('i')) button.querySelector('i').setAttribute('data-lucide', 'loader-circle');
+    try {
+        const response = await fetch(`/admin/account-pool/${entryId}/automatic-login`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({team_id: teamId})
+        });
+        if (!response.ok) {
+            const payload = await response.json();
+            throw new Error(payload.error || '自动登录导出失败');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `sub2api-account-pool-${entryId}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        showToast(`${email} 的 JSON 已下载`, 'success');
+    } catch (error) {
+        showToast(error.message || '自动登录导出失败', 'error');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = original;
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
 async function loadAccountPoolHistory(entryId, email) {
     const content = document.getElementById('accountPoolHistoryContent');
     document.getElementById('accountPoolHistoryEmail').textContent = email;
@@ -211,5 +266,20 @@ document.addEventListener('DOMContentLoaded', () => {
     );
     document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
     document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
+    document.querySelectorAll('.account-pool-auto-login-button').forEach(button => {
+        button.addEventListener('click', () => {
+            const teams = JSON.parse(button.dataset.teamOptions || '[]');
+            if (teams.length > 1) {
+                openAccountPoolTeamPicker(button.dataset.entryId, button.dataset.email, teams);
+                return;
+            }
+            runAccountPoolAutomaticLogin(
+                button.dataset.entryId,
+                button.dataset.email,
+                Number(button.dataset.teamId),
+                button,
+            );
+        });
+    });
     initAccountPoolColumnToggler();
 });
