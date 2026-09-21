@@ -3,7 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260920-7">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260921-2">
 {% endblock %}
 
 {% block content %}
@@ -52,7 +52,7 @@
         <div class="workbench-toolbar-row">
             <div class="workbench-toolbar-copy">
                 <h3>账号状态</h3>
-                <p class="text-muted">当前状态来自 Team 成员/邀请同步；验活状态来自定时密码与 2FA 检测。</p>
+                <p class="text-muted">当前状态来自 Team 成员/邀请同步；验活会同步实际 workspace 并保存 JSON 状态。</p>
             </div>
             <div class="account-pool-toolbar-actions">
                 <form method="get" class="search-form">
@@ -121,17 +121,34 @@
                             </div>
                         </td>
                         <td data-label="当前 Team">
-                            {% if entry.team_id %}
-                            <div class="account-pool-team">
-                                <span>{{ entry.team_name or ('Team #' ~ entry.team_id) }}</span>
-                                <small>{{ entry.team_email or '-' }} · ID {{ entry.team_id }}</small>
+                            <div class="account-pool-team-cell">
+                                <div class="account-pool-team">
+                                    {% if entry.workspace_id and entry.workspace_in_pool %}
+                                    <span>{{ entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) }}</span>
+                                    <small>{{ entry.workspace_team_email or '-' }} · ID {{ entry.workspace_team_id }}</small>
+                                    {% elif entry.workspace_id %}
+                                    <span>{{ entry.workspace_name or '外部 Workspace' }}</span>
+                                    <small>Workspace ID: {{ entry.workspace_id }}</small>
+                                    {% elif entry.workspace_status == 'no_workspace' %}
+                                    <span>未加入 Workspace</span>
+                                    <small>可使用个人账号自动登录</small>
+                                    {% elif entry.workspace_status == 'workspace_error' %}
+                                    <span>获取失败</span>
+                                    <small>请重新扫描或查看验活结果</small>
+                                    {% else %}<span>-</span>{% endif %}
+                                    {% if entry.json_saved %}<small>JSON 已保存 · {{ entry.json_updated_at|format_datetime }}</small>{% endif %}
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
+                                    title="获取当前 Team"
+                                    aria-label="获取当前 Team"
+                                    data-entry-id="{{ entry.id }}"
+                                    data-email="{{ entry.email }}"
+                                >
+                                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                                </button>
                             </div>
-                            {% elif entry.team_options|length > 1 %}
-                            <div class="account-pool-team">
-                                <span>多个 Team</span>
-                                <small>自动登录前需选择目标 Team</small>
-                            </div>
-                            {% else %}-{% endif %}
                         </td>
                         <td data-label="最近加入时间">{{ entry.joined_at|format_datetime }}</td>
                         <td data-label="加入历史">
@@ -149,9 +166,7 @@
                                     aria-label="自动登录并下载 JSON"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
-                                    data-team-id="{{ entry.team_id or '' }}"
-                                    data-team-options='{{ entry.team_options|tojson }}'
-                                    {% if not entry.team_options %}disabled{% endif %}
+                                    data-workspace-id="{{ entry.workspace_id or '' }}"
                                 >
                                     <i data-lucide="download" aria-hidden="true"></i>
                                 </button>
@@ -245,5 +260,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260921-1"></script>
+<script src="/static/js/account-pool.js?v=20260921-2"></script>
+<script src="/static/js/account-pool-workspace.js?v=20260921-1"></script>
 {% endblock %}

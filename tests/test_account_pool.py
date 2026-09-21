@@ -240,6 +240,44 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(listing["entries"][0]["seat_type"], "standard")
 
+    async def test_scanned_workspace_matches_pool_team_by_account_id(self):
+        async with self.sessions() as session:
+            session.add(Team(
+                id=9,
+                email="owner@example.com",
+                team_name="Known Team",
+                account_id="workspace-known",
+                access_token_encrypted="token",
+            ))
+            await self.service.add_emails(session, emails=["member@example.com"])
+            entry = (await session.scalars(select(AccountPoolEntry))).one()
+            entry.workspace_id = "workspace-known"
+            entry.workspace_status = "workspace_ok"
+            await session.commit()
+
+            listing = await self.service.list_entries(session)
+
+        row = listing["entries"][0]
+        self.assertTrue(row["workspace_in_pool"])
+        self.assertEqual(row["workspace_team_id"], 9)
+        self.assertEqual(row["workspace_team_name"], "Known Team")
+
+    async def test_external_scanned_workspace_keeps_workspace_id(self):
+        async with self.sessions() as session:
+            await self.service.add_emails(session, emails=["member@example.com"])
+            entry = (await session.scalars(select(AccountPoolEntry))).one()
+            entry.workspace_id = "workspace-external"
+            entry.workspace_name = "External Team"
+            entry.workspace_status = "workspace_ok"
+            await session.commit()
+
+            listing = await self.service.list_entries(session)
+
+        row = listing["entries"][0]
+        self.assertFalse(row["workspace_in_pool"])
+        self.assertEqual(row["workspace_id"], "workspace-external")
+        self.assertEqual(row["workspace_name"], "External Team")
+
     async def test_login_targets_include_all_active_teams_without_defaulting(self):
         async with self.sessions() as session:
             session.add_all([

@@ -16,6 +16,7 @@ from app.dependencies.auth import require_admin
 from app.main import app
 from app.models import MemberAuthorization, Team
 from app.routes import admin
+from app.services.account_pool_authorization import AccountPoolLoginResult
 from app.services.chatgpt import ChatGPTService
 from app.services.encryption import encryption_service
 from app.services.member_authorization import MemberAuthorizationError, MemberAuthorizationService, REDIRECT_URI
@@ -350,25 +351,71 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
 
     def test_account_pool_automatic_login_downloads_json_for_selected_team(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
-        target = {"entry_id": 7, "email": EMAIL, "teams": [{"id": 3, "name": "Target", "email": "owner@example.com", "status": "joined"}]}
         payload = {"type": "sub2api-data", "accounts": []}
-        with patch.object(admin.account_pool_service, "get_login_targets", new=AsyncMock(return_value=target)), \
-             patch.object(admin.member_authorization_service, "automatic_login", new=AsyncMock()), \
-             patch.object(admin.member_authorization_service, "export", new=AsyncMock(return_value=payload)) as export:
-            response = self.client.post("/admin/account-pool/7/automatic-login", json={})
+        result = AccountPoolLoginResult(
+            payload=payload,
+            workspace={"status": "workspace_ok", "workspace_id": "external-workspace"},
+        )
+        with patch.object(
+            admin.account_pool_authorization_service,
+            "login_entry",
+            new=AsyncMock(return_value=result),
+        ) as login, patch.object(
+            admin.account_pool_authorization_service,
+            "save_result",
+            new=AsyncMock(return_value=True),
+        ):
+            response = self.client.post(
+                "/admin/account-pool/7/automatic-login",
+                json={"workspace_id": "external-workspace"},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("attachment", response.headers["content-disposition"])
         self.assertEqual(json.loads(response.content), payload)
-        export.assert_awaited_once_with(3, EMAIL, unittest.mock.ANY)
+        login.assert_awaited_once_with(
+            unittest.mock.ANY,
+            7,
+            "external-workspace",
+        )
 
-    def test_account_pool_automatic_login_requires_team_when_multiple_exist(self):
+    def test_account_pool_automatic_login_allows_missing_local_team(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
-        target = {"entry_id": 7, "email": EMAIL, "teams": [{"id": 3}, {"id": 4}]}
-        with patch.object(admin.account_pool_service, "get_login_targets", new=AsyncMock(return_value=target)), \
-             patch.object(admin.member_authorization_service, "automatic_login", new=AsyncMock()) as login:
+        result = AccountPoolLoginResult(
+            payload={"type": "sub2api-data", "accounts": []},
+            workspace={"status": "no_workspace", "workspace_id": ""},
+        )
+        with patch.object(
+            admin.account_pool_authorization_service,
+            "login_entry",
+            new=AsyncMock(return_value=result),
+        ) as login, patch.object(
+            admin.account_pool_authorization_service,
+            "save_result",
+            new=AsyncMock(return_value=True),
+        ):
             response = self.client.post("/admin/account-pool/7/automatic-login", json={})
 
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("选择目标 Team", response.json()["error"])
-        login.assert_not_awaited()
+        self.assertEqual(response.status_code, 200)
+        login.assert_awaited_once()
+
+    def test_account_pool_workspace_scan_persists_result(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        result = AccountPoolLoginResult(
+            payload={"type": "sub2api-data", "accounts": []},
+            workspace={"status": "workspace_ok", "workspace_id": "workspace-1"},
+        )
+        with patch.object(
+            admin.account_pool_authorization_service,
+            "login_entry",
+            new=AsyncMock(return_value=result),
+        ), patch.object(
+            admin.account_pool_authorization_service,
+            "save_result",
+            new=AsyncMock(return_value=True),
+        ) as save:
+            response = self.client.post("/admin/account-pool/7/workspace-scan")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["workspace"]["workspace_id"], "workspace-1")
+        self.assertEqual(save.await_args.kwargs["liveness"][0], "alive")

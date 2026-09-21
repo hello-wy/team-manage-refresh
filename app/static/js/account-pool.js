@@ -130,8 +130,9 @@ function openAccountPoolTeamPicker(entryId, email, teams) {
     if (window.lucide) lucide.createIcons();
 }
 
-async function runAccountPoolAutomaticLogin(entryId, email, teamId, button) {
-    if (!confirm(`确定让 ${email} 自动登录并获取 Team #${teamId} 的 JSON 吗？`)) return;
+async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button) {
+    const target = workspaceId ? `Workspace ${workspaceId}` : '当前可用账号';
+    if (!confirm(`确定让 ${email} 自动登录并获取 ${target} 的 JSON 吗？`)) return;
     const original = button.innerHTML;
     button.disabled = true;
     if (button.querySelector('i')) button.querySelector('i').setAttribute('data-lucide', 'loader-circle');
@@ -139,7 +140,7 @@ async function runAccountPoolAutomaticLogin(entryId, email, teamId, button) {
         const response = await fetch(`/admin/account-pool/${entryId}/automatic-login`, {
             method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({team_id: teamId})
+            body: JSON.stringify({workspace_id: workspaceId || ''})
         });
         if (!response.ok) {
             const payload = await response.json();
@@ -268,15 +269,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
     document.querySelectorAll('.account-pool-auto-login-button').forEach(button => {
         button.addEventListener('click', () => {
-            const teams = JSON.parse(button.dataset.teamOptions || '[]');
-            if (teams.length > 1) {
-                openAccountPoolTeamPicker(button.dataset.entryId, button.dataset.email, teams);
-                return;
-            }
             runAccountPoolAutomaticLogin(
                 button.dataset.entryId,
                 button.dataset.email,
-                Number(button.dataset.teamId),
+                button.dataset.workspaceId || '',
                 button,
             );
         });

@@ -293,6 +293,13 @@ def run_auto_migration():
                     liveness_status VARCHAR(20),
                     liveness_checked_at DATETIME,
                     liveness_message VARCHAR(255),
+                    workspace_id VARCHAR(100),
+                    workspace_name VARCHAR(255),
+                    workspace_status VARCHAR(30),
+                    workspace_checked_at DATETIME,
+                    workspace_state_json TEXT,
+                    export_json_encrypted TEXT,
+                    export_json_updated_at DATETIME,
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL,
                     deleted_at DATETIME
@@ -306,6 +313,13 @@ def run_auto_migration():
             "liveness_status": "VARCHAR(20)",
             "liveness_checked_at": "DATETIME",
             "liveness_message": "VARCHAR(255)",
+            "workspace_id": "VARCHAR(100)",
+            "workspace_name": "VARCHAR(255)",
+            "workspace_status": "VARCHAR(30)",
+            "workspace_checked_at": "DATETIME",
+            "workspace_state_json": "TEXT",
+            "export_json_encrypted": "TEXT",
+            "export_json_updated_at": "DATETIME",
             "deleted_at": "DATETIME",
         }
         if table_exists(cursor, "account_pool_entries"):
@@ -337,6 +351,10 @@ def run_auto_migration():
         cursor.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_account_pool_email
             ON account_pool_entries (email)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_account_pool_workspace
+            ON account_pool_entries (workspace_id)
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_account_pool_history_account

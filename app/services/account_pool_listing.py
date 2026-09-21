@@ -37,22 +37,57 @@ async def _entry_histories(db: AsyncSession, entries: list[AccountPoolEntry]):
     return by_entry
 
 
-def _row(entry: AccountPoolEntry, mappings, histories) -> dict[str, Any]:
-    joined = [item for item in mappings if item[0].status == "joined"]
-    invited = [item for item in mappings if item[0].status == "invited"]
-    active = joined + invited
-    team_options = []
+async def _workspace_teams(db: AsyncSession, entries: list[AccountPoolEntry]):
+    workspace_ids = {entry.workspace_id for entry in entries if entry.workspace_id}
+    if not workspace_ids:
+        return {}
+    result = await db.execute(
+        select(Team).where(Team.account_id.in_(workspace_ids)).order_by(Team.id.asc())
+    )
+    by_workspace = {}
+    for team in result.scalars().all():
+        by_workspace.setdefault(team.account_id, team)
+    return by_workspace
+
+
+def _team_options(mappings) -> list[dict[str, Any]]:
+    options = []
     seen_team_ids = set()
-    for mapping, team in active:
+    for mapping, team in mappings:
         if team.id in seen_team_ids:
             continue
         seen_team_ids.add(team.id)
-        team_options.append({
+        options.append({
             "id": team.id,
+            "workspace_id": team.account_id,
             "name": team.team_name,
             "email": team.email,
             "status": mapping.status,
         })
+    return options
+
+
+def _workspace_data(entry: AccountPoolEntry, team: Team | None) -> dict[str, Any]:
+    return {
+        "workspace_id": entry.workspace_id,
+        "workspace_name": entry.workspace_name,
+        "workspace_status": entry.workspace_status,
+        "workspace_checked_at": entry.workspace_checked_at,
+        "workspace_team_id": team.id if team else None,
+        "workspace_team_name": team.team_name if team else None,
+        "workspace_team_email": team.email if team else None,
+        "workspace_in_pool": team is not None,
+        "workspace_state_saved": bool(entry.workspace_state_json),
+        "json_saved": bool(entry.export_json_encrypted),
+        "json_updated_at": entry.export_json_updated_at,
+    }
+
+
+def _row(entry: AccountPoolEntry, mappings, histories, workspace_team) -> dict[str, Any]:
+    joined = [item for item in mappings if item[0].status == "joined"]
+    invited = [item for item in mappings if item[0].status == "invited"]
+    active = joined + invited
+    team_options = _team_options(active)
     status = "unassigned"
     if len({team.id for _, team in active}) > 1:
         status = "conflict"
@@ -62,7 +97,7 @@ def _row(entry: AccountPoolEntry, mappings, histories) -> dict[str, Any]:
         status = "invited"
     current = active[0] if len(team_options) == 1 else (None, None)
     seat_type = next((mapping.seat_type for mapping, _ in joined if mapping.seat_type), None)
-    return {
+    row = {
         "id": entry.id,
         "email": entry.email,
         "seat_type": seat_type,
@@ -78,6 +113,8 @@ def _row(entry: AccountPoolEntry, mappings, histories) -> dict[str, Any]:
         "liveness_message": entry.liveness_message,
         "created_at": entry.created_at,
     }
+    row.update(_workspace_data(entry, workspace_team))
+    return row
 
 
 async def build_pool_entry_data(
@@ -87,7 +124,13 @@ async def build_pool_entry_data(
         return []
     mappings = await _active_mappings(db, entries)
     histories = await _entry_histories(db, entries)
+    workspace_teams = await _workspace_teams(db, entries)
     return [
-        _row(entry, mappings.get(entry.email, []), histories.get(entry.id, []))
+        _row(
+            entry,
+            mappings.get(entry.email, []),
+            histories.get(entry.id, []),
+            workspace_teams.get(entry.workspace_id),
+        )
         for entry in entries
     ]

@@ -1,4 +1,6 @@
 import unittest
+import base64
+import json
 from unittest.mock import AsyncMock, patch
 
 from app.services.openai_automatic_login import (
@@ -32,8 +34,13 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, get_responses, post_responses):
+    def __init__(self, get_responses, post_responses, auth_claims=None):
         self.cookies = FakeCookies()
+        if auth_claims is not None:
+            payload = base64.urlsafe_b64encode(
+                json.dumps(auth_claims).encode()
+            ).decode().rstrip("=")
+            self.cookies.set("oai-client-auth-session", f"header.{payload}.signature")
         self.get_responses = list(get_responses)
         self.post_responses = list(post_responses)
         self.posts = []
@@ -53,12 +60,12 @@ class FakeSession:
 
 
 class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
-    def request(self):
+    def request(self, account_id="team-account"):
         return AutomaticLoginRequest(
             email="member@example.com",
             password="member-password",
             totp_secret="JBSWY3DPEHPK3PXP",
-            account_id="team-account",
+            account_id=account_id,
             oauth_draft={
                 "authorize_url": "https://auth.openai.com/oauth/authorize?state=test-state",
                 "state": "test-state",
@@ -236,3 +243,78 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(session.posts[-1][1], {"workspace_id": "team-account"})
+
+    async def test_workspace_is_auto_selected_from_default_auth_claim(self):
+        token_payload = base64.urlsafe_b64encode(json.dumps({
+            "https://api.openai.com/auth": {"chatgpt_account_id": "personal-account"}
+        }).encode()).decode().rstrip("=")
+        personal_token = f"header.{token_payload}.signature"
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(302, headers={"location": "/log-in"}),
+                FakeResponse(200),
+                FakeResponse(200),
+                FakeResponse(200),
+            ],
+            post_responses=[
+                FakeResponse(200, payload={"continue_url": "/log-in/password"}),
+                FakeResponse(200, payload={"continue_url": "/workspace"}),
+                FakeResponse(200, payload={
+                    "continue_url": (
+                        "http://localhost:1455/auth/callback?"
+                        "code=test-code&state=test-state"
+                    )
+                }),
+            ],
+            auth_claims={
+                "organizations": [{
+                    "id": "external-workspace",
+                    "title": "External Workspace",
+                    "is_default": True,
+                }],
+            },
+        )
+        service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+            get_session=AsyncMock(return_value=session),
+            clear_session=AsyncMock(),
+            exchange_code=AsyncMock(return_value={
+                "success": True,
+                "access_token": personal_token,
+            }),
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
+        ))
+
+        result = await service.login(self.request(account_id=""))
+
+        self.assertEqual(session.posts[-1][1], {"workspace_id": "external-workspace"})
+        self.assertEqual(result["workspace"]["workspace_id"], "external-workspace")
+
+    async def test_callback_without_workspace_can_complete_login(self):
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(302, headers={"location": "/log-in"}),
+                FakeResponse(200),
+                FakeResponse(200),
+            ],
+            post_responses=[
+                FakeResponse(200, payload={"continue_url": "/log-in/password"}),
+                FakeResponse(200, payload={
+                    "continue_url": (
+                        "http://localhost:1455/auth/callback?"
+                        "code=test-code&state=test-state"
+                    )
+                }),
+            ],
+            auth_claims={"email": "member@example.com"},
+        )
+        service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+            get_session=AsyncMock(return_value=session),
+            clear_session=AsyncMock(),
+            exchange_code=AsyncMock(return_value={"success": True}),
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
+        ))
+
+        result = await service.login(self.request(account_id=""))
+
+        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(result["workspace"]["status"], "no_workspace")

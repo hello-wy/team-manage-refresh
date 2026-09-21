@@ -116,9 +116,7 @@ class AccountPoolCredentialService:
                 added.append(record.email)
             elif entry.deleted_at is not None:
                 entry.deleted_at = None
-                entry.liveness_status = None
-                entry.liveness_checked_at = None
-                entry.liveness_message = None
+                self._clear_derived_state(entry)
                 restored.append(record.email)
             elif record.has_credentials:
                 updated.append(record.email)
@@ -129,9 +127,7 @@ class AccountPoolCredentialService:
                 entry.two_factor_secret_encrypted = self._cipher.encrypt_token(
                     record.two_factor_secret or ""
                 )
-                entry.liveness_status = None
-                entry.liveness_checked_at = None
-                entry.liveness_message = None
+                self._clear_derived_state(entry)
         return AccountPoolImportResult(added, restored, updated, existing)
 
     async def get_credentials(
@@ -181,9 +177,7 @@ class AccountPoolCredentialService:
             entry.password_encrypted = encrypted_password
         if encrypted_secret is not None:
             entry.two_factor_secret_encrypted = encrypted_secret
-        entry.liveness_status = None
-        entry.liveness_checked_at = None
-        entry.liveness_message = None
+        self._clear_derived_state(entry)
         await db_session.commit()
         return {
             "email": entry.email,
@@ -207,6 +201,16 @@ class AccountPoolCredentialService:
             return self._cipher.decrypt_token(encrypted_value)
         except Exception as exc:
             raise AccountPoolCredentialError("账号凭据解密失败，请检查加密密钥") from exc
+
+    @staticmethod
+    def _clear_derived_state(entry: AccountPoolEntry) -> None:
+        for field in (
+            "liveness_status", "liveness_checked_at", "liveness_message",
+            "workspace_id", "workspace_name", "workspace_status",
+            "workspace_checked_at", "workspace_state_json",
+            "export_json_encrypted", "export_json_updated_at",
+        ):
+            setattr(entry, field, None)
 
     @staticmethod
     async def delete_entry(db_session: AsyncSession, entry_id: int) -> bool:

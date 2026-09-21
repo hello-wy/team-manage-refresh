@@ -276,11 +276,12 @@ async def configure_account_pool_liveness_job_from_settings() -> str:
 
 
 async def scheduled_account_pool_liveness() -> dict[str, int]:
-    from app.routes.admin import automatic_login_service, chatgpt_service
+    from app.routes.admin import account_pool_authorization_service
     from app.services.account_pool_credentials import account_pool_credential_service
 
     service = AccountPoolLivenessService(
-        account_pool_credential_service, automatic_login_service, chatgpt_service
+        account_pool_credential_service,
+        account_pool_authorization_service,
     )
     counts = await service.check_all(AsyncSessionLocal)
     logger.info("账号号池验活完成: %s", counts)

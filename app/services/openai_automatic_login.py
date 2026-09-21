@@ -8,6 +8,11 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from app.services.openai_auth_errors import auth_failure_message
 from app.services.openai_auth_session import auth_session_claims
 from app.services.openai_sentinel import OpenAISentinelError, issue_sentinel_token
+from app.services.openai_workspace import (
+    inspect_workspace_claims,
+    resolve_workspace_id,
+    token_workspace_id,
+)
 from app.utils.totp import TotpError, generate_totp
 
 AUTH_ORIGIN = "https://auth.openai.com"
@@ -118,15 +123,21 @@ class OpenAIAutomaticLoginService:
         current_url = await self._submit_password_and_totp(
             session, request, current_url, device_id, sentinel_token
         )
-        current_url = await self._select_workspace(
+        current_url, workspace = await self._select_workspace(
             session, current_url, request.account_id, device_id, sentinel_token
         )
         if not _is_callback(current_url):
             raise OpenAIAutomaticLoginError("自动登录未取得 OAuth 回调，请检查账号登录状态")
         logger.info("成员自动登录完成: identifier=%s", request.identifier)
-        return await self._exchange(request, current_url)
+        result = await self._exchange(request, current_url)
+        actual_id = token_workspace_id(str(result.get("access_token") or ""))
+        if actual_id and not workspace.get("workspace_id") and workspace.get("status") != "no_workspace":
+            workspace["workspace_id"] = actual_id
+            workspace["status"] = "workspace_ok"
+        result["workspace"] = workspace
+        return result
 
-    async def verify_credentials(self, request: AutomaticLoginRequest) -> None:
+    async def verify_credentials(self, request: AutomaticLoginRequest) -> dict[str, Any]:
         """Verify password/TOTP without selecting a workspace or exchanging tokens."""
         await self._dependencies.clear_session(request.identifier)
         try:
@@ -151,6 +162,7 @@ class OpenAIAutomaticLoginService:
                 state = (parse_qs(urlparse(current_url).query).get("state") or [""])[0]
                 if not secrets.compare_digest(state, request.oauth_draft["state"]):
                     raise OpenAIAutomaticLoginError("账号验活 OAuth state 不匹配")
+            return inspect_workspace_claims(auth_session_claims(session))
         finally:
             await self._dependencies.clear_session(request.identifier)
 
@@ -282,17 +294,25 @@ class OpenAIAutomaticLoginService:
     async def _select_workspace(
         self, session: Any, current_url: str, account_id: str,
         device_id: str, sentinel_token: str,
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
+        workspace = inspect_workspace_claims(auth_session_claims(session))
         if _is_callback(current_url):
-            return current_url
+            return current_url, workspace
         if not current_url.rstrip("/").endswith(("/consent", "/workspace")):
-            return current_url
+            return current_url, workspace
+        selected_id = resolve_workspace_id(workspace, account_id)
+        if not selected_id:
+            raise OpenAIAutomaticLoginError(
+                "登录后存在多个 workspace 且无法确定当前项，请先获取当前 Team"
+                if workspace.get("available_workspaces")
+                else "登录后未返回可选择的 workspace"
+            )
         response = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/workspace/select",
             headers=_auth_headers(
                 device_id, current_url, json_request=True, sentinel_token=sentinel_token
             ),
-            json={"workspace_id": account_id},
+            json={"workspace_id": selected_id},
             allow_redirects=False,
         )
         if response.status_code != 200:
@@ -302,7 +322,19 @@ class OpenAIAutomaticLoginService:
         _, selected_url = await self._follow(
             session, _next_url(response), device_id, sentinel_token
         )
-        return selected_url
+        selected = next(
+            (
+                item for item in workspace.get("available_workspaces", [])
+                if item.get("id") == selected_id
+            ),
+            {},
+        )
+        workspace.update({
+            "status": "workspace_ok",
+            "workspace_id": selected_id,
+            "workspace_name": str(selected.get("name") or ""),
+        })
+        return selected_url, workspace
 
     async def _exchange(
         self, request: AutomaticLoginRequest, callback_url: str

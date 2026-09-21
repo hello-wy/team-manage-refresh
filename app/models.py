@@ -180,6 +180,13 @@ class AccountPoolEntry(Base):
     liveness_status = Column(String(20), comment="验活结果: alive/invalid/error/missing")
     liveness_checked_at = Column(DateTime, comment="最近一次验活时间")
     liveness_message = Column(String(255), comment="最近一次验活结果说明")
+    workspace_id = Column(String(100), comment="最近一次登录确认的 workspace ID")
+    workspace_name = Column(String(255), comment="最近一次登录确认的 workspace 名称")
+    workspace_status = Column(String(30), comment="workspace 扫描状态")
+    workspace_checked_at = Column(DateTime, comment="workspace 最近扫描时间")
+    workspace_state_json = Column(Text, comment="脱敏 workspace 扫描 JSON")
+    export_json_encrypted = Column(Text, comment="最近一次自动登录生成的加密 sub2api JSON")
+    export_json_updated_at = Column(DateTime, comment="sub2api JSON 最近更新时间")
     created_at = Column(DateTime, default=get_now, nullable=False)
     updated_at = Column(DateTime, default=get_now, onupdate=get_now, nullable=False)
     deleted_at = Column(DateTime, comment="历史软删除时间；新删除操作直接物理删除")
@@ -192,6 +199,7 @@ class AccountPoolEntry(Base):
 
     __table_args__ = (
         Index("idx_account_pool_email", "email", unique=True),
+        Index("idx_account_pool_workspace", "workspace_id"),
     )
 
 

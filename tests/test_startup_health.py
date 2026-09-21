@@ -123,6 +123,10 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertIn("liveness_status", pool_columns)
             self.assertIn("liveness_checked_at", pool_columns)
             self.assertIn("liveness_message", pool_columns)
+            self.assertIn("workspace_id", pool_columns)
+            self.assertIn("workspace_state_json", pool_columns)
+            self.assertIn("export_json_encrypted", pool_columns)
+            self.assertIn("export_json_updated_at", pool_columns)
 
     @staticmethod
     def _columns(connection, table_name):

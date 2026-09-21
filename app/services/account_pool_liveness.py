@@ -1,14 +1,14 @@
-"""Scheduled password/TOTP verification for account-pool entries."""
+"""Scheduled OAuth verification and workspace refresh for account-pool entries."""
+import json
 import logging
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import AccountPoolEntry
-from app.services.member_authorization import CLIENT_ID, REDIRECT_URI
-from app.services.openai_automatic_login import (
-    AutomaticLoginRequest,
-    OpenAIAutomaticLoginError,
+from app.services.account_pool_authorization import (
+    AccountPoolAuthorizationError,
+    AccountPoolAuthorizationService,
 )
 from app.utils.time_utils import get_now
 
@@ -17,56 +17,71 @@ INVALID_ACCOUNT_CODES = frozenset({"invalid_username_or_password", "account_deac
 
 
 class AccountPoolLivenessService:
-    def __init__(self, credential_service, login_service, auth_client):
+    def __init__(self, credential_service, authorization_service: AccountPoolAuthorizationService):
         self._credentials = credential_service
-        self._login = login_service
-        self._auth_client = auth_client
+        self._authorization = authorization_service
 
     async def check_entry(self, session: AsyncSession, entry_id: int) -> str | None:
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             return None
-        credential_version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
+        version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
+        credentials = await self._credentials.get_credentials(session, entry.email)
+        if not credentials or not credentials["password"]:
+            return await self._save_failure(session, entry_id, version, "missing", "未保存登录密码")
         try:
-            credentials = await self._credentials.get_credentials(session, entry.email)
-            if not credentials or not credentials["password"]:
-                result = ("missing", "未保存登录密码")
-            else:
-                await self._verify(session, entry_id, credentials)
-                result = ("alive", "密码及所需 2FA 验证通过")
-        except OpenAIAutomaticLoginError as exc:
+            login_result = await self._authorization.login_entry(session, entry_id)
+        except AccountPoolAuthorizationError as exc:
             message = str(exc)
             status = "invalid" if any(code in message for code in INVALID_ACCOUNT_CODES) else "error"
-            result = (status, message)
+            return await self._save_failure(session, entry_id, version, status, message)
         except Exception:
             logger.exception("账号验活异常: entry_id=%s", entry_id)
-            result = ("error", "检测请求异常，请查看服务端日志")
+            return await self._save_failure(
+                session,
+                entry_id,
+                version,
+                "error",
+                "检测请求异常，请查看服务端日志",
+            )
+        saved = await self._authorization.save_result(
+            session,
+            entry_id,
+            login_result,
+            credential_version=version,
+            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
+        )
+        return "alive" if saved else None
+
+    async def _save_failure(
+        self,
+        session: AsyncSession,
+        entry_id: int,
+        version: tuple[str | None, str | None],
+        status: str,
+        message: str,
+    ) -> str | None:
+        now = get_now()
+        state = {"status": "workspace_error", "error": message}
         saved = await session.execute(
             update(AccountPoolEntry)
             .where(
                 AccountPoolEntry.id == entry_id,
                 AccountPoolEntry.deleted_at.is_(None),
-                AccountPoolEntry.password_encrypted == credential_version[0],
-                AccountPoolEntry.two_factor_secret_encrypted == credential_version[1],
+                AccountPoolEntry.password_encrypted == version[0],
+                AccountPoolEntry.two_factor_secret_encrypted == version[1],
             )
-            .values(liveness_status=result[0], liveness_message=result[1], liveness_checked_at=get_now())
+            .values(
+                liveness_status=status,
+                liveness_message=message,
+                liveness_checked_at=now,
+                workspace_status="workspace_error",
+                workspace_checked_at=now,
+                workspace_state_json=json.dumps(state, ensure_ascii=False),
+            )
         )
         await session.commit()
-        return result[0] if saved.rowcount else None
-
-    async def _verify(self, session, entry_id, credentials):
-        draft = self._auth_client.create_oauth_authorize_url(CLIENT_ID, REDIRECT_URI)
-        draft.update({"client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI})
-        request = AutomaticLoginRequest(
-            email=credentials["email"],
-            password=credentials["password"],
-            totp_secret=credentials["two_factor_secret"],
-            account_id="",
-            oauth_draft=draft,
-            db_session=session,
-            identifier=f"account-pool-liveness-{entry_id}",
-        )
-        await self._login.verify_credentials(request)
+        return status if saved.rowcount else None
 
     async def check_all(self, sessions: async_sessionmaker) -> dict[str, int]:
         async with sessions() as session:

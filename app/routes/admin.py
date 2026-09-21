@@ -30,6 +30,10 @@ from app.services.settings import (
 from app.services.cliproxyapi import cliproxyapi_service
 from app.services.member_authorization import MemberAuthorizationService, MemberAuthorizationError
 from app.services.account_pool_credentials import account_pool_credential_service
+from app.services.account_pool_authorization import (
+    AccountPoolAuthorizationError,
+    AccountPoolAuthorizationService,
+)
 from app.services.openai_automatic_login import (
     AutomaticLoginDependencies,
     OpenAIAutomaticLoginService,
@@ -74,6 +78,11 @@ automatic_login_service = OpenAIAutomaticLoginService(
 )
 member_authorization_service = MemberAuthorizationService(
     team_service, automatic_login_service, account_pool_credential_service
+)
+account_pool_authorization_service = AccountPoolAuthorizationService(
+    account_pool_credential_service,
+    automatic_login_service,
+    team_service.chatgpt_service,
 )
 redemption_service = RedemptionService()
 member_rotation_service = MemberRotationService(
@@ -224,6 +233,7 @@ class AccountPoolAddRequest(BaseModel):
 class AccountPoolAutomaticLoginRequest(BaseModel):
     """账号号池自动登录目标 Team。"""
     team_id: Optional[int] = Field(None, gt=0, description="目标 Team ID；仅有一个当前 Team 时可省略")
+    workspace_id: str = Field("", max_length=100, description="扫描得到的 workspace ID")
 
 
 class MemberSeatTypeRequest(BaseModel):
@@ -436,42 +446,73 @@ async def automatic_login_account_pool_entry(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """自动登录账号池成员并下载其当前 Team 的 sub2api JSON。"""
+    """自动登录账号池成员并下载其实际 workspace 的 sub2api JSON。"""
     headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
-    target = await account_pool_service.get_login_targets(db, entry_id)
-    if target is None:
-        return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"}, headers=headers)
-
-    teams = target["teams"]
-    if payload.team_id is None and len(teams) != 1:
-        message = "该账号没有唯一的当前 Team，请先选择目标 Team" if teams else "该账号当前没有加入或受邀的 Team"
-        return JSONResponse(
-            status_code=409,
-            content={"success": False, "error": message, "teams": teams},
-            headers=headers,
-        )
-    team_id = payload.team_id or teams[0]["id"]
-    if team_id not in {team["id"] for team in teams}:
-        return JSONResponse(status_code=400, content={"success": False, "error": "目标 Team 不是该账号的当前 Team"}, headers=headers)
-
     try:
-        await member_authorization_service.automatic_login(team_id, target["email"], db)
-        data = await member_authorization_service.export(team_id, target["email"], db)
+        workspace_id = payload.workspace_id.strip()
+        if payload.team_id is not None:
+            team = await db.get(Team, payload.team_id)
+            if team is None or not team.account_id:
+                raise AccountPoolAuthorizationError("目标 Team 不存在或未配置 workspace")
+            workspace_id = team.account_id
+        result = await account_pool_authorization_service.login_entry(
+            db,
+            entry_id,
+            workspace_id,
+        )
+        await account_pool_authorization_service.save_result(
+            db,
+            entry_id,
+            result,
+            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
+        )
         return Response(
-            content=json.dumps(data, ensure_ascii=False, indent=2),
+            content=json.dumps(result.payload, ensure_ascii=False, indent=2),
             media_type="application/json",
             headers={
                 **headers,
                 "Content-Disposition": f'attachment; filename="sub2api-account-pool-{entry_id}.json"',
             },
         )
-    except MemberAuthorizationError as exc:
+    except AccountPoolAuthorizationError as exc:
         await db.rollback()
         return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
     except Exception:
         await db.rollback()
-        logger.exception("账号池自动登录导出失败 (entry=%s, team=%s)", entry_id, team_id)
+        logger.exception("账号池自动登录导出失败 (entry=%s)", entry_id)
         return JSONResponse(status_code=500, content={"success": False, "error": "自动登录导出失败，请检查服务端日志"}, headers=headers)
+
+
+@router.post("/account-pool/{entry_id}/workspace-scan")
+async def scan_account_pool_workspace(
+    entry_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """登录账号并保存当前 workspace 与 sub2api JSON 状态。"""
+    try:
+        result = await account_pool_authorization_service.login_entry(db, entry_id)
+        await account_pool_authorization_service.save_result(
+            db,
+            entry_id,
+            result,
+            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
+        )
+        return JSONResponse(content={
+            "success": True,
+            "message": "当前 Team 已更新",
+            "workspace": result.workspace,
+        })
+    except AccountPoolAuthorizationError as exc:
+        await db.rollback()
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
+    except Exception:
+        await db.rollback()
+        logger.exception("账号池 workspace 扫描失败 (entry=%s)", entry_id)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": "获取当前 Team 失败，请检查服务端日志"},
+        )
 
 
 @router.post("/account-pool/liveness")
