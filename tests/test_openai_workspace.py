@@ -49,8 +49,8 @@ class OpenAIWorkspaceTests(unittest.TestCase):
     def test_unique_organization_is_preferred_over_personal_workspace(self):
         scan = inspect_workspace_claims({
             "workspaces": [
-                {"id": "team-a", "name": "Team A", "organization": "team"},
-                {"id": "personal-a", "name": "Personal", "is_personal": True},
+                {"id": "team-a", "name": "Team A", "kind": "organization"},
+                {"id": "personal-a", "name": None, "kind": "personal"},
             ],
         })
 

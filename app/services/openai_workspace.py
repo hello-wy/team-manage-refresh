@@ -162,6 +162,7 @@ def _record_workspace(
         "name": str(node.get("name") or node.get("title") or current.get("name") or ""),
         "is_personal": bool(
             node.get("is_personal") or node.get("isPersonal") or node.get("personal")
+            or str(node.get("kind") or "").strip().lower() == "personal"
         ),
         "is_default": bool(any(node.get(marker) for marker in DEFAULT_MARKERS)),
         "role": str(node.get("role") or node.get("account_user_role") or ""),

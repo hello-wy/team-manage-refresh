@@ -55,10 +55,11 @@ class FakeSession:
 def auth_page_html():
     flattened = [
         {"_1": 2}, "loaderData", {"_3": 4}, "route", {"_5": 6}, "session",
-        {"_7": 8}, "workspaces", [9, 14],
-        {"_10": 11, "_12": 13}, "id", "team-a", "name", "Team A",
-        {"_10": 15, "_12": 16, "_17": 18},
-        "personal-a", "Personal", "is_personal", True,
+        {"_7": 8}, "workspaces", [9, 16],
+        {"_10": 11, "_12": 13, "_14": 15},
+        "id", "team-a", "name", "Team A",
+        "kind", "organization",
+        {"_10": 17, "_12": -1, "_14": 18}, "personal-a", "personal",
     ]
     serialized = json.dumps(flattened)
     return f"<script>window.__reactRouterContext.streamController.enqueue({json.dumps(serialized)})</script>"
