@@ -169,7 +169,7 @@
                                     aria-label="自动登录并下载 JSON"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
-                                    data-workspace-id="{{ entry.workspace_id or '' }}"
+                                    data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
                                 >
                                     <i data-lucide="download" aria-hidden="true"></i>
                                 </button>

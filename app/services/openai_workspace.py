@@ -77,16 +77,27 @@ def resolve_workspace_id(scan: dict[str, Any], requested_id: str = "") -> str:
     if requested:
         return requested
     current = str((scan or {}).get("workspace_id") or "").strip()
-    if current:
-        return current
     workspaces = (scan or {}).get("available_workspaces") or []
+    current_workspace = next(
+        (
+            item for item in workspaces
+            if isinstance(item, dict) and str(item.get("id") or "").strip() == current
+        ),
+        {},
+    )
+    if current and current_workspace and not current_workspace.get("is_personal"):
+        return current
     organizations = [
         str(item.get("id") or "").strip()
         for item in workspaces
         if isinstance(item, dict) and not item.get("is_personal")
     ]
     organizations = [item for item in organizations if item]
-    return organizations[0] if len(organizations) == 1 else ""
+    if len(organizations) == 1:
+        return organizations[0]
+    if organizations:
+        return ""
+    return current
 
 
 def _workspace_status(

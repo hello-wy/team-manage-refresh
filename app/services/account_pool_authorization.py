@@ -108,11 +108,17 @@ class AccountPoolAuthorizationService:
     def _request(self, entry, credentials, workspace_id, session) -> AutomaticLoginRequest:
         draft = self._auth_client.create_oauth_authorize_url(CLIENT_ID, REDIRECT_URI)
         draft.update({"client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI})
+        target_id = str(workspace_id or "").strip()
+        if (
+            entry.workspace_status == "personal_account"
+            and target_id == str(entry.workspace_id or "").strip()
+        ):
+            target_id = ""
         return AutomaticLoginRequest(
             email=entry.email,
             password=credentials["password"],
             totp_secret=credentials["two_factor_secret"],
-            account_id=str(workspace_id or entry.workspace_id or "").strip(),
+            account_id=target_id,
             oauth_draft=draft,
             db_session=session,
             identifier=f"account-pool-login-{entry.id}",

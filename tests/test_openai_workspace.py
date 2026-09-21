@@ -69,6 +69,17 @@ class OpenAIWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(resolve_workspace_id(scan), "team-a")
 
+    def test_unique_organization_replaces_current_personal_workspace(self):
+        scan = {
+            "workspace_id": "personal-a",
+            "available_workspaces": [
+                {"id": "personal-a", "is_personal": True},
+                {"id": "team-a", "is_personal": False},
+            ],
+        }
+
+        self.assertEqual(resolve_workspace_id(scan), "team-a")
+
 
 if __name__ == "__main__":
     unittest.main()

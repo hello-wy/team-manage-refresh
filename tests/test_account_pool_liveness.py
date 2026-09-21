@@ -126,6 +126,31 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(credentials["plan_type"], "free")
         self.assertEqual(credentials["chatgpt_account_id"], "personal-account")
 
+    async def test_refresh_ignores_saved_personal_id_and_discovers_team(self):
+        entry_id = await self.add_account(
+            "member@example.com----password----JBSWY3DPEHPK3PXP"
+        )
+        async with self.sessions() as session:
+            entry = await session.get(AccountPoolEntry, entry_id)
+            entry.workspace_id = "personal-account"
+            entry.workspace_status = "personal_account"
+            await session.commit()
+
+        requests = []
+
+        def team_login(request):
+            requests.append(request)
+            return login_result(request.email, workspace_id="new-team", plan_type="team")
+
+        self.login.login.side_effect = team_login
+        async with self.sessions() as session:
+            self.assertEqual(await self.service.check_entry(session, entry_id), "alive")
+
+        entry = await self.read_account(entry_id)
+        self.assertEqual(requests[0].account_id, "")
+        self.assertEqual(entry.workspace_id, "new-team")
+        self.assertEqual(entry.workspace_status, "workspace_ok")
+
     async def test_invalid_credentials_are_distinct_from_network_failure(self):
         entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
         self.login.login.side_effect = OpenAIAutomaticLoginError(
