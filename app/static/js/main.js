@@ -2099,7 +2099,7 @@ async function importMemberSub2api(teamId, email, button = null) {
             );
         }
         showToast(`已导出到 sub2api，绑定 ${data.data.group_count} 个分组`, 'success');
-        if (window.currentTeamId === Number(teamId)) await loadModalMemberList(Number(teamId));
+        markMemberSub2apiExported(email);
     } catch (error) {
         showToast(error.message || '导入失败', 'error');
         if (ctx && memberAuthorizationContext === ctx) memberAuthorizationMessage(error.message, true);
@@ -2186,6 +2186,18 @@ function renderMemberAuthorizationStatus(member) {
     ].filter(Boolean).join(' · ');
 }
 
+function markMemberSub2apiExported(email) {
+    document.querySelectorAll('#modalJoinedMembersTableBody tr, #modalInvitedMembersTableBody tr').forEach(row => {
+        const matches = Array.from(row.querySelectorAll('[data-email]'))
+            .some(element => element.dataset.email === email);
+        if (!matches) return;
+        const badge = row.querySelector('.member-auth-badge');
+        if (badge && !badge.textContent.includes('已导出 Sub2API')) {
+            badge.textContent = `${badge.textContent} · 已导出 Sub2API`;
+        }
+    });
+}
+
 // === 成员管理逻辑 ===
 let memberSeatUpdateInProgress = false;
 let memberListRequestId = 0;
@@ -2234,7 +2246,7 @@ async function toggleMemberAutoKickExemption(button) {
             return;
         }
         showToast(result.data.message, 'success');
-        await loadModalMemberList(teamId);
+        applyMemberAutoKickRow(button, result.data);
     } finally {
         button.disabled = false;
         if (window.lucide) lucide.createIcons();
@@ -2265,13 +2277,44 @@ async function saveMemberAutoKickSettings() {
             return;
         }
         showToast(result.data.message, 'success');
-        await loadModalMemberList(teamId);
+        updateMemberAutoKickTimes(hours);
     } finally {
         memberAutoKickUpdateInProgress = false;
         button.innerHTML = original;
         button.disabled = false;
         if (window.lucide) lucide.createIcons();
     }
+}
+
+function applyMemberAutoKickRow(button, data) {
+    const row = button.closest('tr');
+    if (!row) return;
+    const exempt = Boolean(data.exempt);
+    const action = exempt ? '恢复自动下线' : '设置为不会自动下线';
+    button.dataset.exempt = String(!exempt);
+    button.title = action;
+    button.setAttribute('aria-label', action);
+    const icon = button.querySelector('[data-lucide]');
+    if (icon) icon.setAttribute('data-lucide', exempt ? 'clock-3' : 'shield-off');
+    const time = row.querySelector('.member-auto-kick-time');
+    if (!time) return;
+    time.textContent = data.auto_kick_at ? formatDateTime(data.auto_kick_at) : '不会自动下线';
+    time.classList.toggle(
+        'is-overdue',
+        Boolean(data.auto_kick_at && new Date(data.auto_kick_at).getTime() <= Date.now())
+    );
+    if (window.lucide) lucide.createIcons();
+}
+
+function updateMemberAutoKickTimes(hours) {
+    const durationMs = Number(hours) * 60 * 60 * 1000;
+    document.querySelectorAll('#modalJoinedMembersTableBody tr[data-joined-at]').forEach(row => {
+        const time = row.querySelector('.member-auto-kick-time');
+        const joinedAt = new Date(row.dataset.joinedAt).getTime();
+        if (!time || !Number.isFinite(joinedAt) || time.textContent.includes('不会自动下线')) return;
+        time.textContent = formatDateTime(new Date(joinedAt + durationMs).toISOString());
+        time.classList.toggle('is-overdue', joinedAt + durationMs <= Date.now());
+    });
 }
 
 function memberSeatQuota(seatType) {
@@ -2501,7 +2544,7 @@ async function loadModalMemberList(teamId, snapshot = null) {
                     joinedTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">暂无已加入成员</td></tr>';
                 } else {
                     joinedTableBody.innerHTML = joinedMembers.map(m => `
-                        <tr>
+                        <tr data-member-email="${escapeHtml(m.email)}" data-joined-at="${escapeHtml(m.added_at || '')}">
                             <td>${escapeHtml(m.email)}<small class="member-auth-badge">${renderMemberAuthorizationStatus(m)}</small></td>
                             <td>
                                 <span class="role-badge role-${m.role === 'account-owner' ? 'account-owner' : 'member'}">
