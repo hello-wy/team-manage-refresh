@@ -5974,11 +5974,10 @@ body.admin-theme .profile-hint {
 /* ================================================================ */
 
 /* ================================================================
-   ████ CARTOON BRAND (左上 logo + 标题) ████
-   - 自定义"团队三圆点"SVG 图标，替换原 "GT" 字母
+   ████ TEAM BRAND (左上 logo + 标题) ████
+   - 三个团队席位连接到中央枢纽，和 ChatGPT 标志保持明确区分
    - 卡通方块容器：粗描边 + 偏移阴影 + 微旋转，hover 上浮
-   - 角落红/玫粉 spark dot，呼应卡通贴纸语言
-   - 标题使用 display 字重，eyebrow 改成 chip 标签
+   - 角落蓝色 spark dot，呼应卡通贴纸语言
    ================================================================ */
 
 body.admin-theme .navbar-brand.cartoon-brand {
@@ -6022,54 +6021,16 @@ body.admin-theme .brand-mark-rotation {
     transform: rotate(4deg);
 }
 
-body.admin-theme .brand-mark-svg {
-    width: 32px;
-    height: 32px;
-    overflow: visible;
+body.admin-theme .brand-mark-image {
+    display: block;
+    width: 34px;
+    height: 34px;
+    object-fit: contain;
 }
 
-body.admin-theme .brand-mark-dot {
-    stroke: var(--ca-ink);
-    stroke-width: 2.6;
-}
-
-body.admin-theme .brand-mark-dot-a { fill: var(--ca-success); }
-body.admin-theme .brand-mark-dot-b { fill: var(--ca-primary); }
-body.admin-theme .brand-mark-dot-c { fill: var(--ca-secondary); }
-
-/* === D 笑脸吉祥物 === */
-body.admin-theme .brand-mark-mascot .bm-face {
-    fill: var(--ca-primary);
-    stroke: var(--ca-ink);
-    stroke-width: 2.8;
-}
-body.admin-theme .brand-mark-mascot .bm-cheek {
-    fill: var(--ca-secondary);
-    stroke: var(--ca-ink);
-    stroke-width: 1.6;
-}
-body.admin-theme .brand-mark-mascot .bm-eye {
-    fill: var(--ca-ink);
-}
-body.admin-theme .brand-mark-mascot .bm-eye-shine {
-    fill: #ffffff;
-}
-body.admin-theme .brand-mark-mascot .bm-mouth {
-    fill: none;
-    stroke: var(--ca-ink);
-    stroke-width: 2.4;
-    stroke-linecap: round;
-}
-
-/* hover 时小笑脸偷偷眨一下 */
-@keyframes bmBlink {
-    0%, 92%, 100% { transform: scaleY(1); }
-    95% { transform: scaleY(0.15); }
-}
-body.admin-theme .navbar-brand:hover .brand-mark-mascot .bm-eye {
-    transform-origin: center;
-    transform-box: fill-box;
-    animation: bmBlink 2.4s ease-in-out infinite;
+body.admin-theme .classic-brand-badge .brand-mark-image {
+    width: 38px;
+    height: 38px;
 }
 
 /* 角落 spark：小卡通星点 */
@@ -6127,7 +6088,7 @@ body.admin-theme .navbar-brand .cartoon-brand-title {
         width: 42px;
         height: 42px;
     }
-    body.admin-theme .brand-mark-svg {
+    body.admin-theme .brand-mark-image {
         width: 28px;
         height: 28px;
     }
@@ -6728,6 +6689,12 @@ body.style-classic .classic-brand-badge {
     font-weight: 800;
     box-shadow: 0 12px 24px color-mix(in srgb, var(--primary) 26%, transparent);
     flex-shrink: 0;
+    overflow: hidden;
+}
+
+body.style-classic .classic-brand-badge .brand-mark-image {
+    width: 42px;
+    height: 42px;
 }
 
 body.style-classic .cartoon-brand-mark { display: none !important; }
@@ -6770,6 +6737,11 @@ body.style-classic.auth-page .auth-brand-compact .classic-brand-badge {
     height: 34px;
     border-radius: 10px;
     font-size: 0.78rem;
+}
+
+body.style-classic.auth-page .auth-brand-compact .classic-brand-badge .brand-mark-image {
+    width: 34px;
+    height: 34px;
 }
 
 body.style-classic.auth-page .auth-brand-compact .auth-brand-name.cartoon-brand-title {
@@ -6853,5 +6825,10 @@ body.style-classic .btn {
         height: 34px;
         border-radius: 10px;
         font-size: 0.78rem;
+    }
+
+    body.style-classic .classic-brand-badge .brand-mark-image {
+        width: 34px;
+        height: 34px;
     }
 }
