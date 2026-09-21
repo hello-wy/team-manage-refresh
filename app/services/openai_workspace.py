@@ -59,7 +59,17 @@ def resolve_workspace_id(scan: dict[str, Any], requested_id: str = "") -> str:
     requested = str(requested_id or "").strip()
     if requested:
         return requested
-    return str((scan or {}).get("workspace_id") or "").strip()
+    current = str((scan or {}).get("workspace_id") or "").strip()
+    if current:
+        return current
+    workspaces = (scan or {}).get("available_workspaces") or []
+    organizations = [
+        str(item.get("id") or "").strip()
+        for item in workspaces
+        if isinstance(item, dict) and not item.get("is_personal")
+    ]
+    organizations = [item for item in organizations if item]
+    return organizations[0] if len(organizations) == 1 else ""
 
 
 def _workspace_status(current_id: str, workspaces: list[dict[str, Any]]) -> str:

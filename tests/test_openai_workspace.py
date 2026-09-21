@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.openai_workspace import inspect_workspace_claims
+from app.services.openai_workspace import inspect_workspace_claims, resolve_workspace_id
 
 
 class OpenAIWorkspaceTests(unittest.TestCase):
@@ -45,6 +45,16 @@ class OpenAIWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "no_workspace")
         self.assertEqual(result["available_workspaces"], [])
+
+    def test_unique_organization_is_preferred_over_personal_workspace(self):
+        scan = inspect_workspace_claims({
+            "workspaces": [
+                {"id": "team-a", "name": "Team A", "organization": "team"},
+                {"id": "personal-a", "name": "Personal", "is_personal": True},
+            ],
+        })
+
+        self.assertEqual(resolve_workspace_id(scan), "team-a")
 
 
 if __name__ == "__main__":

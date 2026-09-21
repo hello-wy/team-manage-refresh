@@ -1,13 +1,28 @@
 """OpenAI OAuth automatic login using email, password and TOTP."""
 import logging
 import secrets
-from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from app.services.openai_auth_errors import auth_failure_message
+from app.services.openai_auth_protocol import (
+    AUTH_ORIGIN,
+    REDIRECT_STATUSES,
+    auth_headers as _auth_headers,
+    inspect_auth_page_workspace,
+    is_callback as _is_callback,
+    is_mfa_challenge as _is_mfa_challenge,
+    json_body as _json_body,
+    mfa_factor_id as _mfa_factor_id,
+    next_url as _next_url,
+)
 from app.services.openai_auth_session import auth_session_claims
-from app.services.openai_sentinel import OpenAISentinelError, issue_sentinel_token
+from app.services.openai_automatic_login_models import (
+    AutomaticLoginDependencies,
+    AutomaticLoginRequest,
+    OpenAIAutomaticLoginError,
+)
+from app.services.openai_sentinel import OpenAISentinelError
 from app.services.openai_workspace import (
     inspect_workspace_claims,
     resolve_workspace_id,
@@ -15,93 +30,9 @@ from app.services.openai_workspace import (
 )
 from app.utils.totp import TotpError, generate_totp
 
-AUTH_ORIGIN = "https://auth.openai.com"
-CALLBACK_HOST = "localhost:1455"
 MAX_REDIRECTS = 20
-REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 logger = logging.getLogger(__name__)
-
-
-class OpenAIAutomaticLoginError(ValueError):
-    pass
-
-
-@dataclass(frozen=True)
-class AutomaticLoginDependencies:
-    get_session: Callable[..., Awaitable[Any]]
-    clear_session: Callable[[str], Awaitable[None]]
-    exchange_code: Callable[..., Awaitable[dict[str, Any]]]
-    issue_sentinel: Callable[[Any, str], Awaitable[str]] = issue_sentinel_token
-
-
-@dataclass(frozen=True)
-class AutomaticLoginRequest:
-    email: str
-    password: str
-    totp_secret: str
-    account_id: str
-    oauth_draft: dict[str, str]
-    db_session: Any
-    identifier: str
-
-
-def _json_body(response: Any) -> dict[str, Any]:
-    try:
-        payload = response.json()
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _next_url(response: Any) -> str:
-    payload = _json_body(response)
-    value = payload.get("continue_url") or payload.get("url")
-    value = value or response.headers.get("location") or response.headers.get("Location")
-    return urljoin(AUTH_ORIGIN, str(value)) if value else ""
-
-
-def _is_callback(url: str) -> bool:
-    parsed = urlparse(str(url or ""))
-    query = parse_qs(parsed.query)
-    return parsed.netloc == CALLBACK_HOST and bool(query.get("code"))
-
-
-def _auth_headers(
-    device_id: str, referer: str, *, json_request: bool = False, sentinel_token: str = ""
-) -> dict[str, str]:
-    headers = {
-        "Accept": "application/json" if json_request else "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Origin": AUTH_ORIGIN,
-        "Referer": referer or AUTH_ORIGIN,
-        "oai-device-id": device_id,
-    }
-    if json_request:
-        headers["Content-Type"] = "application/json"
-    if sentinel_token:
-        headers["openai-sentinel-token"] = sentinel_token
-    return headers
-
-
-def _mfa_factor_id(payload: dict[str, Any]) -> str:
-    session = payload.get("oai-client-auth-session")
-    if not isinstance(session, dict):
-        session = {}
-    factors: list[dict[str, Any]] = []
-    for key in ("mfa_challenge_factors", "mfa_factors"):
-        values = session.get(key)
-        if isinstance(values, list):
-            factors.extend(item for item in values if isinstance(item, dict))
-    for factor in factors:
-        if str(factor.get("factor_type") or "").lower() == "totp":
-            return str(factor.get("id") or "").strip()
-    return ""
-
-
-def _is_mfa_challenge(payload: dict[str, Any], next_url: str) -> bool:
-    page = payload.get("page") if isinstance(payload.get("page"), dict) else {}
-    return str(page.get("type") or "").lower() == "mfa_challenge" or "/mfa-challenge/" in next_url.lower()
 
 
 class OpenAIAutomaticLoginService:
@@ -302,6 +233,11 @@ class OpenAIAutomaticLoginService:
             return current_url, workspace
         selected_id = resolve_workspace_id(workspace, account_id)
         if not selected_id:
+            workspace = await self._workspace_from_page(
+                session, current_url, device_id, sentinel_token
+            )
+            selected_id = resolve_workspace_id(workspace, account_id)
+        if not selected_id:
             raise OpenAIAutomaticLoginError(
                 "登录后存在多个 workspace 且无法确定当前项，请先获取当前 Team"
                 if workspace.get("available_workspaces")
@@ -335,6 +271,18 @@ class OpenAIAutomaticLoginService:
             "workspace_name": str(selected.get("name") or ""),
         })
         return selected_url, workspace
+
+    async def _workspace_from_page(
+        self, session: Any, current_url: str, device_id: str, sentinel_token: str
+    ) -> dict[str, Any]:
+        response = await session.get(
+            current_url,
+            headers=_auth_headers(device_id, current_url, sentinel_token=sentinel_token),
+            allow_redirects=False,
+        )
+        if response.status_code != 200:
+            return inspect_workspace_claims({})
+        return inspect_auth_page_workspace(str(getattr(response, "text", "") or ""))
 
     async def _exchange(
         self, request: AutomaticLoginRequest, callback_url: str
