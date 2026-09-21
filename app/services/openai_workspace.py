@@ -34,11 +34,12 @@ def inspect_workspace_claims(claims: Any) -> dict[str, Any]:
     if not current_id and len(workspaces) == 1:
         current_id = workspaces[0]["id"]
     current = next((item for item in workspaces if item["id"] == current_id), {})
-    status = _workspace_status(current_id, workspaces)
+    status = _workspace_status(current_id, current, workspaces)
     return {
         "status": status,
         "workspace_id": current_id,
         "workspace_name": str(current.get("name") or ""),
+        "is_personal": bool(current.get("is_personal")),
         "available_workspaces": workspaces,
     }
 
@@ -53,6 +54,22 @@ def token_workspace_id(token: str) -> str:
 
 def token_claims(token: str) -> dict[str, Any]:
     return _jwt_claims(token)
+
+
+def token_plan_type(*claims_sets: dict[str, Any]) -> str:
+    for claims in claims_sets:
+        auth = claims.get("https://api.openai.com/auth")
+        if not isinstance(auth, dict):
+            auth = {}
+        value = str(
+            auth.get("chatgpt_plan_type")
+            or claims.get("chatgpt_plan_type")
+            or claims.get("plan_type")
+            or ""
+        ).strip().lower()
+        if value:
+            return value
+    return ""
 
 
 def resolve_workspace_id(scan: dict[str, Any], requested_id: str = "") -> str:
@@ -72,8 +89,14 @@ def resolve_workspace_id(scan: dict[str, Any], requested_id: str = "") -> str:
     return organizations[0] if len(organizations) == 1 else ""
 
 
-def _workspace_status(current_id: str, workspaces: list[dict[str, Any]]) -> str:
+def _workspace_status(
+    current_id: str,
+    current: dict[str, Any],
+    workspaces: list[dict[str, Any]],
+) -> str:
     if current_id:
+        if current.get("is_personal"):
+            return "personal_account"
         return "workspace_ok"
     if workspaces:
         return "workspace_ambiguous"

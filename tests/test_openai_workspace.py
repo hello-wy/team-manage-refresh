@@ -46,6 +46,19 @@ class OpenAIWorkspaceTests(unittest.TestCase):
         self.assertEqual(result["status"], "no_workspace")
         self.assertEqual(result["available_workspaces"], [])
 
+    def test_single_personal_workspace_is_not_classified_as_team(self):
+        result = inspect_workspace_claims({
+            "workspaces": [{
+                "id": "personal-a",
+                "name": None,
+                "kind": "personal",
+            }],
+        })
+
+        self.assertEqual(result["status"], "personal_account")
+        self.assertEqual(result["workspace_id"], "personal-a")
+        self.assertTrue(result["is_personal"])
+
     def test_unique_organization_is_preferred_over_personal_workspace(self):
         scan = inspect_workspace_claims({
             "workspaces": [

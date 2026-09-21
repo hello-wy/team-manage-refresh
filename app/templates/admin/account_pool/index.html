@@ -123,7 +123,10 @@
                         <td data-label="当前 Team">
                             <div class="account-pool-team-cell">
                                 <div class="account-pool-team">
-                                    {% if entry.workspace_id and entry.workspace_in_pool %}
+                                    {% if entry.workspace_is_personal %}
+                                    <span>个人账户</span>
+                                    <small>未加入 Team Workspace</small>
+                                    {% elif entry.workspace_id and entry.workspace_in_pool %}
                                     <span>{{ entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) }}</span>
                                     <small>{{ entry.workspace_team_email or '-' }} · ID {{ entry.workspace_team_id }}</small>
                                     {% elif entry.workspace_id %}

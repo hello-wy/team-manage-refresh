@@ -17,7 +17,7 @@ from app.services.openai_automatic_login import (
     AutomaticLoginRequest,
     OpenAIAutomaticLoginError,
 )
-from app.services.openai_workspace import token_claims, token_workspace_id
+from app.services.openai_workspace import token_claims, token_plan_type, token_workspace_id
 from app.utils.time_utils import get_now
 
 
@@ -131,10 +131,20 @@ class AccountPoolAuthorizationService:
         actual_id = str(requested_id or workspace.get("workspace_id") or "").strip()
         if workspace.get("status") != "no_workspace":
             actual_id = actual_id or token_workspace_id(access_token)
+        plan_type = token_plan_type(claims, identity)
+        is_personal = self._is_personal_workspace(workspace, plan_type)
+        status = "personal_account" if is_personal else (
+            "workspace_ok" if actual_id else "no_workspace"
+        )
         workspace.update({
-            "status": "workspace_ok" if actual_id else "no_workspace",
+            "status": status,
             "workspace_id": actual_id,
-            "workspace_name": str(workspace.get("workspace_name") or ""),
+            "workspace_name": (
+                "个人账户" if is_personal
+                else str(workspace.get("workspace_name") or "")
+            ),
+            "is_personal": is_personal,
+            "plan_type": plan_type or ("free" if is_personal else "team"),
         })
         exported = {
             key: str(result.get(key) or "")
@@ -148,9 +158,15 @@ class AccountPoolAuthorizationService:
             credentials=exported,
             claims=claims,
             identity=identity,
-            plan_type="team" if actual_id else "free",
+            plan_type=workspace["plan_type"],
         )
         return AccountPoolLoginResult(payload=payload, workspace=workspace)
+
+    @staticmethod
+    def _is_personal_workspace(workspace: dict[str, Any], plan_type: str) -> bool:
+        if workspace.get("is_personal") or workspace.get("status") == "personal_account":
+            return True
+        return plan_type in {"free", "plus", "pro", "personal"}
 
     @staticmethod
     def _validate_tokens(result: dict[str, Any], claims: dict[str, Any]) -> None:

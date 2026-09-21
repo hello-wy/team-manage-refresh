@@ -278,6 +278,22 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["workspace_id"], "workspace-external")
         self.assertEqual(row["workspace_name"], "External Team")
 
+    async def test_personal_account_is_not_matched_as_external_team(self):
+        async with self.sessions() as session:
+            await self.service.add_emails(session, emails=["member@example.com"])
+            entry = (await session.scalars(select(AccountPoolEntry))).one()
+            entry.workspace_id = "personal-account"
+            entry.workspace_name = "个人账户"
+            entry.workspace_status = "personal_account"
+            await session.commit()
+
+            listing = await self.service.list_entries(session)
+
+        row = listing["entries"][0]
+        self.assertTrue(row["workspace_is_personal"])
+        self.assertFalse(row["workspace_in_pool"])
+        self.assertEqual(row["workspace_id"], "personal-account")
+
     async def test_login_targets_include_all_active_teams_without_defaulting(self):
         async with self.sessions() as session:
             session.add_all([

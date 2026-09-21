@@ -38,7 +38,11 @@ async def _entry_histories(db: AsyncSession, entries: list[AccountPoolEntry]):
 
 
 async def _workspace_teams(db: AsyncSession, entries: list[AccountPoolEntry]):
-    workspace_ids = {entry.workspace_id for entry in entries if entry.workspace_id}
+    workspace_ids = {
+        entry.workspace_id
+        for entry in entries
+        if entry.workspace_id and entry.workspace_status != "personal_account"
+    }
     if not workspace_ids:
         return {}
     result = await db.execute(
@@ -77,6 +81,7 @@ def _workspace_data(entry: AccountPoolEntry, team: Team | None) -> dict[str, Any
         "workspace_team_name": team.team_name if team else None,
         "workspace_team_email": team.email if team else None,
         "workspace_in_pool": team is not None,
+        "workspace_is_personal": entry.workspace_status == "personal_account",
         "workspace_state_saved": bool(entry.workspace_state_json),
         "json_saved": bool(entry.export_json_encrypted),
         "json_updated_at": entry.export_json_updated_at,

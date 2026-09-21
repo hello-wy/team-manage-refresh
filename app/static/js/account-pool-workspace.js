@@ -13,9 +13,12 @@ async function scanAccountPoolWorkspace(button) {
             throw new Error(payload.error || '获取当前 Team 失败');
         }
         const workspaceId = payload.workspace?.workspace_id;
-        const message = workspaceId
-            ? `${button.dataset.email} 当前 Workspace：${workspaceId}`
-            : `${button.dataset.email} 当前未加入 Workspace`;
+        const isPersonal = payload.workspace?.status === 'personal_account';
+        const message = isPersonal
+            ? `${button.dataset.email} 当前为个人账户`
+            : workspaceId
+                ? `${button.dataset.email} 当前 Workspace：${workspaceId}`
+                : `${button.dataset.email} 当前未加入 Workspace`;
         showToast(message, 'success');
         setTimeout(() => location.reload(), 300);
     } catch (error) {
