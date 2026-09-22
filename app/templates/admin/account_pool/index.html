@@ -43,7 +43,6 @@
                         <span>立即验活</span>
                     </button>
                 </div>
-                <p class="text-muted">当前状态来自 Team 成员/邀请同步；验活会同步实际 workspace 并保存 JSON 状态。</p>
             </div>
             <div class="account-pool-toolbar-actions">
                 <select id="accountPoolStatusFilter" class="form-control account-pool-status-filter" aria-label="筛选是否加入 Team">
@@ -135,10 +134,9 @@
                                     <small>未加入 Team Workspace</small>
                                     {% elif entry.workspace_id and entry.workspace_in_pool %}
                                     <span>{{ entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) }}</span>
-                                    <small>{{ entry.workspace_team_email or '-' }} · ID {{ entry.workspace_team_id }}</small>
+                                    <small>已加入 Team Workspace</small>
                                     {% elif entry.workspace_id %}
                                     <span>{{ entry.workspace_name or '外部 Workspace' }}</span>
-                                    <small>Workspace ID: {{ entry.workspace_id }}</small>
                                     {% elif entry.workspace_status == 'no_workspace' %}
                                     <span>未加入 Workspace</span>
                                     <small>可使用个人账号自动登录</small>
