@@ -99,8 +99,8 @@ jobs:
           cd "$DEPLOY_PATH"
           test -f .env
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
-          IMAGE="$IMAGE" docker compose --env-file "$DEPLOY_PATH/.env" pull app
-          IMAGE="$IMAGE" docker compose --env-file "$DEPLOY_PATH/.env" up -d --remove-orphans app
+          IMAGE="$IMAGE" docker compose -f "$DEPLOY_PATH/docker-compose.yml" --env-file "$DEPLOY_PATH/.env" pull app
+          IMAGE="$IMAGE" docker compose -f "$DEPLOY_PATH/docker-compose.yml" --env-file "$DEPLOY_PATH/.env" up -d --remove-orphans app
           docker image prune -f
-          docker compose --env-file "$DEPLOY_PATH/.env" ps
+          docker compose -f "$DEPLOY_PATH/docker-compose.yml" --env-file "$DEPLOY_PATH/.env" ps
           REMOTE_SCRIPT
