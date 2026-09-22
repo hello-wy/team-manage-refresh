@@ -3,7 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260922-2">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260922-3">
 {% endblock %}
 
 {% block content %}
@@ -46,15 +46,15 @@
                 <p class="text-muted">当前状态来自 Team 成员/邀请同步；验活会同步实际 workspace 并保存 JSON 状态。</p>
             </div>
             <div class="account-pool-toolbar-actions">
+                <select id="accountPoolStatusFilter" class="form-control account-pool-status-filter" aria-label="筛选是否加入 Team">
+                    <option value="" {% if not status_filter %}selected{% endif %}>全部 Team 状态</option>
+                    <option value="joined" {% if status_filter == 'joined' %}selected{% endif %}>已加入 Team</option>
+                    <option value="not_joined" {% if status_filter == 'not_joined' %}selected{% endif %}>未加入 Team</option>
+                </select>
                 <form method="get" class="search-form">
                     <div class="input-group-clean">
                         <i data-lucide="search" style="width: 14px; height: 14px;"></i>
                         <input type="text" name="search" value="{{ search or '' }}" placeholder="搜索邮箱...">
-                        <select name="status_filter" aria-label="筛选是否加入 Team" onchange="this.form.submit()">
-                            <option value="" {% if not status_filter %}selected{% endif %}>全部 Team 状态</option>
-                            <option value="joined" {% if status_filter == 'joined' %}selected{% endif %}>已加入 Team</option>
-                            <option value="not_joined" {% if status_filter == 'not_joined' %}selected{% endif %}>未加入 Team</option>
-                        </select>
                     </div>
                 </form>
                 <div class="dropdown-wrapper">
@@ -78,6 +78,7 @@
             </div>
         </div>
 
+        <div id="accountPoolTableRegion" class="account-pool-table-region">
         {% if entries %}
         <div class="table-container mobile-card-table-container" style="margin-top: 1rem;">
             <table class="data-table">
@@ -225,19 +226,28 @@
         <div class="account-pool-empty">暂无账号邮箱，请先在上方添加。</div>
         {% endif %}
 
-        {% if total_pages > 1 %}
+        {% if total > 0 %}
         <div class="pagination" style="margin-top: 1rem;">
             <div class="pagination-controls">
                 {% if current_page > 1 %}
                 <a class="btn btn-sm btn-secondary" href="?page={{ current_page - 1 }}&per_page={{ per_page }}&search={{ search|urlencode }}&status_filter={{ status_filter|urlencode }}" title="上一页"><i data-lucide="chevron-left"></i></a>
                 {% endif %}
                 <span class="pagination-summary">第 {{ current_page }} / {{ total_pages }} 页，共 {{ total }} 条</span>
+                <label class="account-pool-page-size">
+                    <span>每页</span>
+                    <select id="accountPoolPageSize" class="form-control form-control-sm" aria-label="每页显示数量">
+                        {% for size in [20, 50, 100] %}
+                        <option value="{{ size }}" {% if per_page == size %}selected{% endif %}>{{ size }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
                 {% if current_page < total_pages %}
                 <a class="btn btn-sm btn-secondary" href="?page={{ current_page + 1 }}&per_page={{ per_page }}&search={{ search|urlencode }}&status_filter={{ status_filter|urlencode }}" title="下一页"><i data-lucide="chevron-right"></i></a>
                 {% endif %}
             </div>
         </div>
         {% endif %}
+        </div>
     </section>
 </div>
 
@@ -301,6 +311,6 @@
 <script>
     window.accountPoolTeams = {{ account_pool_teams|default([])|tojson }};
 </script>
-<script src="/static/js/account-pool.js?v=20260922-2"></script>
+<script src="/static/js/account-pool.js?v=20260922-3"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260921-1"></script>
 {% endblock %}

@@ -127,6 +127,40 @@
     flex-wrap: wrap;
 }
 
+.account-pool-toolbar-actions .search-form {
+    flex: 1 1 300px;
+    min-width: 260px;
+}
+
+.account-pool-status-filter {
+    width: 168px;
+    min-width: 168px;
+    height: 42px;
+    cursor: pointer;
+}
+
+.account-pool-table-region {
+    min-width: 0;
+}
+
+.account-pool-page-size {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.account-pool-page-size select {
+    width: 76px;
+}
+
+.account-pool-table-region.is-loading {
+    opacity: 0.58;
+    pointer-events: none;
+    transition: opacity var(--transition-fast);
+}
+
 .account-pool-row-actions {
     display: flex;
     align-items: center;
@@ -202,6 +236,7 @@
     }
 
     .account-pool-toolbar-actions,
+    .account-pool-toolbar-actions .account-pool-status-filter,
     .account-pool-toolbar-actions .search-form,
     .account-pool-toolbar-actions .input-group-clean,
     .account-pool-toolbar-actions .dropdown-wrapper {
@@ -210,6 +245,10 @@
 
     .account-pool-toolbar-actions .btn {
         width: 100%;
+    }
+
+    .account-pool-status-filter {
+        min-width: 0;
     }
 
     .account-pool-page .page-meta-pill {

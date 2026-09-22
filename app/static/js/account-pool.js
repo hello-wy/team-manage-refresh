@@ -397,19 +397,63 @@ function initAccountPoolColumnDropdown() {
     }, true);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+let accountPoolTableRequest = null;
+
+function getAccountPoolTableUrl({page = 1, perPage, statusFilter, search} = {}) {
+    const url = new URL('/admin/account-pool', window.location.origin);
+    const currentSearch = document.querySelector('.account-pool-toolbar-actions .search-form input[name="search"]');
+    const currentStatus = document.getElementById('accountPoolStatusFilter');
+    const currentPageSize = document.getElementById('accountPoolPageSize');
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('per_page', String(perPage || currentPageSize?.value || 20));
+    url.searchParams.set('search', search ?? currentSearch?.value?.trim() ?? '');
+    url.searchParams.set('status_filter', statusFilter ?? currentStatus?.value ?? '');
+    return url;
+}
+
+async function refreshAccountPoolTable(options = {}) {
+    const region = document.getElementById('accountPoolTableRegion');
+    if (!region) return;
+    accountPoolTableRequest?.abort();
+    accountPoolTableRequest = new AbortController();
+    const url = getAccountPoolTableUrl(options);
+    region.classList.add('is-loading');
+    try {
+        const response = await fetch(url, {
+            credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            signal: accountPoolTableRequest.signal,
+        });
+        if (!response.ok) throw new Error('账号列表加载失败');
+        const html = await response.text();
+        const documentFragment = new DOMParser().parseFromString(html, 'text/html');
+        const nextRegion = documentFragment.getElementById('accountPoolTableRegion');
+        if (!nextRegion) throw new Error('账号列表响应格式错误');
+        region.replaceWith(nextRegion);
+        window.history.replaceState({}, '', url);
+        initAccountPoolRowActions();
+        initAccountPoolPageSizeControl();
+        initAccountPoolColumnToggler();
+        window.initAccountPoolWorkspaceButtons?.();
+        if (window.lucide) lucide.createIcons();
+    } catch (error) {
+        if (error.name !== 'AbortError') showToast(error.message || '账号列表加载失败', 'error');
+    } finally {
+        document.getElementById('accountPoolTableRegion')?.classList.remove('is-loading');
+    }
+}
+
+function initAccountPoolRowActions() {
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
         button.addEventListener('click', () => {
             loadAccountPoolHistory(button.dataset.entryId, button.dataset.email);
         });
     });
-    document.getElementById('accountPoolCredentialForm')?.addEventListener(
-        'submit',
-        submitAccountPoolCredentialForm
-    );
-    document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
-    document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
     document.querySelectorAll('.account-pool-invite-button').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
         button.addEventListener('click', () => {
             openAccountPoolInvitePicker(
                 button.dataset.entryId,
@@ -419,24 +463,51 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
     document.querySelectorAll('.account-pool-auto-login-button').forEach(button => {
-        button.addEventListener('click', () => {
-            runAccountPoolAutomaticLogin(
-                button.dataset.entryId,
-                button.dataset.email,
-                button.dataset.workspaceId || '',
-                button,
-            );
-        });
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => runAccountPoolAutomaticLogin(
+            button.dataset.entryId,
+            button.dataset.email,
+            button.dataset.workspaceId || '',
+            button,
+        ));
     });
     document.querySelectorAll('.account-pool-json-export-button').forEach(button => {
-        button.addEventListener('click', () => {
-            exportAccountPoolJson(
-                button.dataset.entryId,
-                button.dataset.email,
-                button.dataset.workspaceId || '',
-                button,
-            );
-        });
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => exportAccountPoolJson(
+            button.dataset.entryId,
+            button.dataset.email,
+            button.dataset.workspaceId || '',
+            button,
+        ));
+    });
+}
+
+function initAccountPoolPageSizeControl() {
+    const control = document.getElementById('accountPoolPageSize');
+    if (!control || control.dataset.bound === 'true') return;
+    control.dataset.bound = 'true';
+    control.addEventListener('change', event => {
+        refreshAccountPoolTable({page: 1, perPage: event.target.value});
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('accountPoolCredentialForm')?.addEventListener(
+        'submit',
+        submitAccountPoolCredentialForm
+    );
+    document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
+    document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
+    initAccountPoolRowActions();
+    initAccountPoolPageSizeControl();
+    document.getElementById('accountPoolStatusFilter')?.addEventListener('change', event => {
+        refreshAccountPoolTable({page: 1, statusFilter: event.target.value});
+    });
+    document.querySelector('.account-pool-toolbar-actions .search-form')?.addEventListener('submit', event => {
+        event.preventDefault();
+        refreshAccountPoolTable({page: 1, search: event.currentTarget.elements.search.value});
     });
     initAccountPoolColumnToggler();
     initAccountPoolColumnDropdown();

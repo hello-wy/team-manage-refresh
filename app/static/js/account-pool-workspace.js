@@ -30,8 +30,14 @@ async function scanAccountPoolWorkspace(button) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function initAccountPoolWorkspaceButtons() {
     document.querySelectorAll('.account-pool-workspace-scan-button').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
         button.addEventListener('click', () => scanAccountPoolWorkspace(button));
     });
-});
+}
+
+window.initAccountPoolWorkspaceButtons = initAccountPoolWorkspaceButtons;
+
+document.addEventListener('DOMContentLoaded', initAccountPoolWorkspaceButtons);
