@@ -3,12 +3,12 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260922-1">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260922-2">
 {% endblock %}
 
 {% block content %}
 <div class="account-pool-page">
-    <div class="page-header">
+    <div class="page-header account-pool-page-header">
         <div class="page-header-copy">
             <div class="page-header-kicker">
                 <i data-lucide="mail-plus"></i>
@@ -19,11 +19,13 @@
                 <span class="page-meta-pill"><i data-lucide="database"></i> 共 {{ total }} 个邮箱</span>
             </div>
         </div>
+        <form id="accountPoolForm" class="account-pool-form">
+            <div class="form-group">
+                <label for="accountPoolEmails">账号列表</label>
+                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET\nbob@example.com"></textarea>
+            </div>
+        </form>
         <div class="page-header-actions account-pool-page-actions">
-            <button type="button" class="btn btn-primary" id="accountPoolLivenessBtn">
-                <i data-lucide="activity" style="width: 16px; height: 16px;"></i>
-                <span>立即验活</span>
-            </button>
             <button type="submit" form="accountPoolForm" class="btn btn-primary" id="accountPoolSubmitBtn">
                 <i data-lucide="plus-circle" style="width: 16px; height: 16px;"></i>
                 加入号池
@@ -32,18 +34,15 @@
     </div>
 
     <section class="content-section">
-        <form id="accountPoolForm" class="account-pool-form">
-            <div class="form-group">
-                <label for="accountPoolEmails">账号列表</label>
-                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET\nbob@example.com"></textarea>
-            </div>
-        </form>
-    </section>
-
-    <section class="content-section">
         <div class="workbench-toolbar-row">
             <div class="workbench-toolbar-copy">
-                <h3>账号状态</h3>
+                <div class="account-pool-status-heading">
+                    <h3>账号状态</h3>
+                    <button type="button" class="btn btn-primary btn-sm" id="accountPoolLivenessBtn">
+                        <i data-lucide="activity" style="width: 16px; height: 16px;"></i>
+                        <span>立即验活</span>
+                    </button>
+                </div>
                 <p class="text-muted">当前状态来自 Team 成员/邀请同步；验活会同步实际 workspace 并保存 JSON 状态。</p>
             </div>
             <div class="account-pool-toolbar-actions">
@@ -51,7 +50,11 @@
                     <div class="input-group-clean">
                         <i data-lucide="search" style="width: 14px; height: 14px;"></i>
                         <input type="text" name="search" value="{{ search or '' }}" placeholder="搜索邮箱...">
-                        {% if status_filter %}<input type="hidden" name="status_filter" value="{{ status_filter }}">{% endif %}
+                        <select name="status_filter" aria-label="筛选是否加入 Team" onchange="this.form.submit()">
+                            <option value="" {% if not status_filter %}selected{% endif %}>全部 Team 状态</option>
+                            <option value="joined" {% if status_filter == 'joined' %}selected{% endif %}>已加入 Team</option>
+                            <option value="not_joined" {% if status_filter == 'not_joined' %}selected{% endif %}>未加入 Team</option>
+                        </select>
                     </div>
                 </form>
                 <div class="dropdown-wrapper">
@@ -165,6 +168,19 @@
                         </td>
                         <td data-label="操作">
                             <div class="account-pool-row-actions">
+                                {% if entry.status == 'unassigned' %}
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-invite-button"
+                                    title="加入 Team"
+                                    aria-label="加入 Team"
+                                    data-entry-id="{{ entry.id }}"
+                                    data-email="{{ entry.email }}"
+                                    data-seat-type="{{ 'premium' if entry.seat_type == 'premium' else 'default' }}"
+                                >
+                                    <i data-lucide="user-plus" aria-hidden="true"></i>
+                                </button>
+                                {% endif %}
                                 <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-json-export-button"
@@ -270,7 +286,7 @@
 <div id="accountPoolTeamPickerModal" class="modal-overlay">
     <div class="modal">
         <div class="modal-header">
-            <h3><i data-lucide="layers"></i> 选择目标 Team</h3>
+            <h3><i data-lucide="layers"></i> <span id="accountPoolTeamPickerTitle">选择目标 Team</span></h3>
             <button class="modal-close" type="button" onclick="hideModal('accountPoolTeamPickerModal')">&times;</button>
         </div>
         <div class="modal-body">
@@ -282,6 +298,9 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260922-1"></script>
+<script>
+    window.accountPoolTeams = {{ account_pool_teams|default([])|tojson }};
+</script>
+<script src="/static/js/account-pool.js?v=20260922-2"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260921-1"></script>
 {% endblock %}

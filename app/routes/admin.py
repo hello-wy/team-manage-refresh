@@ -56,7 +56,7 @@ from app.services.member_auto_kick import (
 )
 from app.services.member_rotation import MemberRotationService
 from app.services.replacement_export import ReplacementExportService
-from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team
+from app.models import AccountPoolEntry, RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool import account_pool_service
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
@@ -238,6 +238,12 @@ class AccountPoolAutomaticLoginRequest(BaseModel):
     workspace_id: str = Field("", max_length=100, description="扫描得到的 workspace ID")
 
 
+class AccountPoolInviteRequest(BaseModel):
+    """从账号号池邀请成员加入指定 Team。"""
+    team_id: int = Field(..., gt=0, description="目标 Team ID")
+    seat_type: Literal["default", "premium"] = Field("default", description="邀请席位类型")
+
+
 class MemberSeatTypeRequest(BaseModel):
     seat_type: Literal["default", "premium"]
     expected_seat_type: Literal["default", "standard", "premium"]
@@ -417,11 +423,13 @@ async def account_pool_page(
         search=search,
         status_filter=status_filter,
     )
+    teams_result = await team_service.get_all_teams(db, page=1, per_page=1000)
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     context.update({
         **listing,
         "search": search,
         "status_filter": status_filter,
+        "account_pool_teams": teams_result.get("teams", []),
     })
     return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
 
@@ -593,6 +601,28 @@ async def account_pool_invite_options(
             content={"success": False, "error": "Team 不存在"},
         )
     return JSONResponse(content={"success": True, "entries": entries})
+
+
+@router.post("/account-pool/{entry_id}/invite")
+async def invite_account_pool_entry(
+    entry_id: int,
+    payload: AccountPoolInviteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """邀请号池中的指定账号加入目标 Team。"""
+    entry = await db.get(AccountPoolEntry, entry_id)
+    if entry is None or entry.deleted_at is not None:
+        return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"})
+    result = await team_service.add_team_members(
+        team_id=payload.team_id,
+        emails=[entry.email],
+        db_session=db,
+        seat_type=payload.seat_type,
+    )
+    if not result.get("success"):
+        return JSONResponse(status_code=400, content=result)
+    return JSONResponse(content={**result, "email": entry.email, "team_id": payload.team_id})
 
 
 @router.get("/account-pool/{entry_id}/history")

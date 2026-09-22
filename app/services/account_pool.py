@@ -18,6 +18,14 @@ from app.utils.time_utils import get_now
 TEAM_REINVITE_COOLDOWN_DAYS = 7
 TEAM_REJOIN_COOLDOWN_DAYS = 7
 
+
+def _matches_status_filter(row: dict[str, Any], status_filter: str) -> bool:
+    if status_filter == "joined":
+        return row["status"] in {"joined", "conflict"}
+    if status_filter == "not_joined":
+        return row["status"] in {"invited", "unassigned"}
+    return row["status"] == status_filter
+
 InviteMember = Callable[..., Awaitable[dict[str, Any]]]
 
 
@@ -210,7 +218,7 @@ class AccountPoolService:
             all_entries = list((await db_session.execute(base_query)).scalars().all())
             data = [
                 item for item in await self._build_entry_data(db_session, all_entries)
-                if item["status"] == status_filter
+                if _matches_status_filter(item, status_filter)
             ]
             total = len(data)
             start = (page - 1) * per_page

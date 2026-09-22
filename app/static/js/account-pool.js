@@ -108,26 +108,75 @@ async function runAccountPoolLiveness() {
 }
 
 function accountPoolTeamLabel(team) {
-    return `${team.name || `Team #${team.id}`} · ID ${team.id}`;
+    return `${team.team_name || team.name || `Team #${team.id}`} · ID ${team.id}`;
 }
 
-function openAccountPoolTeamPicker(entryId, email, teams) {
+function accountPoolTeamStatusLabel(team) {
+    const labels = {active: '可用', full: '已满', expired: '已过期', error: '异常', banned: '已封禁'};
+    const status = labels[team.status] || team.status || '未知状态';
+    const members = Number.isFinite(Number(team.current_members)) && Number.isFinite(Number(team.max_members))
+        ? ` · ${team.current_members}/${team.max_members} 席位`
+        : '';
+    return `${status}${members}`;
+}
+
+function openAccountPoolTeamPicker(entryId, email, teams, action = 'automatic_login', seatType = 'default') {
     const options = document.getElementById('accountPoolTeamPickerOptions');
     document.getElementById('accountPoolTeamPickerEmail').textContent = email;
+    const title = document.getElementById('accountPoolTeamPickerTitle');
+    if (title) title.textContent = action === 'invite' ? '选择加入的 Team' : '选择目标 Team';
+    if (!teams.length) {
+        options.innerHTML = '<div class="text-muted">暂无可选择的 Team。</div>';
+        showModal('accountPoolTeamPickerModal');
+        return;
+    }
     options.innerHTML = teams.map(team => `
         <button type="button" class="btn btn-secondary account-pool-team-picker-option" data-team-id="${team.id}">
             <span>${escapeHtml(accountPoolTeamLabel(team))}</span>
-            <small>${escapeHtml(team.email || 'Team 邮箱未知')} · ${team.status === 'joined' ? '已加入' : '待接受邀请'}</small>
+            <small>${escapeHtml(team.email || 'Team 邮箱未知')} · ${escapeHtml(accountPoolTeamStatusLabel(team))}</small>
         </button>
     `).join('');
     options.querySelectorAll('[data-team-id]').forEach(button => {
         button.addEventListener('click', () => {
             hideModal('accountPoolTeamPickerModal');
-            runAccountPoolAutomaticLogin(entryId, email, Number(button.dataset.teamId), button);
+            const teamId = Number(button.dataset.teamId);
+            if (action === 'invite') {
+                inviteAccountPoolEntry(entryId, email, teamId, seatType, button);
+            } else {
+                runAccountPoolAutomaticLogin(entryId, email, teamId, button);
+            }
         });
     });
     showModal('accountPoolTeamPickerModal');
     if (window.lucide) lucide.createIcons();
+}
+
+async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) {
+    if (!confirm(`确定邀请 ${email} 加入所选 Team 吗？`)) return;
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i data-lucide="loader-circle" class="spin" aria-hidden="true"></i>';
+    if (window.lucide) lucide.createIcons();
+    try {
+        const response = await fetch(`/admin/account-pool/${entryId}/invite`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({team_id: teamId, seat_type: seatType || 'default'})
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.success) throw new Error(payload.error || payload.message || '邀请失败');
+        showToast(payload.message || `${email} 已发送 Team 邀请`, 'success');
+        setTimeout(() => location.reload(), 500);
+    } catch (error) {
+        showToast(error.message || '邀请失败', 'error');
+        button.disabled = false;
+        button.innerHTML = original;
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+function openAccountPoolInvitePicker(entryId, email, seatType) {
+    openAccountPoolTeamPicker(entryId, email, window.accountPoolTeams || [], 'invite', seatType);
 }
 
 async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button) {
@@ -360,6 +409,15 @@ document.addEventListener('DOMContentLoaded', () => {
     );
     document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
     document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
+    document.querySelectorAll('.account-pool-invite-button').forEach(button => {
+        button.addEventListener('click', () => {
+            openAccountPoolInvitePicker(
+                button.dataset.entryId,
+                button.dataset.email,
+                button.dataset.seatType || 'default',
+            );
+        });
+    });
     document.querySelectorAll('.account-pool-auto-login-button').forEach(button => {
         button.addEventListener('click', () => {
             runAccountPoolAutomaticLogin(

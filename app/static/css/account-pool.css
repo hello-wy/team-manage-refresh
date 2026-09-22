@@ -12,20 +12,41 @@
     min-width: 0;
 }
 
-.account-pool-form {
+.account-pool-page-header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(12rem, auto) minmax(0, 1fr) auto;
+    align-items: center;
+}
+
+.account-pool-page-header .page-header-copy {
+    align-self: start;
+}
+
+.account-pool-form {
+    display: flex;
+    min-width: 0;
 }
 
 .account-pool-form .form-group {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     margin: 0;
+    min-width: 0;
 }
 
 .account-pool-page-actions {
     justify-content: flex-end;
 }
 
+.account-pool-status-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+
 .account-pool-form textarea {
+    flex: 1 1 auto;
     width: 100%;
     min-height: 118px;
     resize: vertical;
@@ -80,6 +101,7 @@
 }
 
 .account-pool-secret-button,
+.account-pool-invite-button,
 .account-pool-json-export-button,
 .account-pool-auto-login-button,
 .account-pool-edit-button,
@@ -151,13 +173,21 @@
 }
 
 @media (max-width: 700px) {
+    .account-pool-page-header {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .account-pool-page-header .account-pool-form {
+        width: 100%;
+    }
+
     .account-pool-team-cell {
         flex: 1 1 auto;
         width: auto;
         min-width: 0;
     }
 
-    .account-pool-form,
     .account-pool-history-item {
         grid-template-columns: 1fr;
     }
