@@ -142,3 +142,29 @@ test('late result updates its Team count without overwriting another Team dialog
     assert.equal(h.element('modalJoinedMembersTableBody').innerHTML, 'Team 2 members');
     assert.equal(h.toasts.length, 0);
 });
+
+test('sub2api import starts immediately without confirmation', async () => {
+    const requests = [];
+    const context = vm.createContext({
+        memberAuthorizationContext: null,
+        confirm: () => { throw new Error('confirmation should not be requested'); },
+        fetch: async (...args) => {
+            requests.push(args);
+            return {
+                ok: true,
+                json: async () => ({success: true, data: {account_id: 42, group_count: 2}}),
+            };
+        },
+        showToast() {},
+        markMemberSub2apiExported() {},
+    });
+    vm.runInContext(
+        section('async function importMemberSub2api(', 'async function exportMemberSub2api('),
+        context,
+    );
+
+    await vm.runInContext("importMemberSub2api(7, 'member@example.com')", context);
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0][0], '/admin/teams/7/members/authorization/import-sub2api');
+});

@@ -8,6 +8,7 @@ import hashlib
 import logging
 import random
 import secrets
+import uuid
 from urllib.parse import quote, urlencode, urlparse
 from typing import Optional, Dict, Any, List
 from curl_cffi.requests import AsyncSession
@@ -30,6 +31,7 @@ class ChatGPTService:
     # 重试配置
     MAX_RETRIES = 3
     RETRY_DELAYS = [1, 2, 4]  # 指数退避: 1s, 2s, 4s
+    DELETE_CONFLICT_DELAYS = (5, 10, 15)
 
     def __init__(self):
         """初始化 ChatGPT API 服务"""
@@ -259,7 +261,10 @@ class ChatGPTService:
         limit = 50
         while True:
             url = f"{self.BASE_URL}/accounts/{account_id}/users?limit={limit}&offset={offset}"
-            headers = {"Authorization": f"Bearer {access_token}"}
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "chatgpt-account-id": account_id,
+            }
             result = await self._make_request("GET", url, headers, db_session=db_session, identifier=identifier)
             if not result["success"]:
                 return {
@@ -336,13 +341,52 @@ class ChatGPTService:
         db_session: DBAsyncSession,
         identifier: str = "default"
     ) -> Dict[str, Any]:
-        """删除成员"""
-        url = f"{self.BASE_URL}/accounts/{account_id}/users/{user_id}"
+        """使用指定调用者凭证删除成员，并对 409 做固定退避重试。"""
+        return await self.delete_workspace_user(
+            access_token,
+            account_id,
+            user_id,
+            db_session,
+            identifier=identifier,
+        )
+
+    async def delete_workspace_user(
+        self,
+        access_token: str,
+        account_id: str,
+        user_id: str,
+        db_session: DBAsyncSession,
+        identifier: str = "default",
+    ) -> Dict[str, Any]:
+        """调用 workspace 用户 DELETE；调用者可为成员本人或 Team 所有者。"""
+        url = (
+            f"{self.BASE_URL}/accounts/{quote(account_id, safe='')}/users/"
+            f"{quote(user_id, safe='')}"
+        )
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "chatgpt-account-id": account_id
+            "chatgpt-account-id": account_id,
+            "oai-device-id": str(uuid.uuid4()),
         }
-        result = await self._make_request("DELETE", url, headers, db_session=db_session, identifier=identifier)
+        for retry_index, delay in enumerate((0, *self.DELETE_CONFLICT_DELAYS)):
+            if delay:
+                await asyncio.sleep(delay)
+            result = await self._make_request(
+                "DELETE",
+                url,
+                headers,
+                db_session=db_session,
+                identifier=identifier,
+                retry=True,
+            )
+            if result.get("status_code") != 409:
+                return result
+            logger.warning(
+                "删除 workspace 用户遇到 409，准备退避重试: account=%s user=%s attempt=%s",
+                account_id,
+                user_id,
+                retry_index + 1,
+            )
         return result
 
     async def toggle_beta_feature(

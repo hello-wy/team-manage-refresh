@@ -2080,7 +2080,7 @@ function importCurrentMemberAuthorization() {
 
 async function importMemberSub2api(teamId, email, button = null) {
     const ctx = memberAuthorizationContext;
-    if (ctx?.busy || !confirm(`确定将 ${email} 导入 sub2api 并绑定系统中心配置的 OpenAI 分组吗？`)) return;
+    if (ctx?.busy) return;
     if (ctx) { ctx.busy = true; syncMemberAuthorizationButtons(ctx); }
     if (button) button.disabled = true;
     try {

@@ -14,13 +14,15 @@
 
 .account-pool-form {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 1rem;
-    align-items: end;
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .account-pool-form .form-group {
     margin: 0;
+}
+
+.account-pool-page-actions {
+    justify-content: flex-end;
 }
 
 .account-pool-form textarea {
@@ -160,8 +162,13 @@
         grid-template-columns: 1fr;
     }
 
-    .account-pool-form .btn {
+    .account-pool-page-actions {
         width: 100%;
+        justify-content: stretch;
+    }
+
+    .account-pool-page-actions .btn {
+        flex: 1 1 0;
     }
 
     .account-pool-toolbar-actions,

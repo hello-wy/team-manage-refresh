@@ -3242,6 +3242,178 @@ class TeamService:
         async with seat_account_lock(team.account_id):
             return await self._delete_team_member_locked(team_id, user_id, db_session, email)
 
+    async def _load_member_delete_credentials(
+        self,
+        team: Team,
+        email: Optional[str],
+        db_session: AsyncSession,
+    ) -> Optional[Dict[str, Any]]:
+        if not email:
+            return None
+        normalized_email = self._normalize_member_email(email)
+        record = (await db_session.execute(select(MemberAuthorization).where(
+            MemberAuthorization.team_id == team.id,
+            MemberAuthorization.email == normalized_email,
+            MemberAuthorization.account_id == team.account_id,
+        ))).scalar_one_or_none()
+        if not record:
+            return None
+        encrypted_values = (
+            record.credentials_encrypted,
+            record.export_json_encrypted,
+        )
+        for encrypted_value in encrypted_values:
+            if not encrypted_value:
+                continue
+            try:
+                payload = json.loads(encryption_service.decrypt_token(encrypted_value))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            credentials = payload.get("credentials")
+            if not isinstance(credentials, dict):
+                accounts = payload.get("accounts")
+                first_account = accounts[0] if isinstance(accounts, list) and accounts else {}
+                credentials = first_account.get("credentials") if isinstance(first_account, dict) else None
+            credentials = credentials if isinstance(credentials, dict) else payload
+            if isinstance(credentials, dict) and credentials.get("access_token"):
+                return {"record": record, "credentials": credentials}
+        return None
+
+    async def _refresh_member_delete_credentials(
+        self,
+        team: Team,
+        member_data: Dict[str, Any],
+        db_session: AsyncSession,
+    ) -> Optional[str]:
+        record = member_data["record"]
+        credentials = dict(member_data["credentials"])
+        refresh_token = credentials.get("refresh_token")
+        client_id = credentials.get("client_id")
+        if not refresh_token or not client_id:
+            return None
+        refreshed = await self.chatgpt_service.refresh_access_token_with_refresh_token(
+            refresh_token,
+            client_id,
+            db_session,
+            identifier=f"member-delete-{record.id}",
+        )
+        if not refreshed.get("success") or not refreshed.get("access_token"):
+            return None
+        for key in ("access_token", "refresh_token", "id_token"):
+            if refreshed.get(key):
+                credentials[key] = refreshed[key]
+        record.credentials_encrypted = encryption_service.encrypt_token(
+            json.dumps(credentials)
+        )
+        member_data["credentials"] = credentials
+        await db_session.commit()
+        logger.info("成员自退前刷新授权成功: team=%s email=%s", team.id, record.email)
+        return credentials["access_token"]
+
+    async def _delete_as_member(
+        self,
+        team: Team,
+        user_id: str,
+        email: Optional[str],
+        db_session: AsyncSession,
+    ) -> Optional[Dict[str, Any]]:
+        member_data = await self._load_member_delete_credentials(team, email, db_session)
+        if not member_data:
+            return None
+        credentials = member_data["credentials"]
+        saved_user_id = credentials.get("chatgpt_user_id")
+        if saved_user_id and saved_user_id != user_id:
+            logger.warning("成员 JSON 的 user_id 与页面目标不一致: team=%s email=%s", team.id, email)
+            return {"success": False, "error": "成员授权 JSON 与当前成员不匹配"}
+        access_token = credentials["access_token"]
+        if self.jwt_parser.is_token_expired(access_token):
+            access_token = await self._refresh_member_delete_credentials(team, member_data, db_session)
+            if not access_token:
+                return None
+        result = await self.chatgpt_service.delete_workspace_user(
+            access_token,
+            team.account_id,
+            user_id,
+            db_session,
+            identifier=f"member-delete-{member_data['record'].id}",
+        )
+        if result.get("status_code") not in {401, 403}:
+            return result
+        logger.warning("成员自退 AT 返回 %s，执行一次成员凭证刷新后重试", result.get("status_code"))
+        refreshed_token = await self._refresh_member_delete_credentials(team, member_data, db_session)
+        if not refreshed_token:
+            return None
+        return await self.chatgpt_service.delete_workspace_user(
+            refreshed_token,
+            team.account_id,
+            user_id,
+            db_session,
+            identifier=f"member-delete-{member_data['record'].id}",
+        )
+
+    async def _member_absent_in_snapshot(
+        self,
+        team: Team,
+        access_token: str,
+        user_id: str,
+        email: Optional[str],
+        db_session: AsyncSession,
+    ) -> Optional[bool]:
+        snapshot = await self.chatgpt_service.get_members(
+            access_token,
+            team.account_id,
+            db_session,
+            identifier=team.email,
+        )
+        if not snapshot.get("success"):
+            return None
+        normalized_email = self._normalize_member_email(email)
+        return not any(
+            member.get("id") == user_id
+            or (
+                normalized_email
+                and self._normalize_member_email(member.get("email")) == normalized_email
+            )
+            for member in snapshot.get("members", [])
+        )
+
+    async def _delete_remote_member(
+        self,
+        team: Team,
+        user_id: str,
+        email: Optional[str],
+        access_token: str,
+        db_session: AsyncSession,
+    ) -> Dict[str, Any]:
+        member_result = await self._delete_as_member(team, user_id, email, db_session)
+        if member_result and member_result.get("success"):
+            verified = await self._member_absent_in_snapshot(
+                team, access_token, user_id, email, db_session
+            )
+            if verified is True:
+                return {"success": True, "message": "成员已使用自身授权退出空间", "error": None}
+            if verified is None:
+                return {"success": False, "error": "成员自退已返回成功，但无法完成成员快照复核"}
+            logger.warning("成员自退返回成功但快照仍存在，转母号兜底: team=%s user=%s", team.id, user_id)
+        elif member_result and not member_result.get("success") and not member_result.get("status_code"):
+            return member_result
+
+        owner_result = await self.chatgpt_service.delete_member(
+            access_token,
+            team.account_id,
+            user_id,
+            db_session,
+            identifier=team.email,
+        )
+        if not owner_result.get("success"):
+            return {"success": False, "error": owner_result.get("error") or "删除成员失败", "api_result": owner_result}
+        verified = await self._member_absent_in_snapshot(
+            team, access_token, user_id, email, db_session
+        )
+        if verified is not True:
+            return {"success": False, "error": "删除请求已返回成功，但成员快照仍未确认退出"}
+        return {"success": True, "message": "成员已删除", "error": None}
+
     async def _delete_team_member_locked(self, team_id, user_id, db_session, email=None):
         """
         删除 Team 成员
@@ -3266,7 +3438,7 @@ class TeamService:
                     f"未找到 ID 为 {team_id} 的 Team",
                 )
 
-            # 2. 确保 AT Token 有效
+            # 2. 确保母号 AT 有效，用于快照复核和必要时的兜底删除
             access_token = await self.ensure_access_token(team, db_session)
             if not access_token:
                 return self._admin_error(
@@ -3274,35 +3446,15 @@ class TeamService:
                     "该 Team 的登录凭证已过期，且自动刷新失败，请重新登录或重新导入",
                 )
 
-            # 3. 调用 ChatGPT API 删除成员
-            delete_result = await self.chatgpt_service.delete_member(
-                access_token,
-                team.account_id,
-                user_id,
-                db_session,
-                identifier=team.email
+            # 3. 默认成员自退；成员 AT 不可用时再用母号兜底。
+            delete_result = await self._delete_remote_member(
+                team, user_id, email, access_token, db_session
             )
-
             if not delete_result["success"]:
-                # 检查是否封号或 Token 失效
-                if await self._handle_api_error(delete_result, team, db_session):
-                    error_msg = delete_result.get("error", "未知错误")
-                    if delete_result.get("error_code") == "account_deactivated":
-                        error_msg = "账号已封禁 (account_deactivated)"
-                    elif delete_result.get("error_code") == "token_invalidated":
-                        error_msg = "Token 已失效 (token_invalidated)"
-                        
-                    return {
-                        "success": False,
-                        "message": None,
-                        "error": error_msg
-                    }
-
-                return {
-                    "success": False,
-                    "message": None,
-                    "error": f"删除成员失败: {delete_result['error']}"
-                }
+                api_result = delete_result.get("api_result")
+                if api_result and await self._handle_api_error(api_result, team, db_session):
+                    return {"success": False, "message": None, "error": api_result.get("error", "删除成员失败")}
+                return {"success": False, "message": None, "error": delete_result.get("error", "删除成员失败")}
 
             if email:
                 await self.mark_team_email_mapping_removed(team_id, email, db_session, source="api")
@@ -3321,7 +3473,7 @@ class TeamService:
 
             return {
                 "success": True,
-                "message": "成员已删除",
+                "message": delete_result.get("message") or "成员已删除",
                 "error": None
             }
 
