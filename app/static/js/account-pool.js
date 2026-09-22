@@ -132,10 +132,12 @@ function openAccountPoolTeamPicker(entryId, email, teams) {
 
 async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button) {
     const target = workspaceId ? `Workspace ${workspaceId}` : '当前可用账号';
-    if (!confirm(`确定让 ${email} 自动登录并获取 ${target} 的 JSON 吗？`)) return;
+    const targetHint = workspaceId ? `目标为 ${target}。` : '';
+    if (!confirm(`确定重新登录 ${email} 并导入配置的 sub2api 吗？${targetHint}`)) return;
     const original = button.innerHTML;
     button.disabled = true;
-    if (button.querySelector('i')) button.querySelector('i').setAttribute('data-lucide', 'loader-circle');
+    button.innerHTML = '<i data-lucide="loader-circle" class="spin" aria-hidden="true"></i>';
+    if (window.lucide) lucide.createIcons();
     try {
         const response = await fetch(`/admin/account-pool/${entryId}/automatic-login`, {
             method: 'POST', credentials: 'same-origin',
@@ -144,23 +146,55 @@ async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button)
         });
         if (!response.ok) {
             const payload = await response.json();
-            throw new Error(payload.error || '自动登录导出失败');
+            throw new Error(payload.error || '导入 sub2api 失败');
         }
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `sub2api-account-pool-${entryId}.json`;
-        link.click();
-        URL.revokeObjectURL(url);
-        showToast(`${email} 的 JSON 已下载`, 'success');
+        const payload = await response.json();
+        if (!payload.success) throw new Error(payload.error || '导入 sub2api 失败');
+        showToast(`${email} 已重新登录并导入 sub2api（账户 ID ${payload.account_id}）`, 'success');
     } catch (error) {
-        showToast(error.message || '自动登录导出失败', 'error');
+        showToast(error.message || '导入 sub2api 失败', 'error');
     } finally {
         button.disabled = false;
         button.innerHTML = original;
         if (window.lucide) lucide.createIcons();
     }
+}
+
+async function exportAccountPoolJson(entryId, email, workspaceId, button) {
+    if (!confirm(`确定重新登录 ${email} 并导出最新 JSON 吗？`)) return;
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i data-lucide="loader-circle" class="spin" aria-hidden="true"></i>';
+    if (window.lucide) lucide.createIcons();
+    try {
+        const response = await fetch(`/admin/account-pool/${entryId}/export-json`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({workspace_id: workspaceId || ''})
+        });
+        if (!response.ok) {
+            const payload = await response.json();
+            throw new Error(payload.error || '导出 JSON 失败');
+        }
+        const blob = await response.blob();
+        downloadAccountPoolJson(blob, entryId);
+        showToast(`${email} 的最新 JSON 已下载`, 'success');
+    } catch (error) {
+        showToast(error.message || '导出 JSON 失败', 'error');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = original;
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+function downloadAccountPoolJson(blob, entryId) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sub2api-account-pool-${entryId}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
 }
 
 async function loadAccountPoolHistory(entryId, email) {
@@ -221,14 +255,14 @@ function initAccountPoolColumnToggler() {
     if (!table || !container) return;
 
     const storageKey = 'account_pool_list_columns';
-    const hiddenColumns = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    const hiddenColumns = loadAccountPoolHiddenColumns(storageKey);
     container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
     table.querySelectorAll('thead th').forEach((header, index) => {
         const label = header.innerText.trim();
         if (!label || label === '操作') return;
 
-        const visible = !hiddenColumns.includes(index);
+        const visible = !hiddenColumns.has(index);
         setAccountPoolColumnVisibility(table, index, visible);
 
         const item = document.createElement('label');
@@ -237,22 +271,81 @@ function initAccountPoolColumnToggler() {
         item.querySelector('input').addEventListener('change', (event) => {
             const nextVisible = event.target.checked;
             setAccountPoolColumnVisibility(table, index, nextVisible);
-            const currentHidden = JSON.parse(localStorage.getItem(storageKey) || '[]');
-            const hiddenIndex = currentHidden.indexOf(index);
-            if (nextVisible && hiddenIndex >= 0) currentHidden.splice(hiddenIndex, 1);
-            if (!nextVisible && hiddenIndex < 0) currentHidden.push(index);
-            localStorage.setItem(storageKey, JSON.stringify(currentHidden));
+            if (nextVisible) hiddenColumns.delete(index);
+            else hiddenColumns.add(index);
+            localStorage.setItem(storageKey, JSON.stringify([...hiddenColumns].sort((a, b) => a - b)));
         });
         container.appendChild(item);
     });
 }
 
+function loadAccountPoolHiddenColumns(storageKey) {
+    const stored = localStorage.getItem(storageKey);
+    if (!stored) return new Set();
+
+    try {
+        const parsed = JSON.parse(stored);
+        if (!Array.isArray(parsed)) throw new TypeError('列偏好不是数组');
+        return new Set(parsed.filter(Number.isInteger));
+    } catch (error) {
+        console.error('账号池列设置偏好无效，已重置。', error);
+        localStorage.removeItem(storageKey);
+        showToast('列设置偏好无效，已重置', 'warning');
+        return new Set();
+    }
+}
+
 function setAccountPoolColumnVisibility(table, index, visible) {
-    const display = visible ? '' : 'none';
-    table.querySelector(`thead th:nth-child(${index + 1})`).style.display = display;
-    table.querySelectorAll(`tbody tr td:nth-child(${index + 1})`).forEach((cell) => {
-        cell.style.display = display;
+    const hidden = !visible;
+    table.querySelectorAll(
+        `thead th:nth-child(${index + 1}), tbody tr td:nth-child(${index + 1})`
+    ).forEach((cell) => {
+        cell.hidden = hidden;
     });
+}
+
+function closeAccountPoolColumnDropdown() {
+    const menu = document.getElementById('accountPoolColumnToggleDropdown');
+    const button = document.getElementById('accountPoolColumnToggleBtn');
+    menu?.classList.remove('show');
+    button?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleAccountPoolColumnDropdown(button) {
+    const menu = document.getElementById('accountPoolColumnToggleDropdown');
+    if (!menu) return;
+
+    const shouldShow = !menu.classList.contains('show');
+    closeFloatingDropdowns();
+    button.setAttribute('aria-expanded', 'false');
+    if (!shouldShow) return;
+
+    menu.classList.add('show');
+    button.setAttribute('aria-expanded', 'true');
+    positionFloatingDropdown(menu, button);
+    requestAnimationFrame(() => positionFloatingDropdown(menu, button));
+}
+
+function initAccountPoolColumnDropdown() {
+    const menu = document.getElementById('accountPoolColumnToggleDropdown');
+    const button = document.getElementById('accountPoolColumnToggleBtn');
+    if (!menu || !button) return;
+
+    button.addEventListener('click', () => toggleAccountPoolColumnDropdown(button));
+    document.addEventListener('click', (event) => {
+        if (!menu.classList.contains('show')) return;
+        if (button.contains(event.target) || menu.contains(event.target)) return;
+        closeAccountPoolColumnDropdown();
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeAccountPoolColumnDropdown();
+    });
+    window.addEventListener('resize', () => {
+        if (menu.classList.contains('show')) positionFloatingDropdown(menu, button);
+    });
+    window.addEventListener('scroll', () => {
+        if (menu.classList.contains('show')) positionFloatingDropdown(menu, button);
+    }, true);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -277,5 +370,16 @@ document.addEventListener('DOMContentLoaded', () => {
             );
         });
     });
+    document.querySelectorAll('.account-pool-json-export-button').forEach(button => {
+        button.addEventListener('click', () => {
+            exportAccountPoolJson(
+                button.dataset.entryId,
+                button.dataset.email,
+                button.dataset.workspaceId || '',
+                button,
+            );
+        });
+    });
     initAccountPoolColumnToggler();
+    initAccountPoolColumnDropdown();
 });

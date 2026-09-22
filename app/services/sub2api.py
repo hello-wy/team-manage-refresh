@@ -1,5 +1,6 @@
 """Push an authorized member's sub2api account to the configured instance."""
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -12,6 +13,17 @@ DEFAULT_BASE_URL = "https://solidapi.top"
 REQUEST_TIMEOUT_SECONDS = 20.0
 GROUP_MODE_ALL = "all"
 GROUP_MODE_SELECTED = "selected"
+DEFAULT_CONCURRENCY = 10
+CODEX_FINGERPRINT_MODE_OFF = "off"
+CODEX_FINGERPRINT_MODE_DEVICE = "device"
+CODEX_FINGERPRINT_MODE_SESSION = "session"
+CODEX_FINGERPRINT_MODE_FULL = "full"
+VALID_CODEX_FINGERPRINT_MODES = frozenset({
+    CODEX_FINGERPRINT_MODE_OFF,
+    CODEX_FINGERPRINT_MODE_DEVICE,
+    CODEX_FINGERPRINT_MODE_SESSION,
+    CODEX_FINGERPRINT_MODE_FULL,
+})
 
 
 class Sub2apiError(ValueError):
@@ -22,6 +34,12 @@ class Sub2apiError(ValueError):
 class Sub2apiConfig:
     base_url: str
     api_key: str
+
+
+@dataclass(frozen=True)
+class Sub2apiExportSettings:
+    concurrency: int
+    codex_fingerprint_mode: str
 
 
 def normalize_base_url(value: str) -> str:
@@ -43,6 +61,48 @@ def response_data(response: httpx.Response):
     if not isinstance(body, dict) or body.get("code") != 0 or "data" not in body:
         raise Sub2apiError("sub2api 拒绝请求，请检查配置及账户数据")
     return body["data"]
+
+
+async def get_export_settings(db) -> Sub2apiExportSettings:
+    raw_concurrency = await settings_service.get_setting(
+        db, "sub2api_default_concurrency", str(DEFAULT_CONCURRENCY)
+    )
+    try:
+        concurrency = int(raw_concurrency)
+    except (TypeError, ValueError) as exc:
+        raise Sub2apiError("sub2api 默认并发数配置无效，请在系统中心重新保存") from exc
+    if concurrency < 1:
+        raise Sub2apiError("sub2api 默认并发数必须大于 0")
+
+    mode = await settings_service.get_setting(
+        db, "sub2api_codex_fingerprint_mode", CODEX_FINGERPRINT_MODE_OFF
+    )
+    if mode not in VALID_CODEX_FINGERPRINT_MODES:
+        raise Sub2apiError("Codex 指纹收敛配置无效，请在系统中心重新保存")
+    return Sub2apiExportSettings(concurrency, mode)
+
+
+async def apply_export_settings(payload, db):
+    settings = await get_export_settings(db)
+    accounts = payload.get("accounts") if isinstance(payload, dict) else None
+    if not isinstance(accounts, list) or not accounts:
+        raise Sub2apiError("sub2api 导出数据缺少账户")
+
+    updated = deepcopy(payload)
+    for account in updated["accounts"]:
+        if not isinstance(account, dict):
+            raise Sub2apiError("sub2api 导出数据中的账户格式无效")
+        account["concurrency"] = settings.concurrency
+        extra = dict(account.get("extra") or {})
+        if settings.codex_fingerprint_mode == CODEX_FINGERPRINT_MODE_OFF:
+            extra.pop("codex_fingerprint_mode", None)
+        else:
+            extra["codex_fingerprint_mode"] = settings.codex_fingerprint_mode
+        if extra:
+            account["extra"] = extra
+        else:
+            account.pop("extra", None)
+    return updated
 
 
 class Sub2apiService:
@@ -100,7 +160,12 @@ class Sub2apiService:
         if not groups:
             raise Sub2apiError("sub2api 没有可用的 OpenAI 分组，未创建账户")
         group_ids = await self._selected_group_ids(db, groups)
-        account = {**payload["accounts"][0], "platform": "openai", "group_ids": group_ids}
+        configured_payload = await apply_export_settings(payload, db)
+        account = {
+            **configured_payload["accounts"][0],
+            "platform": "openai",
+            "group_ids": group_ids,
+        }
         try:
             async with self.client_factory(
                     timeout=REQUEST_TIMEOUT_SECONDS, headers={"x-api-key": config.api_key}) as client:

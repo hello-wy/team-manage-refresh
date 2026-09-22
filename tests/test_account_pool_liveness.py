@@ -331,3 +331,5 @@ class AccountPoolCronSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('列设置'.encode(), pool_response.body)
         self.assertIn(b'accountPoolColumnToggleDropdown', pool_response.body)
         self.assertIn(b'account-pool-workspace-scan-button', pool_response.body)
+        self.assertIn(b'account-pool-json-export-button', pool_response.body)
+        self.assertIn(b'account-pool-auto-login-button', pool_response.body)

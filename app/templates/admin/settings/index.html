@@ -368,6 +368,22 @@
             <p class="form-help">用于将已授权并入组的成员导入 sub2api。密钥不会回显。</p>
         </div>
         <div class="form-group">
+            <label for="sub2apiConcurrency">默认并发数</label>
+            <input type="number" id="sub2apiConcurrency" class="form-control"
+                value="{{ sub2api_default_concurrency or '10' }}" min="1" step="1" required>
+            <p class="form-help">导出到 sub2api 的 OpenAI 账号默认并发数，默认 10。</p>
+        </div>
+        <div class="form-group">
+            <label for="sub2apiCodexFingerprintMode">Codex 指纹收敛</label>
+            <select id="sub2apiCodexFingerprintMode" class="form-control">
+                <option value="off" {% if (sub2api_codex_fingerprint_mode or 'off') == 'off' %}selected{% endif %}>关闭</option>
+                <option value="device" {% if sub2api_codex_fingerprint_mode == 'device' %}selected{% endif %}>设备收敛</option>
+                <option value="session" {% if sub2api_codex_fingerprint_mode == 'session' %}selected{% endif %}>设备与会话收敛</option>
+                <option value="full" {% if sub2api_codex_fingerprint_mode == 'full' %}selected{% endif %}>完全收敛</option>
+            </select>
+            <p class="form-help">控制导出账号的 installation_id、session_id、thread_id 收敛程度，默认关闭。</p>
+        </div>
+        <div class="form-group">
             <label>导出分组</label>
             <label class="checkbox-label">
                 <input type="radio" name="sub2api_group_mode" value="all"
@@ -1007,8 +1023,14 @@
         event.preventDefault();
         const base_url = document.getElementById('sub2apiBaseUrl').value.trim();
         const api_key = document.getElementById('sub2apiApiKey').value.trim();
+        const concurrency = Number(document.getElementById('sub2apiConcurrency').value);
+        const codex_fingerprint_mode = document.getElementById('sub2apiCodexFingerprintMode').value;
         const group_mode = getSub2apiGroupMode();
         const group_ids = group_mode === 'selected' ? Array.from(sub2apiGroupState.selectedIds) : [];
+        if (!Number.isInteger(concurrency) || concurrency < 1) {
+            showToast('默认并发数必须是大于 0 的整数', 'error');
+            return;
+        }
         if (group_mode === 'selected' && group_ids.length === 0) {
             showToast('请至少选择一个 sub2api 分组', 'error');
             return;
@@ -1016,11 +1038,13 @@
         try {
             const response = await fetch('/admin/settings/sub2api', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({base_url, api_key, group_mode, group_ids})
+                body: JSON.stringify({base_url, api_key, group_mode, group_ids, concurrency, codex_fingerprint_mode})
             });
             const data = await response.json();
             if (!response.ok || !data.success) throw new Error(data.error || '保存失败');
             document.getElementById('sub2apiBaseUrl').value = data.base_url;
+            document.getElementById('sub2apiConcurrency').value = data.concurrency;
+            document.getElementById('sub2apiCodexFingerprintMode').value = data.codex_fingerprint_mode;
             document.getElementById('sub2apiApiKey').value = '';
             document.getElementById('sub2apiApiKey').placeholder = '已配置，留空保持不变';
             sub2apiGroupState.selectedIds = new Set(data.group_ids || []);

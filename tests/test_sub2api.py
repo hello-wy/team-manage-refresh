@@ -32,7 +32,8 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
         payload = {"accounts": [{"name": "member", "type": "oauth", "platform": "openai",
                                  "credentials": {"refresh_token": "secret"}}]}
         with patch("app.services.sub2api.settings_service.get_setting", new=AsyncMock(
-                side_effect=["https://solidapi.top", encryption_service.encrypt_token("admin-secret"), "all"])):
+                side_effect=["https://solidapi.top", encryption_service.encrypt_token("admin-secret"),
+                             "all", "10", "off"])):
             result = await service.import_member(payload, object())
         self.assertEqual(result, {"account_id": 42, "group_count": 2})
         self.assertEqual(requests[1].url.path, "/api/v1/admin/accounts")
@@ -40,6 +41,8 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
         sent = json.loads(requests[1].read())
         self.assertEqual(sent["credentials"]["refresh_token"], "secret")
         self.assertEqual(sent["group_ids"], [1, 2])
+        self.assertEqual(sent["concurrency"], 10)
+        self.assertNotIn("extra", sent)
 
     async def test_import_uses_only_selected_groups(self):
         requests = []
@@ -55,11 +58,14 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
 
         service = Sub2apiService(lambda **kwargs: httpx.AsyncClient(
             transport=httpx.MockTransport(handler), **kwargs))
-        settings = ["https://solidapi.top", encryption_service.encrypt_token("key"), "selected", "[2]"]
+        settings = ["https://solidapi.top", encryption_service.encrypt_token("key"), "selected", "[2]", "7", "session"]
         with patch("app.services.sub2api.settings_service.get_setting", new=AsyncMock(side_effect=settings)):
             result = await service.import_member({"accounts": [{"name": "member"}]}, object())
         self.assertEqual(result["group_count"], 1)
-        self.assertEqual(json.loads(requests[1].read())["group_ids"], [2])
+        sent = json.loads(requests[1].read())
+        self.assertEqual(sent["group_ids"], [2])
+        self.assertEqual(sent["concurrency"], 7)
+        self.assertEqual(sent["extra"]["codex_fingerprint_mode"], "session")
 
     async def test_missing_selected_group_blocks_creation(self):
         requests = []
@@ -145,6 +151,8 @@ class Sub2apiRouteTests(unittest.TestCase):
         self.assertEqual(values["sub2api_base_url"], "https://solidapi.top")
         self.assertEqual(values["sub2api_group_mode"], "selected")
         self.assertEqual(json.loads(values["sub2api_group_ids"]), [2, 3])
+        self.assertEqual(values["sub2api_default_concurrency"], "10")
+        self.assertEqual(values["sub2api_codex_fingerprint_mode"], "off")
         self.assertEqual(encryption_service.decrypt_token(values["sub2api_api_key_encrypted"]), "top-secret")
         self.assertNotIn("top-secret", response.text)
 

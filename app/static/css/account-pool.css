@@ -78,6 +78,8 @@
 }
 
 .account-pool-secret-button,
+.account-pool-json-export-button,
+.account-pool-auto-login-button,
 .account-pool-edit-button,
 .account-pool-delete-button,
 .account-pool-workspace-scan-button {
@@ -107,14 +109,6 @@
     justify-content: flex-end;
     gap: 0.4rem;
     white-space: nowrap;
-}
-
-.account-pool-auto-login-button {
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    min-height: 32px;
-    padding: 0;
 }
 
 .account-pool-team-picker-options {

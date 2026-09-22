@@ -533,6 +533,13 @@ body.admin-theme .toast {
     height: 24px;
 }
 
+.account-pool-sub2api-icon {
+    display: block;
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+}
+
 /* Action Buttons Group */
 .action-buttons {
     display: flex;

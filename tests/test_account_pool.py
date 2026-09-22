@@ -441,6 +441,49 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as session:
             self.assertIsNone(await self.service.list_invite_options(999, session))
 
+    async def test_invite_options_exclude_accounts_in_other_workspaces(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(
+                    id=1, email="owner@example.com", account_id="workspace-1",
+                    status="active", max_members=6, access_token_encrypted="token-1",
+                ),
+                Team(
+                    id=2, email="other-owner@example.com", account_id="workspace-2",
+                    status="active", max_members=6, access_token_encrypted="token-2",
+                ),
+            ])
+            session.add_all([
+                AccountPoolEntry(
+                    email="managed-other@example.com",
+                    workspace_id="workspace-2",
+                    workspace_status="workspace_ok",
+                ),
+                AccountPoolEntry(
+                    email="external-other@example.com",
+                    workspace_id="external-workspace",
+                    workspace_status="workspace_ok",
+                ),
+                AccountPoolEntry(
+                    email="current@example.com",
+                    workspace_id="workspace-1",
+                    workspace_status="workspace_ok",
+                ),
+                AccountPoolEntry(
+                    email="personal@example.com",
+                    workspace_id="personal-workspace",
+                    workspace_status="personal_account",
+                ),
+            ])
+            await session.commit()
+
+            options = await self.service.list_invite_options(1, session)
+
+            self.assertEqual(
+                [option["email"] for option in options],
+                ["current@example.com", "personal@example.com"],
+            )
+
     async def test_team_reinvite_cooldown_survives_member_removal(self):
         async with self.sessions() as session:
             team = Team(

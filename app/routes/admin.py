@@ -40,6 +40,8 @@ from app.services.openai_automatic_login import (
 )
 from app.services.sub2api import (
     DEFAULT_BASE_URL,
+    DEFAULT_CONCURRENCY,
+    CODEX_FINGERPRINT_MODE_OFF,
     GROUP_MODE_ALL,
     GROUP_MODE_SELECTED,
     Sub2apiError,
@@ -439,33 +441,42 @@ async def add_account_pool_emails(
     return JSONResponse(status_code=200 if result["success"] else 400, content=result)
 
 
-@router.post("/account-pool/{entry_id}/automatic-login")
-async def automatic_login_account_pool_entry(
+async def _login_and_save_account_pool_entry(
+    db: AsyncSession,
+    entry_id: int,
+    payload: AccountPoolAutomaticLoginRequest,
+):
+    workspace_id = payload.workspace_id.strip()
+    if payload.team_id is not None:
+        team = await db.get(Team, payload.team_id)
+        if team is None or not team.account_id:
+            raise AccountPoolAuthorizationError("目标 Team 不存在或未配置 workspace")
+        workspace_id = team.account_id
+    result = await account_pool_authorization_service.login_entry(
+        db,
+        entry_id,
+        workspace_id,
+    )
+    await account_pool_authorization_service.save_result(
+        db,
+        entry_id,
+        result,
+        liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
+    )
+    return result
+
+
+@router.post("/account-pool/{entry_id}/export-json")
+async def export_account_pool_entry_json(
     entry_id: int,
     payload: AccountPoolAutomaticLoginRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """自动登录账号池成员并下载其实际 workspace 的 sub2api JSON。"""
+    """重新登录账号池账号并下载最新的 sub2api JSON。"""
     headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
     try:
-        workspace_id = payload.workspace_id.strip()
-        if payload.team_id is not None:
-            team = await db.get(Team, payload.team_id)
-            if team is None or not team.account_id:
-                raise AccountPoolAuthorizationError("目标 Team 不存在或未配置 workspace")
-            workspace_id = team.account_id
-        result = await account_pool_authorization_service.login_entry(
-            db,
-            entry_id,
-            workspace_id,
-        )
-        await account_pool_authorization_service.save_result(
-            db,
-            entry_id,
-            result,
-            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
-        )
+        result = await _login_and_save_account_pool_entry(db, entry_id, payload)
         return Response(
             content=json.dumps(result.payload, ensure_ascii=False, indent=2),
             media_type="application/json",
@@ -479,8 +490,42 @@ async def automatic_login_account_pool_entry(
         return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
     except Exception:
         await db.rollback()
-        logger.exception("账号池自动登录导出失败 (entry=%s)", entry_id)
-        return JSONResponse(status_code=500, content={"success": False, "error": "自动登录导出失败，请检查服务端日志"}, headers=headers)
+        logger.exception("账号池 JSON 导出失败 (entry=%s)", entry_id)
+        return JSONResponse(status_code=500, content={"success": False, "error": "导出 JSON 失败，请检查服务端日志"}, headers=headers)
+
+
+@router.post("/account-pool/{entry_id}/automatic-login")
+async def automatic_login_account_pool_entry(
+    entry_id: int,
+    payload: AccountPoolAutomaticLoginRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """重新登录账号池账号，并将最新授权数据导入配置的 sub2api。"""
+    headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    try:
+        result = await _login_and_save_account_pool_entry(db, entry_id, payload)
+        imported = await sub2api_service.import_member(result.payload, db)
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": "账号已导入配置的 sub2api",
+                "account_id": imported["account_id"],
+                "group_count": imported["group_count"],
+                "workspace": result.workspace,
+            },
+            headers=headers,
+        )
+    except AccountPoolAuthorizationError as exc:
+        await db.rollback()
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
+    except Sub2apiError as exc:
+        await db.rollback()
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
+    except Exception:
+        await db.rollback()
+        logger.exception("账号池导入 sub2api 失败 (entry=%s)", entry_id)
+        return JSONResponse(status_code=500, content={"success": False, "error": "导入 sub2api 失败，请检查服务端日志"}, headers=headers)
 
 
 @router.post("/account-pool/{entry_id}/workspace-scan")
@@ -2704,6 +2749,12 @@ async def settings_page(
             "sub2api_has_api_key": bool(await settings_service.get_setting(db, "sub2api_api_key_encrypted", "")),
             "sub2api_group_mode": await settings_service.get_setting(db, "sub2api_group_mode", GROUP_MODE_ALL),
             "sub2api_group_ids": await settings_service.get_setting(db, "sub2api_group_ids", "[]"),
+            "sub2api_default_concurrency": await settings_service.get_setting(
+                db, "sub2api_default_concurrency", str(DEFAULT_CONCURRENCY)
+            ),
+            "sub2api_codex_fingerprint_mode": await settings_service.get_setting(
+                db, "sub2api_codex_fingerprint_mode", CODEX_FINGERPRINT_MODE_OFF
+            ),
             "warranty_expiration_mode": await settings_service.get_warranty_expiration_mode(db),
             "ui_theme": settings_service.normalize_ui_theme(await settings_service.get_setting(db, "ui_theme", DEFAULT_UI_THEME)),
             "ui_style": settings_service.normalize_ui_style(await settings_service.get_setting(db, "ui_style", DEFAULT_UI_STYLE)),
@@ -2763,6 +2814,8 @@ class Sub2apiSettingsRequest(BaseModel):
     api_key: str = Field("", max_length=4096)
     group_mode: Literal["all", "selected"] = GROUP_MODE_ALL
     group_ids: List[int] = Field(default_factory=list)
+    concurrency: int = Field(DEFAULT_CONCURRENCY, ge=1)
+    codex_fingerprint_mode: Literal["off", "device", "session", "full"] = CODEX_FINGERPRINT_MODE_OFF
 
     @field_validator("group_ids")
     @classmethod
@@ -3780,6 +3833,8 @@ async def update_sub2api_settings(payload: Sub2apiSettingsRequest,
         "sub2api_base_url": base_url,
         "sub2api_group_mode": payload.group_mode,
         "sub2api_group_ids": json.dumps(payload.group_ids),
+        "sub2api_default_concurrency": str(payload.concurrency),
+        "sub2api_codex_fingerprint_mode": payload.codex_fingerprint_mode,
     }
     if api_key:
         settings_to_save["sub2api_api_key_encrypted"] = encryption_service.encrypt_token(api_key)
@@ -3790,6 +3845,8 @@ async def update_sub2api_settings(payload: Sub2apiSettingsRequest,
         "base_url": base_url,
         "group_mode": payload.group_mode,
         "group_ids": payload.group_ids,
+        "concurrency": payload.concurrency,
+        "codex_fingerprint_mode": payload.codex_fingerprint_mode,
         "message": "sub2api 配置已保存",
     }, headers={"Cache-Control": "no-store"})
 

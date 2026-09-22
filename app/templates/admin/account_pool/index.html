@@ -63,11 +63,22 @@
                     </div>
                 </form>
                 <div class="dropdown-wrapper">
-                    <button type="button" class="btn btn-secondary btn-sm dropdown-toggle" onclick="toggleDropdown('accountPoolColumnToggleDropdown', this)">
+                    <button
+                        id="accountPoolColumnToggleBtn"
+                        type="button"
+                        class="btn btn-secondary btn-sm dropdown-toggle"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        aria-controls="accountPoolColumnToggleDropdown"
+                    >
                         <i data-lucide="columns" style="width: 16px; height: 16px;"></i>
                         列设置
                     </button>
-                    <div id="accountPoolColumnToggleDropdown" class="dropdown-menu dropdown-menu-floating"></div>
+                    <div
+                        id="accountPoolColumnToggleDropdown"
+                        class="dropdown-menu dropdown-menu-floating"
+                        role="menu"
+                    ></div>
                 </div>
             </div>
         </div>
@@ -164,14 +175,30 @@
                             <div class="account-pool-row-actions">
                                 <button
                                     type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
-                                    title="自动登录并下载 JSON"
-                                    aria-label="自动登录并下载 JSON"
+                                    class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-json-export-button"
+                                    title="重新登录并导出 JSON"
+                                    aria-label="重新登录并导出 JSON"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
                                     data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
                                 >
                                     <i data-lucide="download" aria-hidden="true"></i>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
+                                    title="重新登录并导出到 Sub2API"
+                                    aria-label="重新登录并导出到 Sub2API"
+                                    data-entry-id="{{ entry.id }}"
+                                    data-email="{{ entry.email }}"
+                                    data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
+                                >
+                                    <img
+                                        class="account-pool-sub2api-icon"
+                                        src="/static/solidapi-s-icon.svg"
+                                        alt=""
+                                        aria-hidden="true"
+                                    >
                                 </button>
                                 <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
                                     <i data-lucide="pencil" aria-hidden="true"></i>
@@ -263,6 +290,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260921-2"></script>
+<script src="/static/js/account-pool.js?v=20260922-1"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260921-1"></script>
 {% endblock %}

@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
@@ -100,6 +100,12 @@ class AccountPoolService:
         conditions = [
             AccountPoolEntry.deleted_at.is_(None),
             ~active_mapping.exists(),
+            or_(
+                AccountPoolEntry.workspace_id.is_(None),
+                func.trim(AccountPoolEntry.workspace_id) == "",
+                AccountPoolEntry.workspace_status == "personal_account",
+                AccountPoolEntry.workspace_id == team.account_id,
+            ),
         ]
         owner_email = self.normalize_email(team.email)
         if owner_email:

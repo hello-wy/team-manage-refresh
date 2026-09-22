@@ -14,6 +14,7 @@ from app.services.openai_automatic_login import (
     AutomaticLoginRequest,
     OpenAIAutomaticLoginError,
 )
+from app.services.sub2api import apply_export_settings
 from app.utils.jwt_parser import JWTParser
 from app.utils.seat_lock import seat_account_lock
 from app.utils.time_utils import get_now
@@ -109,11 +110,12 @@ class MemberAuthorizationService:
             raise MemberAuthorizationError("授权登录邮箱与所选成员不一致，请使用该成员邮箱重新授权")
         return claims, identity or {}
 
-    def _export_payload(self, team, email, credentials):
+    async def _export_payload(self, team, email, credentials, db):
         claims, identity = self._identity(credentials, email)
-        return build_member_export_payload(
+        payload = build_member_export_payload(
             team, email, credentials, claims, identity
         )
+        return await apply_export_settings(payload, db)
 
     async def _save_export_json(self, record, payload, db):
         record.export_json_encrypted = encryption_service.encrypt_token(
@@ -138,7 +140,7 @@ class MemberAuthorizationService:
         record.oauth_state = None
         record.verifier_encrypted = None
         record.oauth_expires_at = None
-        payload = self._export_payload(team, email, credentials)
+        payload = await self._export_payload(team, email, credentials, db)
         await self._save_export_json(record, payload, db)
 
     async def automatic_login(self, team_id, email, db):
@@ -226,7 +228,7 @@ class MemberAuthorizationService:
             self._identity(credentials, email)
             record.credentials_encrypted = encryption_service.encrypt_token(json.dumps(credentials))
             team = await db.get(Team, record.team_id)
-            payload = self._export_payload(team, email, credentials)
+            payload = await self._export_payload(team, email, credentials, db)
             await self._save_export_json(record, payload, db)
         self._identity(credentials, email)
         if not credentials.get("refresh_token"):
@@ -282,7 +284,7 @@ class MemberAuthorizationService:
             data, credentials = await self._check(team, email, db)
             if not data["can_export"]:
                 raise MemberAuthorizationError(data["message"])
-            payload = self._export_payload(team, email, credentials)
+            payload = await self._export_payload(team, email, credentials, db)
             record = await self._record(team, email, db)
             await self._save_export_json(record, payload, db)
             return payload

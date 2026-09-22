@@ -349,7 +349,7 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
             self.assertEqual(check.await_args.args[1], EMAIL)
         self.assertEqual(self.client.post("/admin/teams/1/members/authorization/callback", json={"email": EMAIL}).status_code, 422)
 
-    def test_account_pool_automatic_login_downloads_json_for_selected_team(self):
+    def test_account_pool_sub2api_export_always_logs_in_and_saves_json(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
         payload = {"type": "sub2api-data", "accounts": []}
         result = AccountPoolLoginResult(
@@ -364,25 +364,32 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
             admin.account_pool_authorization_service,
             "save_result",
             new=AsyncMock(return_value=True),
-        ):
+        ) as save, patch.object(
+            admin.sub2api_service,
+            "import_member",
+            new=AsyncMock(return_value={"account_id": 42, "group_count": 2}),
+        ) as push:
             response = self.client.post(
                 "/admin/account-pool/7/automatic-login",
                 json={"workspace_id": "external-workspace"},
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("attachment", response.headers["content-disposition"])
-        self.assertEqual(json.loads(response.content), payload)
+        self.assertNotIn("attachment", response.headers.get("content-disposition", ""))
+        self.assertEqual(response.json()["account_id"], 42)
         login.assert_awaited_once_with(
             unittest.mock.ANY,
             7,
             "external-workspace",
         )
+        save.assert_awaited_once()
+        push.assert_awaited_once_with(payload, unittest.mock.ANY)
 
-    def test_account_pool_automatic_login_allows_missing_local_team(self):
+    def test_account_pool_json_export_logs_in_saves_and_downloads(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        payload = {"type": "sub2api-data", "accounts": []}
         result = AccountPoolLoginResult(
-            payload={"type": "sub2api-data", "accounts": []},
+            payload=payload,
             workspace={"status": "no_workspace", "workspace_id": ""},
         )
         with patch.object(
@@ -393,11 +400,15 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
             admin.account_pool_authorization_service,
             "save_result",
             new=AsyncMock(return_value=True),
-        ):
-            response = self.client.post("/admin/account-pool/7/automatic-login", json={})
+        ) as save:
+            response = self.client.post("/admin/account-pool/7/export-json", json={})
 
         self.assertEqual(response.status_code, 200)
-        login.assert_awaited_once()
+        self.assertIn("attachment", response.headers["content-disposition"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(json.loads(response.content), payload)
+        login.assert_awaited_once_with(unittest.mock.ANY, 7, "")
+        save.assert_awaited_once()
 
     def test_account_pool_workspace_scan_persists_result(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
