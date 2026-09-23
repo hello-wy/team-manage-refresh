@@ -1198,7 +1198,7 @@ async def _member_authorization_action(action, team_id, payload, db):
         if action == "export":
             return Response(
                 content=json.dumps(data, ensure_ascii=False, indent=2), media_type="application/json",
-                headers={**headers, "Content-Disposition": f'attachment; filename="sub2api-team-{team_id}-member.json"'},
+                headers={**headers, "Content-Disposition": f'attachment; filename="sub2api-{payload.email}.json"'},
             )
         return JSONResponse(content={"success": True, "data": data}, headers=headers)
     except MemberAuthorizationError as exc:

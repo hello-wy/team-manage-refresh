@@ -149,6 +149,7 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         payload = await self.service.export(1, EMAIL, self.db)
         self.assertEqual((payload["type"], payload["version"], payload["proxies"]), ("sub2api-data", 1, []))
         account = payload["accounts"][0]
+        self.assertEqual(account["name"], EMAIL)
         self.assertEqual((account["platform"], account["type"]), ("openai", "oauth"))
         self.assertEqual(account["concurrency"], 10)
         self.assertEqual(account["credentials"]["chatgpt_account_id"], ACCOUNT)
@@ -339,6 +340,7 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
             response = self.client.post("/admin/teams/1/members/authorization/export", json={"email": EMAIL})
             self.assertEqual(response.status_code, 200)
             self.assertIn("attachment", response.headers["content-disposition"])
+            self.assertIn(f'filename="sub2api-{EMAIL}.json"', response.headers["content-disposition"])
             self.assertEqual(response.headers["cache-control"], "no-store")
 
     def test_email_normalized_and_callback_payload_validated(self):

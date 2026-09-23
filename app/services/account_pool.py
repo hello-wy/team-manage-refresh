@@ -21,9 +21,9 @@ TEAM_REJOIN_COOLDOWN_DAYS = 7
 
 def _matches_status_filter(row: dict[str, Any], status_filter: str) -> bool:
     if status_filter == "joined":
-        return row["status"] in {"joined", "conflict"}
+        return not row["workspace_is_personal"]
     if status_filter == "not_joined":
-        return row["status"] in {"invited", "unassigned"}
+        return row["workspace_is_personal"]
     return row["status"] == status_filter
 
 InviteMember = Callable[..., Awaitable[dict[str, Any]]]

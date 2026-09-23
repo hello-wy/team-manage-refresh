@@ -6,7 +6,6 @@ def build_member_export_payload(team, email, credentials, claims, identity):
     return build_openai_export_payload(
         email=email,
         account_id=team.account_id,
-        account_name=team.team_name or team.account_id,
         credentials=credentials,
         claims=claims,
         identity=identity,
@@ -15,7 +14,7 @@ def build_member_export_payload(team, email, credentials, claims, identity):
 
 
 def build_openai_export_payload(
-    *, email, account_id, account_name, credentials, claims, identity, plan_type,
+    *, email, account_id, credentials, claims, identity, plan_type,
 ):
     auth = claims.get("https://api.openai.com/auth") or identity.get(
         "https://api.openai.com/auth"
@@ -39,7 +38,7 @@ def build_openai_export_payload(
         "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "proxies": [],
         "accounts": [{
-            "name": f"{email} - {account_name}",
+            "name": email,
             "platform": "openai",
             "type": "oauth",
             "credentials": exported_credentials,

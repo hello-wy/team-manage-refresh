@@ -294,6 +294,38 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(row["workspace_in_pool"])
         self.assertEqual(row["workspace_id"], "personal-account")
 
+    async def test_team_status_filter_uses_personal_workspace_state(self):
+        async with self.sessions() as session:
+            session.add_all([
+                AccountPoolEntry(
+                    email="personal@example.com",
+                    workspace_id="personal-workspace",
+                    workspace_status="personal_account",
+                ),
+                AccountPoolEntry(
+                    email="team@example.com",
+                    workspace_id="team-workspace",
+                    workspace_status="workspace_ok",
+                ),
+                AccountPoolEntry(email="unchecked@example.com"),
+            ])
+            await session.commit()
+
+            joined = await self.service.list_entries(session, status_filter="joined")
+            not_joined = await self.service.list_entries(
+                session,
+                status_filter="not_joined",
+            )
+
+        self.assertEqual(
+            {entry["email"] for entry in joined["entries"]},
+            {"team@example.com", "unchecked@example.com"},
+        )
+        self.assertEqual(
+            [entry["email"] for entry in not_joined["entries"]],
+            ["personal@example.com"],
+        )
+
     async def test_login_targets_include_all_active_teams_without_defaulting(self):
         async with self.sessions() as session:
             session.add_all([

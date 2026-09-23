@@ -29,7 +29,7 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.MockTransport(handler)
         service = Sub2apiService(lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs))
-        payload = {"accounts": [{"name": "member", "type": "oauth", "platform": "openai",
+        payload = {"accounts": [{"name": "member@example.com", "type": "oauth", "platform": "openai",
                                  "credentials": {"refresh_token": "secret"}}]}
         with patch("app.services.sub2api.settings_service.get_setting", new=AsyncMock(
                 side_effect=["https://solidapi.top", encryption_service.encrypt_token("admin-secret"),
@@ -39,6 +39,7 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[1].url.path, "/api/v1/admin/accounts")
         self.assertEqual(requests[1].headers["x-api-key"], "admin-secret")
         sent = json.loads(requests[1].read())
+        self.assertEqual(sent["name"], "member@example.com")
         self.assertEqual(sent["credentials"]["refresh_token"], "secret")
         self.assertEqual(sent["group_ids"], [1, 2])
         self.assertEqual(sent["concurrency"], 10)

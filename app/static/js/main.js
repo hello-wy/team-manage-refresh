@@ -2128,7 +2128,7 @@ async function exportMemberSub2api(teamId, email, button = null) {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `sub2api-team-${teamId}-${email.replace(/[^a-zA-Z0-9@._-]/g, '_')}.json`;
+        link.download = `sub2api-${email.replace(/[^a-zA-Z0-9@._-]/g, '_')}.json`;
         document.body.appendChild(link);
         link.click();
         link.remove();

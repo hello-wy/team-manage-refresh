@@ -160,7 +160,6 @@ class AccountPoolAuthorizationService:
         payload = build_openai_export_payload(
             email=email,
             account_id=actual_id,
-            account_name=workspace.get("workspace_name") or actual_id or "Personal",
             credentials=exported,
             claims=claims,
             identity=identity,
