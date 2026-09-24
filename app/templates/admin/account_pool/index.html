@@ -77,7 +77,7 @@
             </div>
         </div>
 
-        <div id="accountPoolTableRegion" class="account-pool-table-region">
+        <div id="accountPoolTableRegion" class="account-pool-table-region" data-current-page="{{ current_page }}" data-total-pages="{{ total_pages }}">
         {% if entries %}
         <div class="table-container mobile-card-table-container" style="margin-top: 1rem;">
             <table class="data-table">
@@ -309,6 +309,6 @@
 <script>
     window.accountPoolTeams = {{ account_pool_teams|default([])|tojson }};
 </script>
-<script src="/static/js/account-pool.js?v=20260922-3"></script>
-<script src="/static/js/account-pool-workspace.js?v=20260921-1"></script>
+<script src="/static/js/account-pool.js?v=20260924-local-refresh"></script>
+<script src="/static/js/account-pool-workspace.js?v=20260924-local-refresh"></script>
 {% endblock %}

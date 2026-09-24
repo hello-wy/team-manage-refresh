@@ -62,7 +62,7 @@ async function submitAccountPoolCredentialForm(event) {
         window.accountPoolCredentialStore.clear(result.data.email);
         showToast(result.message, 'success');
         hideModal('accountPoolCredentialModal');
-        setTimeout(() => location.reload(), 300);
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '保存账号凭据失败', 'error');
     } finally {
@@ -79,7 +79,7 @@ async function deleteAccountPoolEntry(entryId, email) {
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || '删除失败');
         showToast(payload.message, 'success');
-        document.querySelector(`[data-account-pool-row="${entryId}"]`)?.remove();
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '删除失败', 'error');
     }
@@ -98,7 +98,7 @@ async function runAccountPoolLiveness() {
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || '验活失败');
         showToast(payload.message, 'success');
-        setTimeout(() => location.reload(), 300);
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '验活失败', 'error');
     } finally {
@@ -166,7 +166,7 @@ async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) 
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || payload.message || '邀请失败');
         showToast(payload.message || `${email} 已发送 Team 邀请`, 'success');
-        setTimeout(() => location.reload(), 500);
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '邀请失败', 'error');
         button.disabled = false;
@@ -200,6 +200,7 @@ async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button)
         const payload = await response.json();
         if (!payload.success) throw new Error(payload.error || '导入 sub2api 失败');
         showToast(`${email} 已重新登录并导入 sub2api（账户 ID ${payload.account_id}）`, 'success');
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '导入 sub2api 失败', 'error');
     } finally {
@@ -228,6 +229,7 @@ async function exportAccountPoolJson(entryId, email, workspaceId, button) {
         const blob = await response.blob();
         downloadAccountPoolJson(blob, entryId);
         showToast(`${email} 的最新 JSON 已下载`, 'success');
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '导出 JSON 失败', 'error');
     } finally {
@@ -290,7 +292,7 @@ async function submitAccountPoolForm(event) {
         if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');
         showToast(payload.message, 'success');
         input.value = '';
-        setTimeout(() => location.reload(), 500);
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '添加失败', 'error');
     } finally {
@@ -399,13 +401,14 @@ function initAccountPoolColumnDropdown() {
 
 let accountPoolTableRequest = null;
 
-function getAccountPoolTableUrl({page = 1, perPage, statusFilter, search} = {}) {
+function getAccountPoolTableUrl({page, perPage, statusFilter, search} = {}) {
     const url = new URL('/admin/account-pool', window.location.origin);
+    const currentParams = new URLSearchParams(window.location.search);
     const currentSearch = document.querySelector('.account-pool-toolbar-actions .search-form input[name="search"]');
     const currentStatus = document.getElementById('accountPoolStatusFilter');
     const currentPageSize = document.getElementById('accountPoolPageSize');
-    url.searchParams.set('page', String(page));
-    url.searchParams.set('per_page', String(perPage || currentPageSize?.value || 20));
+    url.searchParams.set('page', String(page ?? currentParams.get('page') ?? 1));
+    url.searchParams.set('per_page', String(perPage || currentPageSize?.value || currentParams.get('per_page') || 20));
     url.searchParams.set('search', search ?? currentSearch?.value?.trim() ?? '');
     url.searchParams.set('status_filter', statusFilter ?? currentStatus?.value ?? '');
     return url;
@@ -415,21 +418,30 @@ async function refreshAccountPoolTable(options = {}) {
     const region = document.getElementById('accountPoolTableRegion');
     if (!region) return;
     accountPoolTableRequest?.abort();
-    accountPoolTableRequest = new AbortController();
+    const controller = new AbortController();
+    accountPoolTableRequest = controller;
     const url = getAccountPoolTableUrl(options);
     region.classList.add('is-loading');
     try {
         const response = await fetch(url, {
             credentials: 'same-origin',
             headers: {'X-Requested-With': 'XMLHttpRequest'},
-            signal: accountPoolTableRequest.signal,
+            signal: controller.signal,
         });
         if (!response.ok) throw new Error('账号列表加载失败');
         const html = await response.text();
         const documentFragment = new DOMParser().parseFromString(html, 'text/html');
         const nextRegion = documentFragment.getElementById('accountPoolTableRegion');
         if (!nextRegion) throw new Error('账号列表响应格式错误');
+        if (controller.signal.aborted) return;
+        if (Number(nextRegion.dataset.currentPage) > Number(nextRegion.dataset.totalPages)) {
+            await refreshAccountPoolTable({...options, page: Number(nextRegion.dataset.totalPages)});
+            return;
+        }
         region.replaceWith(nextRegion);
+        const count = documentFragment.querySelector('.account-pool-page-header .page-meta-pill');
+        const currentCount = document.querySelector('.account-pool-page-header .page-meta-pill');
+        if (count && currentCount) currentCount.replaceWith(count);
         window.history.replaceState({}, '', url);
         initAccountPoolRowActions();
         initAccountPoolPageSizeControl();
@@ -439,9 +451,12 @@ async function refreshAccountPoolTable(options = {}) {
     } catch (error) {
         if (error.name !== 'AbortError') showToast(error.message || '账号列表加载失败', 'error');
     } finally {
-        document.getElementById('accountPoolTableRegion')?.classList.remove('is-loading');
+        if (accountPoolTableRequest === controller) {
+            document.getElementById('accountPoolTableRegion')?.classList.remove('is-loading');
+        }
     }
 }
+window.refreshAccountPoolTable = refreshAccountPoolTable;
 
 function initAccountPoolRowActions() {
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {

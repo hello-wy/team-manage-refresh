@@ -175,6 +175,41 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(MemberAuthorizationError, "尚未授权"):
             await self.service.export(1, EMAIL, self.db)
 
+    async def test_team_owner_credentials_sync_into_member_authorization(self):
+        owner_tokens = tokens(email="owner@example.com")
+        self.team.access_token_encrypted = encryption_service.encrypt_token(owner_tokens["access_token"])
+        self.team.refresh_token_encrypted = encryption_service.encrypt_token(owner_tokens["refresh_token"])
+        self.team.id_token_encrypted = encryption_service.encrypt_token(owner_tokens["id_token"])
+        self.team.client_id = "owner-client"
+        self.teams.ensure_access_token.return_value = owner_tokens["access_token"]
+        self.remote.get_members.return_value = {"success": True, "members": [{
+            "email": "owner@example.com", "role": "account-owner", "id": "owner-user",
+        }], "total": 1}
+
+        snapshot = await self.teams.get_team_members(1, self.db)
+        owner = snapshot["members"][0]
+        self.assertTrue(owner["authorized"])
+        self.assertTrue(owner["json_saved"])
+        result = await self.service.check(1, "owner@example.com", self.db)
+        self.assertTrue(result["can_export"])
+        record = await self.record()
+        saved = json.loads(encryption_service.decrypt_token(record.export_json_encrypted))
+        self.assertEqual(saved["accounts"][0]["credentials"]["chatgpt_account_id"], ACCOUNT)
+        self.assertNotIn("test-member-refresh", json.dumps(snapshot))
+        self.assertEqual(len((await self.db.execute(select(MemberAuthorization))).scalars().all()), 1)
+
+    async def test_owner_sync_rejects_mismatched_identity(self):
+        wrong = tokens(email="other@example.com")
+        self.team.refresh_token_encrypted = encryption_service.encrypt_token(wrong["refresh_token"])
+        self.remote.get_members.return_value = {"success": True, "members": [{
+            "email": "owner@example.com", "role": "account-owner",
+        }], "total": 1}
+        self.teams.ensure_access_token.return_value = wrong["access_token"]
+        snapshot = await self.teams.get_team_members(1, self.db)
+        self.assertFalse(snapshot["success"])
+        self.assertIn("邮箱与 Team 所有者不一致", snapshot["error"])
+        self.assertEqual((await self.db.execute(select(MemberAuthorization))).scalars().all(), [])
+
     async def test_missing_wrong_duplicate_state_and_other_callback_host_rejected(self):
         url = await self.draft()
         for bad in (REDIRECT_URI + "?code=x", REDIRECT_URI + "?state=wrong&code=x",

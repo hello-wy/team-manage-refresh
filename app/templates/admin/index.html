@@ -436,6 +436,12 @@
         margin-top: 0;
     }
 
+    #teamTableRegion.is-loading {
+        opacity: 0.65;
+        pointer-events: none;
+        transition: opacity var(--transition-fast);
+    }
+
     .pagination-summary {
         margin-left: 1rem;
         color: var(--text-muted);
@@ -489,27 +495,27 @@
     }
 
     body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary,
+    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary,
     html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary {
+    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary {
         color: var(--team-warm-minimal-primary-fg);
         background: var(--team-warm-minimal-primary-bg);
         border-color: var(--team-warm-minimal-primary-border);
     }
 
     body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:hover,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:hover,
+    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:hover,
     html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:hover,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:hover {
+    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:hover {
         color: var(--team-warm-minimal-primary-fg);
         background: var(--team-warm-minimal-primary-hover-bg);
         border-color: color-mix(in srgb, var(--team-warm-minimal-primary-border) 68%, var(--team-warm-minimal-primary-fg) 32%);
     }
 
     body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:focus-visible,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:focus-visible,
+    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:focus-visible,
     html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:focus-visible,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:focus-visible {
+    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:focus-visible {
         box-shadow: 0 0 0 3px var(--team-warm-minimal-primary-focus);
     }
 
@@ -715,7 +721,7 @@
                 <span>{% if active_page == "welfare" %}Welfare Workspace{% else %}Operations Workspace{% endif %}</span>
             </div>
             <h2>{% if active_page == "welfare" %}福利车位工作台{% else %}Team 工作台{% endif %}</h2>
-            <div class="page-header-meta">
+            <div class="page-header-meta" id="teamHeaderMeta">
                 <span class="page-meta-pill">
                     <i data-lucide="database"></i>
                     <span>{% if active_page == "welfare" %}福利池{% else %}常规池{% endif %}</span>
@@ -745,7 +751,7 @@
         </div>
     </div>
 
-    <div class="stats-container">
+    <div class="stats-container" id="teamStatsRegion">
         <div class="stat-card">
             <div class="stat-icon"><i data-lucide="users"></i></div>
             <div class="stat-info-group">
@@ -829,8 +835,8 @@
                     <button type="button" id="btnBatchEnableDeviceAuth" class="btn btn-success btn-sm">
                         <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i> 批量开启验证
                     </button>
-                    <button type="button" id="btnBatchPushCliproxyapi" class="btn btn-primary btn-sm">
-                        <i data-lucide="send" style="width: 14px; height: 14px;"></i> 批量推送
+                    <button type="button" id="btnBatchPushSub2api" class="btn btn-primary btn-sm" title="批量推送母号到 sub2api">
+                        <i data-lucide="send" style="width: 14px; height: 14px;"></i> 批量推送到 sub2api
                     </button>
                     <button type="button" id="btnBatchExportJson" class="btn btn-secondary btn-sm">
                         <i data-lucide="download" style="width: 14px; height: 14px;"></i> 批量导出 JSON
@@ -916,6 +922,7 @@
             </div>
         </div>
 
+<div id="teamTableRegion">
 {% if teams %}
         <div class="team-table-card">
             <div class="table-container team-list-table-container">
@@ -1024,8 +1031,8 @@
                             <i data-lucide="{{ 'badge-check' if team.device_code_auth_enabled else 'shield-check' }}" style="width: 16px; height: 16px;"></i>
                             <span class="btn-icon-fallback" aria-hidden="true">验</span>
                         </button>
-                        <button class="btn btn-sm btn-icon btn-minimal btn-primary btn-push-cliproxyapi"
-                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="推送到 CliproxyAPI" aria-label="推送到 CliproxyAPI">
+                        <button class="btn btn-sm btn-icon btn-minimal btn-primary btn-push-sub2api"
+                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="推送母号到 sub2api" aria-label="推送母号到 sub2api">
                             <i data-lucide="send" style="width: 16px; height: 16px;"></i>
                             <span class="btn-icon-fallback" aria-hidden="true">推</span>
                         </button>
@@ -1131,9 +1138,8 @@
     </div>
     <span class="pagination-summary">共 {{ pagination.total }} 条记录</span>
     {% endif %}
-</div>
-{% endif %}
         </div>
+{% endif %}
 {% else %}
         <div class="team-empty-state">
             <div class="empty-state">
@@ -1143,6 +1149,7 @@
             </div>
         </div>
 {% endif %}
+    </div>
     </div>
 </div>
 
@@ -1312,62 +1319,26 @@
             columnToggleBtn.addEventListener('click', () => toggleDropdown('columnToggleDropdown', columnToggleBtn));
         }
 
-        // 绑定查看成员按钮
-        document.querySelectorAll('.btn-view-members').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const email = btn.getAttribute('data-email');
-                viewMembers(id, email);
-            });
-        });
-
-        // 绑定刷新按钮
-        document.querySelectorAll('.btn-refresh-team').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                refreshTeam(id);
-            });
-        });
-
-        // 绑定编辑按钮
-        document.querySelectorAll('.btn-edit-team').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                editTeam(id);
-            });
-        });
-
-        // 绑定开启设备认证按钮
-        document.querySelectorAll('.btn-enable-device-auth').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const alreadyEnabled = btn.getAttribute('data-enabled') === 'true';
-                enableDeviceAuth(id, alreadyEnabled);
-            });
-        });
-
-        document.querySelectorAll('.btn-toggle-warranty-seat').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const enabled = btn.getAttribute('data-enabled') === 'true';
-                toggleTeamWarrantySeat(id, enabled);
-            });
-        });
-
-        document.querySelectorAll('.btn-push-cliproxyapi').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const email = btn.getAttribute('data-email');
-                pushTeamToCliproxyapi(id, email);
-            });
-        });
-
-        document.querySelectorAll('.btn-export-team-json').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const email = btn.getAttribute('data-email');
-                exportTeamJson(id, email);
-            });
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('#teamTableRegion')) return;
+            const button = event.target.closest('button');
+            if (!button) return;
+            const teamId = button.getAttribute('data-id');
+            if (button.matches('.btn-view-members')) {
+                viewMembers(teamId, button.getAttribute('data-email'));
+            } else if (button.matches('.btn-refresh-team')) {
+                refreshTeam(teamId);
+            } else if (button.matches('.btn-edit-team')) {
+                editTeam(teamId);
+            } else if (button.matches('.btn-enable-device-auth')) {
+                enableDeviceAuth(teamId, button.dataset.enabled === 'true');
+            } else if (button.matches('.btn-toggle-warranty-seat')) {
+                toggleTeamWarrantySeat(teamId, button.dataset.enabled === 'true');
+            } else if (button.matches('.btn-push-sub2api')) {
+                pushTeamToSub2api(teamId, button.getAttribute('data-email'));
+            } else if (button.matches('.btn-export-team-json')) {
+                exportTeamJson(teamId, button.getAttribute('data-email'));
+            }
         });
 
         // 绑定复选框事件（避免仅依赖内联 onchange）
@@ -1381,7 +1352,7 @@
         // 绑定批量操作按钮（避免依赖内联 onclick，兼容更严格的 CSP）
         document.getElementById('btnBatchRefresh')?.addEventListener('click', handleBatchRefresh);
         document.getElementById('btnBatchEnableDeviceAuth')?.addEventListener('click', handleBatchEnableDeviceAuth);
-        document.getElementById('btnBatchPushCliproxyapi')?.addEventListener('click', handleBatchPushCliproxyapi);
+        document.getElementById('btnBatchPushSub2api')?.addEventListener('click', handleBatchPushSub2api);
         document.getElementById('btnBatchExportJson')?.addEventListener('click', handleBatchExportJson);
         document.getElementById('btnBatchDelete')?.addEventListener('click', handleBatchDelete);
         document.getElementById('btnBatchTransferPool')?.addEventListener('click', handleBatchTransferPool);
@@ -1407,7 +1378,7 @@
 
             if (response.ok && data.success) {
                 showToast('开启成功', 'success');
-                setTimeout(() => location.reload(), 1000);
+                await refreshAdminTeamTable();
             } else {
                 showToast(data.error || '开启失败', 'error');
             }
@@ -1436,7 +1407,7 @@
             const data = await response.json();
             if (response.ok && data.success) {
                 showToast(data.message || `${actionLabel}成功`, 'success');
-                setTimeout(() => location.reload(), 1000);
+                await refreshAdminTeamTable();
             } else {
                 showToast(data.error || `${actionLabel}失败`, 'error');
             }
@@ -1446,37 +1417,22 @@
     }
 
 
-    async function pushTeamToCliproxyapi(teamId, email = '') {
+    async function pushTeamToSub2api(teamId, email = '') {
         const targetLabel = email ? `"${email}"` : `ID=${teamId}`;
-        if (!confirm(`确定要将 Team ${targetLabel} 推送到 CliproxyAPI 吗?`)) {
+        if (!confirm(`确定要将 Team ${targetLabel} 的母号推送到 sub2api 吗？`)) {
             return;
         }
 
         try {
-            showToast('正在推送到 CliproxyAPI...', 'info');
-            const response = await fetch(`/admin/teams/${teamId}/push-cliproxyapi`, {
+            showToast('正在推送到 sub2api...', 'info');
+            const response = await fetch(`/admin/teams/${teamId}/push-sub2api`, {
                 method: 'POST'
             });
 
             const data = await response.json();
 
             if (response.ok && data.success) {
-                if (data.warning) {
-                    showToast(`${data.message || '推送成功'}；${data.warning}`, 'warning', {
-                        title: data.action === 'skipped' ? '凭证仍不完整' : '已推送，但凭证不完整',
-                        duration: 8600
-                    });
-                } else if (data.action === 'skipped') {
-                    showToast(data.message || '远端认证文件已是最新', 'info', {
-                        title: '无需重复推送',
-                        duration: 5600
-                    });
-                } else {
-                    showToast(data.message || '推送成功', 'success', {
-                        title: data.action === 'updated' ? '推送已更新' : '推送成功',
-                        duration: 7200
-                    });
-                }
+                showToast(`已推送到 sub2api，绑定 ${data.data.group_count} 个分组`, 'success');
             } else {
                 showToast(data.error || '推送失败', 'error');
             }
@@ -1560,11 +1516,11 @@
 
             if (response.ok && data.success) {
                 showToast('刷新成功', 'success');
-                setTimeout(() => location.reload(), 1000);
+                await refreshAdminTeamTable();
             } else {
                 showToast(data.error || '刷新失败（状态可能已更新）', 'error');
                 // 即使接口返回失败，也可能已经在后端更新了 Team 状态（例如标记为 banned）
-                setTimeout(() => location.reload(), 1200);
+                await refreshAdminTeamTable();
             }
         } catch (error) {
             showToast('网络错误', 'error');
@@ -1609,8 +1565,8 @@
                 }
             } else {
                 showToast(data.error || '刷新失败（状态可能已更新）', 'error');
-                // 刷新失败时也刷新页面，避免列表/筛选中的状态显示停留在旧值
-                setTimeout(() => location.reload(), 1200);
+                // 刷新失败时也更新列表，避免状态显示停留在旧值
+                await refreshAdminTeamTable();
             }
         } catch (error) {
             showToast('网络错误', 'error');
@@ -1632,7 +1588,7 @@
 
             if (response.ok && data.success) {
                 showToast('删除成功', 'success');
-                setTimeout(() => location.reload(), 1000);
+                await refreshAdminTeamTable();
             } else {
                 showToast(data.error || '删除失败', 'error');
             }
@@ -1842,7 +1798,7 @@
             if (response.ok && result.success) {
                 showToast('更新成功', 'success');
                 hideModal('editTeamModal');
-                setTimeout(() => location.reload(), 1000);
+                await refreshAdminTeamTable();
             } else {
                 showToast(result.error || '更新失败', 'error');
             }
@@ -1944,7 +1900,63 @@
     const dashboardBasePath = "{{ '/admin/welfare' if active_page == 'welfare' else '/admin' }}";
     const currentPoolType = "{{ 'welfare' if active_page == 'welfare' else 'normal' }}";
     const currentPoolLabel = currentPoolType === 'welfare' ? '福利池' : '常规池';
-    const totalTeamsInCurrentPool = Number("{{ stats.total_teams or 0 }}") || 0;
+    let totalTeamsInCurrentPool = Number("{{ stats.total_teams or 0 }}") || 0;
+
+    let teamTableRefreshController = null;
+
+    async function refreshAdminTeamTable() {
+        const region = document.getElementById('teamTableRegion');
+        if (!region) return;
+
+        const selectedIds = new Set(getSelectedTeamIds());
+        teamTableRefreshController?.abort();
+        const controller = new AbortController();
+        teamTableRefreshController = controller;
+        region.classList.add('is-loading');
+        try {
+            const response = await fetch(window.location.href, {
+                credentials: 'same-origin',
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+                signal: controller.signal,
+            });
+            if (!response.ok) throw new Error('Team 列表加载失败');
+            const html = await response.text();
+            const nextDocument = new DOMParser().parseFromString(html, 'text/html');
+            const nextRegion = nextDocument.getElementById('teamTableRegion');
+            if (!nextRegion) throw new Error('Team 列表响应格式错误');
+            if (controller.signal.aborted) return;
+            region.replaceWith(nextRegion);
+            nextRegion.querySelectorAll('.team-checkbox').forEach((checkbox) => {
+                checkbox.checked = selectedIds.has(Number(checkbox.value));
+            });
+            initColumnToggler('.team-list-table-container .data-table', 'team_list_columns');
+            updateSelectedCount();
+            updateAdminTeamSummary(nextDocument);
+            if (window.lucide) lucide.createIcons();
+        } catch (error) {
+            if (error.name !== 'AbortError') showToast(error.message || 'Team 列表加载失败', 'error');
+        } finally {
+            if (teamTableRefreshController === controller) {
+                document.getElementById('teamTableRegion')?.classList.remove('is-loading');
+            }
+        }
+    }
+    window.refreshAdminTeamTable = refreshAdminTeamTable;
+
+    function updateAdminTeamSummary(nextDocument) {
+        for (const id of ['teamStatsRegion', 'teamHeaderMeta']) {
+            const current = document.getElementById(id);
+            const next = nextDocument.getElementById(id);
+            if (!current || !next) throw new Error(`Team 统计响应缺少 ${id}`);
+            current.replaceWith(next);
+        }
+        const total = Number(document.querySelector('#teamStatsRegion .stat-value')?.textContent);
+        totalTeamsInCurrentPool = Number.isFinite(total) ? total : totalTeamsInCurrentPool;
+        document.getElementById('btnCheckPoolTeamsLive').disabled = totalTeamsInCurrentPool === 0;
+        const currentOptions = document.getElementById('welfareCodeTeamSelect');
+        const nextOptions = nextDocument.getElementById('welfareCodeTeamSelect');
+        if (currentOptions && nextOptions) currentOptions.replaceWith(nextOptions);
+    }
 
     function filterByStatus(status) {
         const url = new URL(window.location.href);
@@ -2002,7 +2014,7 @@
     }
 
     function setBatchActionButtonsDisabled(disabled) {
-        ['btnBatchRefresh', 'btnBatchEnableDeviceAuth', 'btnBatchPushCliproxyapi', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
+        ['btnBatchRefresh', 'btnBatchEnableDeviceAuth', 'btnBatchPushSub2api', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
             const button = document.getElementById(id);
             if (button) button.disabled = disabled;
         });
@@ -2110,7 +2122,7 @@
                         duration: toastConfig.duration || options.successDuration
                     }
                 );
-                setTimeout(() => location.reload(), 1500);
+                await refreshAdminTeamTable();
             } else {
                 showToast(result.error || `${actionName}失败`, 'error');
             }
@@ -2262,7 +2274,7 @@
                 finalResult.message || `${successVerb}：成功 ${successCount}，失败 ${failedCount}`,
                 failedCount > 0 ? 'warning' : 'success'
             );
-            setTimeout(() => location.reload(), 1500);
+            await refreshAdminTeamTable();
         } catch (error) {
             console.error(error);
             showToast(error.message || failedMessage, 'error');
@@ -2286,7 +2298,7 @@
             successVerb: '批量刷新完成',
             failedMessage: '批量刷新失败',
             interruptedMessage: '批量刷新连接已中断，未收到完成信号，请检查网络或稍后重试',
-            completionMessageBuilder: (data) => `批量刷新完成：成功 <strong>${data.success_count || 0}</strong>，失败 <strong>${data.failed_count || 0}</strong>。页面即将自动刷新。`,
+            completionMessageBuilder: (data) => `批量刷新完成：成功 <strong>${data.success_count || 0}</strong>，失败 <strong>${data.failed_count || 0}</strong>。列表即将更新。`,
         });
     }
 
@@ -2303,7 +2315,7 @@
             successVerb: '检测完成',
             failedMessage: '检测 Team 存活失败',
             interruptedMessage: '检测 Team 存活连接已中断，未收到完成信号，请检查网络或稍后重试',
-            completionMessageBuilder: (data) => `检测完成：成功 <strong>${data.success_count || 0}</strong>，失败 <strong>${data.failed_count || 0}</strong>。页面即将自动刷新。`,
+            completionMessageBuilder: (data) => `检测完成：成功 <strong>${data.success_count || 0}</strong>，失败 <strong>${data.failed_count || 0}</strong>。列表即将更新。`,
         });
     }
 
@@ -2315,14 +2327,15 @@
         handleBatchAction('/admin/teams/batch-enable-device-auth', '批量开启验证');
     }
 
-    function handleBatchPushCliproxyapi() {
-        handleBatchAction('/admin/teams/batch-push-cliproxyapi', '批量推送到 CliproxyAPI', {
+    function handleBatchPushSub2api() {
+        handleBatchAction('/admin/teams/batch-push-sub2api', '批量推送到 sub2api', {
             onSuccessToast(result) {
-                if (result.warning_count > 0) {
+                if (result.failed_count > 0) {
+                    const failure = result.results.find(item => !item.success);
                     return {
-                        message: result.message,
+                        message: `${result.message}。Team ${failure.team_id}: ${failure.error}`,
                         type: 'warning',
-                        title: '批量推送已完成，但部分凭证不完整',
+                        title: '部分 Team 推送失败，请核对结果',
                         duration: 8600
                     };
                 }

@@ -3,6 +3,14 @@ function getCurrentPoolType() {
     return pool === "welfare" ? "welfare" : "normal";
 }
 
+async function refreshVisibleAdminData() {
+    if (document.getElementById('teamTableRegion')) {
+        await window.refreshAdminTeamTable();
+    } else if (document.getElementById('accountPoolTableRegion')) {
+        await window.refreshAccountPoolTable();
+    }
+}
+
 /**
  * GPT Team 管理系统 - 通用 JavaScript
  */
@@ -1281,7 +1289,7 @@ async function handleSingleImport(event) {
         if (result.success) {
             showToast('Team 导入成功！', 'success');
             form.reset();
-            setTimeout(() => location.reload(), 1500);
+            await refreshVisibleAdminData();
         } else {
             showToast(getFriendlyAdminErrorMessage(result.error || '导入失败', 0, 'import'), 'error');
         }
@@ -1408,7 +1416,7 @@ async function handleBatchImport(event) {
                     }
 
                     if (data.success_count > 0) {
-                        setTimeout(() => location.reload(), 3000);
+                        void refreshVisibleAdminData();
                     }
                 } else if (data.type === 'error') {
                     showToast(getFriendlyAdminErrorMessage(data.error || '导入失败', 0, 'import'), 'error');
@@ -1571,7 +1579,7 @@ async function handleJsonFileImport() {
                     }
 
                     if (data.success_count > 0) {
-                        setTimeout(() => location.reload(), 3000);
+                        void refreshVisibleAdminData();
                     }
                 } else if (data.type === 'error') {
                     showToast(getFriendlyAdminErrorMessage(data.error || '导入失败', 0, 'import'), 'error');
@@ -2206,6 +2214,7 @@ let memberInviteInProgress = false;
 let memberAutoKickUpdateInProgress = false;
 let memberExistingEmails = new Set();
 let memberPoolOptionsRequestId = 0;
+let renderedMemberTeamId = null;
 
 function renderMemberAutoKickTime(member) {
     if (member.role === 'account-owner') return '<span class="text-muted">不会自动下线</span>';
@@ -2512,18 +2521,20 @@ async function loadModalMemberList(teamId, snapshot = null) {
     const joinedTableBody = document.getElementById('modalJoinedMembersTableBody');
     const invitedTableBody = document.getElementById('modalInvitedMembersTableBody');
     const seatSummary = document.getElementById('memberSeatSummary');
-    memberSeatBalance = null;
-    memberExistingEmails = new Set();
-    updateMemberInviteAvailability();
-    if (seatSummary) seatSummary.textContent = '正在读取席位数量...';
-
-    if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
-    if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
+    if (renderedMemberTeamId !== teamId) {
+        memberSeatBalance = null;
+        memberExistingEmails = new Set();
+        updateMemberInviteAvailability();
+        if (seatSummary) seatSummary.textContent = '正在读取席位数量...';
+        if (joinedTableBody) joinedTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
+        if (invitedTableBody) invitedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">加载中...</td></tr>';
+    }
 
     try {
         const result = snapshot ? {success: true, data: snapshot} : await apiCall(`/admin/teams/${teamId}/members/list`);
         if (window.currentTeamId !== teamId || requestId !== memberListRequestId) return;
         if (result.success && result.data.success) {
+            renderedMemberTeamId = teamId;
             const allMembers = result.data.members || [];
             const joinedMembers = allMembers.filter(m => m.status === 'joined');
             const invitedMembers = allMembers.filter(m => m.status === 'invited');
@@ -2626,7 +2637,7 @@ async function revokeInvite(teamId, email, inModal = false) {
             if (inModal) {
                 await loadModalMemberList(teamId);
             } else {
-                setTimeout(() => location.reload(), 1000);
+                await refreshVisibleAdminData();
             }
         } else {
             showToast(getFriendlyAdminErrorMessage(result.error || '撤回失败', 0, 'member'), 'error');
@@ -2729,7 +2740,7 @@ async function deleteMember(teamId, userId, email, inModal = false) {
             if (inModal) {
                 await loadModalMemberList(teamId);
             } else {
-                setTimeout(() => location.reload(), 1000);
+                await refreshVisibleAdminData();
             }
         } else {
             showToast(getFriendlyAdminErrorMessage(result.error || '删除失败', 0, 'member'), 'error');

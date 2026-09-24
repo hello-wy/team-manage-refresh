@@ -140,6 +140,57 @@ class Sub2apiRouteTests(unittest.TestCase):
         self.assertNotIn("secret", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
 
+    def test_team_push_uses_owner_authorization_without_echoing_credentials(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        team = type("Owner", (), {"email": "owner@example.com", "refresh_token_encrypted": "encrypted"})()
+        session = AsyncMock()
+        session.get.return_value = team
+        app.dependency_overrides[get_db] = lambda: session
+        payload = {"accounts": [{"credentials": {"refresh_token": "secret"}}]}
+        with patch.object(admin.member_authorization_service, "export", new=AsyncMock(return_value=payload)) as export:
+            with patch.object(admin.sub2api_service, "import_member", new=AsyncMock(
+                    return_value={"account_id": 42, "group_count": 2})):
+                with patch.object(admin.member_authorization_service, "mark_sub2api_exported", new=AsyncMock()) as mark:
+                    response = self.client.post("/admin/teams/1/push-sub2api")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(export.await_args.args[:2], (1, "owner@example.com"))
+        self.assertEqual(mark.await_args.args[:3], (1, "owner@example.com", 42))
+        self.assertNotIn("secret", response.text)
+
+    def test_team_push_requires_refresh_token(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        session = AsyncMock()
+        session.get.return_value = type("Owner", (), {
+            "email": "owner@example.com", "refresh_token_encrypted": None,
+        })()
+        app.dependency_overrides[get_db] = lambda: session
+        response = self.client.post("/admin/teams/1/push-sub2api")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Refresh Token", response.text)
+
+    def test_batch_team_push_reports_each_failure_and_continues(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        session = AsyncMock()
+        app.dependency_overrides[get_db] = lambda: session
+        imported = {"team_id": 1, "email": "owner@example.com", "account_id": 42, "group_count": 2}
+        with patch.object(admin, "_push_team_owner_to_sub2api", new=AsyncMock(
+                side_effect=[imported, Sub2apiError("分组不存在")])) as push:
+            response = self.client.post("/admin/teams/batch-push-sub2api", json={"ids": [1, 2]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.json()["success_count"], response.json()["failed_count"]), (1, 1))
+        self.assertEqual(response.json()["results"][1]["error"], "分组不存在")
+        self.assertEqual(push.await_count, 2)
+        session.rollback.assert_awaited_once()
+
+    def test_batch_team_push_all_failures_is_not_success(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        with patch.object(admin, "_push_team_owner_to_sub2api", new=AsyncMock(
+                side_effect=Sub2apiError("分组不存在"))):
+            response = self.client.post("/admin/teams/batch-push-sub2api", json={"ids": [1]})
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["success"])
+        self.assertIn("分组不存在", response.json()["error"])
+
     def test_settings_store_encrypted_key_without_echo(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
         with patch.object(admin.settings_service, "get_setting", new=AsyncMock(return_value="")):

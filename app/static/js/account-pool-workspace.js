@@ -20,7 +20,7 @@ async function scanAccountPoolWorkspace(button) {
                 ? `${button.dataset.email} 当前 Workspace：${workspaceId}`
                 : `${button.dataset.email} 当前未加入 Workspace`;
         showToast(message, 'success');
-        setTimeout(() => location.reload(), 300);
+        await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '获取当前 Team 失败', 'error');
     } finally {

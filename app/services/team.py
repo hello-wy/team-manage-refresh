@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Team, TeamAccount, RedemptionCode, TeamEmailMapping, TeamSeatHold, MemberAuthorization
 from app.services.chatgpt import ChatGPTService
 from app.services.encryption import encryption_service
+from app.services.team_owner_authorization import TeamOwnerAuthorizationError, sync_team_owner_authorization
 from app.utils.token_parser import TokenParser
 from app.utils.jwt_parser import JWTParser
 from app.utils.time_utils import get_now
@@ -2503,6 +2504,7 @@ class TeamService:
             await self._reset_error_status(team, db_session)
 
             seat_balance = await self.get_team_seat_balance(team, db_session, access_token, members_result, invites_result)
+            await sync_team_owner_authorization(team, access_token, members_result["members"], db_session)
             authorization_records = (await db_session.execute(select(MemberAuthorization).where(
                 MemberAuthorization.team_id == team.id,
                 MemberAuthorization.account_id == team.account_id,
@@ -2536,6 +2538,10 @@ class TeamService:
                 "error": None
             }
 
+        except TeamOwnerAuthorizationError as exc:
+            logger.warning("Team %s 母号授权同步失败: %s", team_id, exc)
+            return {"success": False, "members": [], "total": 0,
+                    "owner_authorization_error": True, "error": str(exc)}
         except Exception:
             logger.exception("获取成员列表失败")
             return {
