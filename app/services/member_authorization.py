@@ -65,6 +65,7 @@ class MemberAuthorizationService:
             record.export_json_updated_at = None
             record.sub2api_account_id = None
             record.sub2api_exported_at = None
+            record.sub2api_import_uncertain = False
         return record
 
     async def _membership(self, team, email, db):

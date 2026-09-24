@@ -45,7 +45,7 @@ def next_action(members, snapshots, states, seat_balance):
         if member.status != "joined" or not quota_ready(member, snapshot):
             continue
         state = states.get(member.email)
-        if state and state.phase == "wait_reset":
+        if state and state.phase in {"wait_reset", "removed"}:
             continue
         if member.seat_type == "premium" and snapshot.weekly_remaining == 0:
             if member.member_role in ADMIN_ROLES or member.auto_kick_exempt:
@@ -61,7 +61,7 @@ def next_action(members, snapshots, states, seat_balance):
         if member.status != "joined" or member.seat_type != "standard":
             continue
         state = states.get(member.email)
-        if state and state.phase == "wait_reset":
+        if state and state.phase in {"wait_reset", "removed"}:
             continue
         if quota_ready(member, snapshot) and snapshot.weekly_remaining == 0:
             return RotationDecision(member.email, "upgrade", "标准周额度耗尽，按 FIFO 使用高级席位")

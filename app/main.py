@@ -36,7 +36,7 @@ from app.services.replacement_export import ReplacementExportService
 from app.models import Team
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
-from app.services.quota_sync import refresh_export_snapshots
+from app.services.quota_sync import refresh_export_snapshots, refresh_historical_candidates
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -264,7 +264,8 @@ async def scheduled_rotation():
 async def scheduled_export_quota_sync():
     async with AsyncSessionLocal() as session:
         count = await refresh_export_snapshots(session, account_pool_usage_service)
-        logger.info("导出账号额度快照同步: count=%s", count)
+        candidates = await refresh_historical_candidates(session, account_pool_usage_service)
+        logger.info("后台额度快照同步: exported=%s historical=%s", count, candidates)
 
 
 def configure_rotation_jobs():

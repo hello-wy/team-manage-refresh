@@ -64,7 +64,7 @@ async def _load_candidates(db: AsyncSession, options: dict[str, Any]):
     return visible, total if paginated else len(visible), page, paginated
 
 
-def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any], state=None) -> dict[str, Any]:
+def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any], state=None, mapping=None) -> dict[str, Any]:
     return {
         "id": row.id,
         "email": row.email,
@@ -74,6 +74,11 @@ def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any], state=None) ->
         "joined_at": row.joined_at.strftime("%Y-%m-%d %H:%M:%S") if row.joined_at else "-",
         "standard_completed": bool(state and state.standard_completed_at),
         "premium_completed": bool(state and state.premium_completed_at),
+        "member_role": mapping.member_role if mapping else None,
+        "member_status": mapping.status if mapping else "unknown",
+        "rotation_phase": state.phase if state else "unknown",
+        "blocked_reason": state.blocked_reason if state else None,
+        "quota_observed_at": usage.get("observed_at"),
         "export_count": row.export_count,
         "last_exported_at": row.last_exported_at.strftime("%Y-%m-%d %H:%M:%S")
         if row.last_exported_at else "-",
@@ -93,13 +98,19 @@ async def _enrich_records(db: AsyncSession, rows, usage_filter: str, usage_servi
         RotationMemberState.email.in_(emails),
     ))).scalars().all()
     by_state = {(row.team_id, row.email): row for row in states}
+    mappings = (await db.execute(select(TeamEmailMapping).where(
+        TeamEmailMapping.team_id.in_([row.team_id for row in rows if row.team_id]),
+        TeamEmailMapping.email.in_(emails),
+    ))).scalars().all()
+    by_mapping = {(row.team_id, row.email): row for row in mappings}
     enriched = []
     for row in rows:
         usage = snapshot_usage(by_key.get((row.email, row.team_space_id)))
         weekly_state = (usage.get("1week") or {}).get("state")
         if usage_filter and weekly_state != usage_filter:
             continue
-        enriched.append(_record_view(row, usage, by_state.get((row.team_id, row.email))))
+        enriched.append(_record_view(row, usage, by_state.get((row.team_id, row.email)),
+                                     by_mapping.get((row.team_id, row.email))))
     return enriched
 
 

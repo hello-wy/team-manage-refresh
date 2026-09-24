@@ -178,9 +178,14 @@ class Sub2apiService:
             raise Sub2apiImportUncertain("sub2api 创建结果不确定，请在目标站点核对后再处理") from exc
         except httpx.RequestError as exc:
             raise Sub2apiError("无法连接 sub2api，请检查站点地址与网络") from exc
-        created = response_data(response)
+        try:
+            created = response_data(response)
+        except Sub2apiError as exc:
+            if response.is_success:
+                raise Sub2apiImportUncertain("sub2api 创建响应不完整，请在目标站点核对") from exc
+            raise
         if not isinstance(created, dict) or not isinstance(created.get("id"), int):
-            raise Sub2apiError("sub2api 创建响应缺少账户 ID，请到目标站点核对是否已创建")
+            raise Sub2apiImportUncertain("sub2api 创建响应缺少账户 ID，请到目标站点核对")
         return {"account_id": created["id"], "group_count": len(group_ids)}
 
 

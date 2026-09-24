@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import httpx
+from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization
 from app.services.encryption import encryption_service
+
+logger = logging.getLogger(__name__)
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 USAGE_HEADERS = {
@@ -117,8 +121,18 @@ class AccountPoolUsageService:
     def _authorization_token(record: MemberAuthorization | None, team_space_id: str):
         if not record or not record.credentials_encrypted:
             return None
-        payload = json.loads(encryption_service.decrypt_token(record.credentials_encrypted))
+        try:
+            payload = json.loads(encryption_service.decrypt_token(record.credentials_encrypted))
+        except (ValueError, TypeError, InvalidToken) as exc:
+            logger.warning("成员授权凭据无法解析: authorization_id=%s error=%s", record.id, exc)
+            return None
+        if not isinstance(payload, dict):
+            logger.warning("成员授权凭据格式错误: authorization_id=%s", record.id)
+            return None
         credentials = payload.get("credentials", payload)
+        if not isinstance(credentials, dict):
+            logger.warning("成员授权字段格式错误: authorization_id=%s", record.id)
+            return None
         account_id = str(credentials.get("chatgpt_account_id") or "").strip()
         token = str(credentials.get("access_token") or "").strip()
         if account_id != team_space_id or not token:

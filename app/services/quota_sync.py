@@ -2,7 +2,8 @@
 
 from sqlalchemy import select
 
-from app.models import QuotaSnapshot, Sub2apiExportRecord, Team, TeamEmailMapping
+from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
+                        Sub2apiExportRecord, Team, TeamEmailMapping)
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -68,5 +69,28 @@ async def refresh_export_snapshots(db, usage_service):
         await store_quota(db, email=email, space_id=space_id,
                           seat_type=normalize_seat_type(by_key[(email, space_id)]),
                           usage=usages[(email, space_id)])
+    await db.commit()
+    return len(keys)
+
+
+async def refresh_historical_candidates(db, usage_service):
+    active = select(TeamEmailMapping.id).where(
+        TeamEmailMapping.team_id == Team.id,
+        TeamEmailMapping.email == AccountPoolEntry.email,
+        TeamEmailMapping.status.in_(("joined", "invited")),
+    )
+    rows = (await db.execute(select(AccountPoolEntry.email, Team.account_id).join(
+        AccountPoolHistory, AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
+    ).join(Team, Team.id == AccountPoolHistory.team_id).where(
+        Team.rotation_mode != "off", AccountPoolHistory.left_at.is_not(None),
+        AccountPoolEntry.deleted_at.is_(None), ~active.exists(),
+    ).distinct())).all()
+    keys = [(email, space_id) for email, space_id in rows if space_id]
+    if not keys:
+        return 0
+    usages = await usage_service.check_many(db, keys)
+    for email, space_id in keys:
+        await store_quota(db, email=email, space_id=space_id,
+                          seat_type="unknown", usage=usages[(email, space_id)])
     await db.commit()
     return len(keys)

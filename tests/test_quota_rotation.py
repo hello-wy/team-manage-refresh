@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import RotationAction, Team
-from app.services.quota_rotation import reconcile_action
+from app.models import RotationAction, Team, TeamEmailMapping
+from app.services.quota_rotation import RotationDependencies, reconcile_action, run_team
 from app.services.quota_rotation_policy import next_action
 from app.utils.time_utils import get_now
 
@@ -86,5 +86,42 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 }), update_member_seat_type=AsyncMock())
                 self.assertEqual(await reconcile_action(db, action, service), "succeeded")
                 service.update_member_seat_type.assert_not_awaited()
+        finally:
+            await engine.dispose()
+
+    async def test_auto_tick_upgrades_once_after_weekly_exhaustion(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                team = Team(id=1, email="owner@example.com", account_id="space",
+                            access_token_encrypted="token", rotation_mode="auto")
+                db.add(team)
+                db.add(TeamEmailMapping(team_id=1, email="member@example.com",
+                                        status="joined", seat_type="standard",
+                                        upstream_user_id="user-1", joined_at=get_now()))
+                await db.commit()
+                seats = balance(standard=0, premium=1)
+                current = {"success": True, "seat_balance": seats,
+                           "members": [{"email": "member@example.com",
+                                        "seat_type": "standard", "status": "joined"}]}
+                upgraded = {"success": True, "seat_balance": seats,
+                            "members": [{"email": "member@example.com",
+                                         "seat_type": "premium", "status": "joined"}]}
+                teams = SimpleNamespace(get_team_members=AsyncMock(
+                    side_effect=[current, current, upgraded]),
+                    update_member_seat_type=AsyncMock(return_value={
+                        "success": True, "status": "applied"}),
+                )
+                usage = SimpleNamespace(check_many=AsyncMock(return_value={
+                    ("member@example.com", "space"): {"status": "ok",
+                        "5h": {"remaining": 0}, "1week": {"remaining": 0}},
+                }))
+                result = await run_team(db, team, RotationDependencies(teams, usage, object()))
+                self.assertEqual(result["status"], "succeeded")
+                teams.update_member_seat_type.assert_awaited_once_with(
+                    1, "user-1", "premium", "standard", db)
         finally:
             await engine.dispose()

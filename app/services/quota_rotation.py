@@ -12,7 +12,7 @@ from app.models import (AccountPoolHistory, MemberAuthorization, QuotaSnapshot, 
                         RotationLease, RotationMemberState, Team, TeamEmailMapping)
 from app.models import Sub2apiExportRecord
 from app.services.account_pool_replacement import mark_replacement_pending
-from app.services.quota_rotation_policy import ADMIN_ROLES, next_action
+from app.services.quota_rotation_policy import ADMIN_ROLES, MAX_SNAPSHOT_AGE, next_action
 from app.services.quota_sync import refresh_team
 from app.utils.time_utils import get_now
 
@@ -79,7 +79,7 @@ async def record_stages(db, team, mappings, *, snapshots, states, seat_balance):
         snapshot = snapshots.get(mapping.email)
         if not snapshot or snapshot.status != "ok" or snapshot.observed_seat_type != mapping.seat_type:
             continue
-        if state.phase in ("wait_reset", "wait_premium") and snapshot.weekly_remaining is not None and snapshot.weekly_remaining > 0:
+        if state.phase in ("wait_reset", "wait_premium", "removed") and snapshot.weekly_remaining is not None and snapshot.weekly_remaining > 0:
             state.phase = "standard"
             state.cycle_id += 1
             state.standard_completed_at = None
@@ -130,8 +130,9 @@ async def reconcile_action(db, action, team_service):
         action.result = "上游成员列表已确认"
         await _complete_action(db, action)
     elif action.status in ("executing", "reconciling"):
-        action.status = "blocked"
-        action.result = "上游未确认变更；请核对后人工处理，避免重复提交"
+        action.status = "reconciling"
+        if not action.result:
+            action.result = "上游未确认变更，后续扫描继续回读"
     await db.commit()
     return action.status
 
@@ -185,7 +186,8 @@ async def _candidate(db, team, pool):
             QuotaSnapshot.email == candidate.email,
             QuotaSnapshot.team_space_id == team.account_id,
         ))).scalar_one_or_none()
-        if snapshot and snapshot.status == "ok" and snapshot.weekly_remaining:
+        if (snapshot and snapshot.status == "ok" and snapshot.weekly_remaining
+                and snapshot.observed_at >= get_now() - MAX_SNAPSHOT_AGE):
             return candidate
     return None
 
@@ -273,6 +275,8 @@ async def _run_locked(db, team, deps: RotationDependencies):
             if candidate:
                 from app.services.quota_rotation_policy import RotationDecision
                 decision = RotationDecision(candidate.email, "invite", "标准席位空缺")
+            else:
+                return {"status": "blocked", "reason": "暂无符合资格的标准席位候选账号"}
     if decision is None:
         return {"status": "idle"}
     mapping = next((row for row in mappings if row.email == decision.email), None)
