@@ -51,7 +51,7 @@ class OpenAIAutomaticLoginService:
         current_url = await self._submit_email(
             session, request.email, current_url, device_id, sentinel_token
         )
-        current_url = await self._submit_password_and_totp(
+        current_url, verified_totp_factor_id = await self._submit_password_and_totp(
             session, request, current_url, device_id, sentinel_token
         )
         current_url, workspace = await self._select_workspace(
@@ -66,6 +66,7 @@ class OpenAIAutomaticLoginService:
             workspace["workspace_id"] = actual_id
             workspace["status"] = "workspace_ok"
         result["workspace"] = workspace
+        result["verified_totp_factor_id"] = verified_totp_factor_id
         return result
 
     async def verify_credentials(self, request: AutomaticLoginRequest) -> dict[str, Any]:
@@ -82,7 +83,7 @@ class OpenAIAutomaticLoginService:
             current_url = await self._submit_email(
                 session, request.email, current_url, device_id, sentinel_token
             )
-            current_url = await self._submit_password_and_totp(
+            current_url, _ = await self._submit_password_and_totp(
                 session, request, current_url, device_id, sentinel_token
             )
             if not _is_callback(current_url) and not current_url.rstrip("/").endswith(
@@ -160,7 +161,7 @@ class OpenAIAutomaticLoginService:
     async def _submit_password_and_totp(
         self, session: Any, request: AutomaticLoginRequest, current_url: str,
         device_id: str, sentinel_token: str,
-    ) -> str:
+    ) -> tuple[str, str]:
         response = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/password/verify",
             headers=_auth_headers(
@@ -175,8 +176,9 @@ class OpenAIAutomaticLoginService:
             ))
         payload = _json_body(response)
         next_url = _next_url(response)
+        verified_totp_factor_id = ""
         if _is_mfa_challenge(payload, next_url):
-            next_url = await self._complete_totp(
+            next_url, verified_totp_factor_id = await self._complete_totp(
                 session, request.totp_secret, payload, next_url, device_id, sentinel_token
             )
         if not next_url:
@@ -184,12 +186,12 @@ class OpenAIAutomaticLoginService:
         _, current_url = await self._follow(session, next_url, device_id, sentinel_token)
         if "email-verification" in current_url.lower():
             raise OpenAIAutomaticLoginError("该账号还要求邮箱验证码，当前自动登录仅支持密码和 2FA")
-        return current_url
+        return current_url, verified_totp_factor_id
 
     async def _complete_totp(
         self, session: Any, secret: str, payload: dict[str, Any], referer: str,
         device_id: str, sentinel_token: str,
-    ) -> str:
+    ) -> tuple[str, str]:
         factor_id = _mfa_factor_id(payload)
         if not factor_id:
             factor_id = _mfa_factor_id({
@@ -220,7 +222,7 @@ class OpenAIAutomaticLoginService:
         )
         if verify.status_code != 200:
             raise OpenAIAutomaticLoginError(auth_failure_message("mfa_verify", verify))
-        return _next_url(verify)
+        return _next_url(verify), factor_id
 
     async def _select_workspace(
         self, session: Any, current_url: str, account_id: str,

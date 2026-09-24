@@ -106,6 +106,7 @@
 .account-pool-json-export-button,
 .account-pool-auto-login-button,
 .account-pool-edit-button,
+.account-pool-rotate-2fa-button,
 .account-pool-delete-button,
 .account-pool-workspace-scan-button {
     width: 32px;

@@ -29,6 +29,7 @@ class AccountPoolAuthorizationError(ValueError):
 class AccountPoolLoginResult:
     payload: dict[str, Any]
     workspace: dict[str, Any]
+    verified_totp_factor_id: str = ""
 
 
 class AccountPoolAuthorizationService:
@@ -165,7 +166,11 @@ class AccountPoolAuthorizationService:
             identity=identity,
             plan_type=workspace["plan_type"],
         )
-        return AccountPoolLoginResult(payload=payload, workspace=workspace)
+        return AccountPoolLoginResult(
+            payload=payload,
+            workspace=workspace,
+            verified_totp_factor_id=str(result.get("verified_totp_factor_id") or ""),
+        )
 
     @staticmethod
     def _is_personal_workspace(workspace: dict[str, Any], plan_type: str) -> bool:

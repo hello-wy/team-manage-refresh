@@ -3,7 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260923-1">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260924-2">
 {% endblock %}
 
 {% block content %}
@@ -210,6 +210,9 @@
                                 <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
                                     <i data-lucide="pencil" aria-hidden="true"></i>
                                 </button>
+                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-rotate-2fa-button" title="更换 2FA 密钥" aria-label="更换 2FA 密钥" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
+                                    <i data-lucide="key-round" aria-hidden="true"></i>
+                                </button>
                                 <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger account-pool-delete-button" title="永久删除账号" aria-label="永久删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
                                     <i data-lucide="trash-2" aria-hidden="true"></i>
                                 </button>
@@ -247,6 +250,29 @@
         {% endif %}
         </div>
     </section>
+</div>
+
+<div id="accountPoolRotate2faModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i data-lucide="key-round"></i> 新 2FA 密钥</h3>
+            <button class="modal-close" type="button" onclick="hideModal('accountPoolRotate2faModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="accountPoolRotate2faEmail" class="text-muted"></p>
+            <p id="accountPoolRotate2faMessage"></p>
+            <div class="form-group">
+                <label for="accountPoolRotate2faSecret">密钥</label>
+                <input id="accountPoolRotate2faSecret" class="form-control" type="text" readonly autocomplete="off">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="hideModal('accountPoolRotate2faModal')">关闭</button>
+            <button type="button" class="btn btn-primary" id="accountPoolRotate2faCopy">
+                <i data-lucide="copy"></i> 复制密钥
+            </button>
+        </div>
+    </div>
 </div>
 
 <div id="accountPoolCredentialModal" class="modal-overlay">
@@ -311,4 +337,5 @@
 </script>
 <script src="/static/js/account-pool.js?v=20260924-local-refresh"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260924-local-refresh"></script>
+<script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
 {% endblock %}

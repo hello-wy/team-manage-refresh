@@ -447,6 +447,7 @@ async function refreshAccountPoolTable(options = {}) {
         initAccountPoolPageSizeControl();
         initAccountPoolColumnToggler();
         window.initAccountPoolWorkspaceButtons?.();
+        window.initAccountPoolRotateButtons?.();
         if (window.lucide) lucide.createIcons();
     } catch (error) {
         if (error.name !== 'AbortError') showToast(error.message || '账号列表加载失败', 'error');

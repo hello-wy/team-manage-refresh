@@ -24,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from contextlib import asynccontextmanager
 # 导入路由
 from app import __version__
-from app.routes import account_pool_credentials, redeem, auth, admin, api, user, warranty
+from app.routes import account_pool_credentials, account_pool_totp, redeem, auth, admin, api, user, warranty
 from app.config import settings
 from app.database import init_db, close_db, AsyncSessionLocal, engine
 from app.services.auth import auth_service
@@ -687,6 +687,7 @@ app.include_router(warranty.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(account_pool_credentials.router)
+app.include_router(account_pool_totp.router)
 app.include_router(api.router)
 
 

@@ -118,6 +118,7 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             result = await service.login(self.request())
 
         self.assertTrue(result["success"])
+        self.assertEqual(result["verified_totp_factor_id"], "totp-factor")
         self.assertEqual(session.posts[-1][1]["code"], "123456")
         self.assertTrue(all(
             headers.get("openai-sentinel-token") == "sentinel-token"
