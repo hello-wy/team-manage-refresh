@@ -3965,48 +3965,21 @@ class TeamService:
     ) -> Dict[str, int]:
         """获取 Team 统计信息"""
         try:
-            # 总数
-            total_stmt = select(func.count(Team.id))
-            if pool_type:
-                total_stmt = total_stmt.where(Team.pool_type == pool_type)
-            total_result = await db_session.execute(total_stmt)
-            total = total_result.scalar() or 0
-
-            # 可用 Team 数 (状态为 active 且未满)
-            available_stmt = select(func.count(Team.id)).where(
-                Team.status == "active",
-                Team.current_members < Team.max_members
+            stmt = select(
+                func.count(Team.id).label("total"),
+                func.sum(case(
+                    ((Team.status == "active") & (Team.current_members < Team.max_members), 1),
+                    else_=0,
+                )).label("available"),
+                func.sum(case((Team.status.in_(("active", "full")), 1), else_=0)).label("live"),
+                func.sum(case((Team.status == "banned", 1), else_=0)).label("banned"),
+                func.sum(case((Team.status == "expired", 1), else_=0)).label("expired"),
             )
             if pool_type:
-                available_stmt = available_stmt.where(Team.pool_type == pool_type)
-            available_result = await db_session.execute(available_stmt)
-            available = available_result.scalar() or 0
-
-            live_stmt = select(func.count(Team.id)).where(Team.status.in_(("active", "full")))
-            if pool_type:
-                live_stmt = live_stmt.where(Team.pool_type == pool_type)
-            live_result = await db_session.execute(live_stmt)
-            live = live_result.scalar() or 0
-
-            banned_stmt = select(func.count(Team.id)).where(Team.status == "banned")
-            if pool_type:
-                banned_stmt = banned_stmt.where(Team.pool_type == pool_type)
-            banned_result = await db_session.execute(banned_stmt)
-            banned = banned_result.scalar() or 0
-
-            expired_stmt = select(func.count(Team.id)).where(Team.status == "expired")
-            if pool_type:
-                expired_stmt = expired_stmt.where(Team.pool_type == pool_type)
-            expired_result = await db_session.execute(expired_stmt)
-            expired = expired_result.scalar() or 0
-
-            return {
-                "total": total,
-                "available": available,
-                "live": live,
-                "banned": banned,
-                "expired": expired,
-            }
+                stmt = stmt.where(Team.pool_type == pool_type)
+            row = (await db_session.execute(stmt)).one()
+            return {key: int(row._mapping[key] or 0)
+                    for key in ("total", "available", "live", "banned", "expired")}
         except Exception as e:
             logger.error(f"获取 Team 统计信息失败: {e}")
             return {"total": 0, "available": 0, "live": 0, "banned": 0, "expired": 0}

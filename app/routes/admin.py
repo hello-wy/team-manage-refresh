@@ -439,15 +439,26 @@ async def account_pool_page(
         search=search,
         status_filter=status_filter,
     )
-    teams_result = await team_service.get_all_teams(db, page=1, per_page=1000)
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     context.update({
         **listing,
         "search": search,
         "status_filter": status_filter,
-        "account_pool_teams": teams_result.get("teams", []),
     })
     return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
+
+
+@router.get("/account-pool/teams")
+async def account_pool_team_options(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await db.execute(
+        select(Team.id, Team.team_name, Team.email, Team.status,
+               Team.current_members, Team.max_members)
+        .order_by(Team.created_at.desc())
+    )
+    return {"teams": [dict(row._mapping) for row in result.all()]}
 
 
 @router.post("/account-pool")
@@ -2255,7 +2266,7 @@ async def codes_list_page(
         current_page = codes_result.get("current_page", 1)
 
         # 获取统计信息
-        stats = await redemption_service.get_stats(db, pool_type="normal")
+        stats = await redemption_service.get_stats(db, pool_type="normal", sync_statuses=False)
         # 兼容旧模版中的 status 统计名 (unused/used/expired)
         # 注意: get_stats 返回的 used 已经包含了 warranty_active
 
@@ -2666,112 +2677,27 @@ async def records_page(
     current_user: dict = Depends(require_admin),
 ):
     """Show deduplicated Sub2API exports with live quota information."""
-    from datetime import timedelta
-    import math
-
     from app.main import templates
-    from sqlalchemy import or_
+    from app.services.records_listing import list_export_records
 
     per_page = max(1, min(int(per_page or 20), 100))
     search_value = str(search or "").strip()
     usage_filter = usage_filter if usage_filter in {"exhausted", "available"} else ""
     joined_filter = joined_filter if joined_filter == "within_7_days" else "all"
-
-    query = select(Sub2apiExportRecord).order_by(
-        Sub2apiExportRecord.last_exported_at.desc()
-    )
-    if search_value:
-        pattern = f"%{search_value}%"
-        query = query.where(or_(
-            Sub2apiExportRecord.email.ilike(pattern),
-            Sub2apiExportRecord.team_name.ilike(pattern),
-            Sub2apiExportRecord.team_space_id.ilike(pattern),
-        ))
-    candidates = list((await db.execute(query)).scalars().all())
-
-    mapping_keys = {(row.team_id, row.email) for row in candidates if row.team_id}
-    mappings = {}
-    if mapping_keys:
-        team_ids = {key[0] for key in mapping_keys}
-        emails = {key[1] for key in mapping_keys}
-        mapping_rows = await db.execute(
-            select(TeamEmailMapping).where(
-                TeamEmailMapping.team_id.in_(team_ids),
-                TeamEmailMapping.email.in_(emails),
-                TeamEmailMapping.status == "joined",
-            )
-        )
-        mappings = {
-            (mapping.team_id, mapping.email): mapping
-            for mapping in mapping_rows.scalars().all()
-        }
-
-    usage_keys = [(row.email, row.team_space_id) for row in candidates]
-    usage_by_account = await account_pool_usage_service.check_many(db, usage_keys)
-    cutoff = get_now() - timedelta(days=7)
-    enriched = []
-    quota_updated = False
-    for row in candidates:
-        mapping = mappings.get((row.team_id, row.email))
-        if mapping:
-            normalized_seat = normalize_seat_type(mapping.seat_type)
-            if normalized_seat != "unknown":
-                row.seat_type = normalized_seat
-            row.joined_at = mapping.joined_at or row.joined_at
-        if joined_filter == "within_7_days" and (
-            row.joined_at is None or row.joined_at < cutoff
-        ):
-            continue
-
-        usage = usage_by_account.get(
-            (row.email, row.team_space_id),
-            {"status": "unavailable", "error": "账号池没有可用 JSON"},
-        )
-        weekly = usage.get("1week") or {}
-        weekly_state = weekly.get("state")
-        if usage_filter and weekly_state != usage_filter:
-            continue
-
-        if usage.get("status") == "ok" and weekly_state in {"exhausted", "available"}:
-            completed = weekly_state == "exhausted"
-            row.team_5x_completed = completed
-            row.premium_quota_exhausted = completed and row.seat_type == "premium"
-            row.quota_checked_at = get_now()
-            quota_updated = True
-
-        enriched.append({
-            "id": row.id,
-            "email": row.email,
-            "team_space_id": row.team_space_id,
-            "team_name": row.team_name or "-",
-            "seat_type": row.seat_type or "unknown",
-            "joined_at": row.joined_at.strftime("%Y-%m-%d %H:%M:%S") if row.joined_at else "-",
-            "team_5x_completed": row.team_5x_completed,
-            "premium_quota_exhausted": row.premium_quota_exhausted,
-            "export_count": row.export_count,
-            "last_exported_at": row.last_exported_at.strftime("%Y-%m-%d %H:%M:%S") if row.last_exported_at else "-",
-            "usage": usage,
-        })
-    if quota_updated:
-        await db.commit()
-
-    total = len(enriched)
-    total_pages = max(1, math.ceil(total / per_page))
-    current_page = max(1, min(int(page or 1), total_pages))
-    rows = enriched[(current_page - 1) * per_page:current_page * per_page]
+    listing = await list_export_records(db, {
+        "search": search_value,
+        "usage_filter": usage_filter,
+        "joined_filter": joined_filter,
+        "page": int(page or 1),
+        "per_page": per_page,
+    }, account_pool_usage_service)
     context = await build_admin_base_context(request, db, current_user, "records")
     context.update({
-        "records": rows,
+        **listing,
         "filters": {
             "search": search_value,
             "usage_filter": usage_filter,
             "joined_filter": joined_filter,
-        },
-        "pagination": {
-            "current_page": current_page,
-            "total_pages": total_pages,
-            "total": total,
-            "per_page": per_page,
         },
     })
     return templates.TemplateResponse(request, "admin/records/index.html", context)

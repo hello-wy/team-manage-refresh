@@ -175,8 +175,18 @@ async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) 
     }
 }
 
-function openAccountPoolInvitePicker(entryId, email, seatType) {
-    openAccountPoolTeamPicker(entryId, email, window.accountPoolTeams || [], 'invite', seatType);
+async function openAccountPoolInvitePicker(entryId, email, seatType) {
+    document.getElementById('accountPoolTeamPickerOptions').textContent = '正在读取 Team...';
+    showModal('accountPoolTeamPickerModal');
+    try {
+        const response = await fetch('/admin/account-pool/teams', {credentials: 'same-origin'});
+        if (!response.ok) throw new Error('读取 Team 失败');
+        const payload = await response.json();
+        openAccountPoolTeamPicker(entryId, email, payload.teams, 'invite', seatType);
+    } catch (error) {
+        hideModal('accountPoolTeamPickerModal');
+        showToast(error.message, 'error');
+    }
 }
 
 async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button) {

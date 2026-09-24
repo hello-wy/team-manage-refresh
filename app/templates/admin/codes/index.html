@@ -633,6 +633,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/codes-list-refresh.js?v=20260924-1"></script>
 <script>
     let scannedInvalidCodes = [];
 
@@ -769,7 +770,7 @@
         const url = new URL(window.location.href);
         url.searchParams.set('per_page', val);
         url.searchParams.set('page', 1);
-        window.location.href = url.toString();
+        void refreshCodesTable(url, true);
     }
 
     // 全选/取消全选
@@ -865,7 +866,7 @@
             if (response.ok && result.success) {
                 showToast('批量更新成功', 'success');
                 hideModal('bulkEditCodeModal');
-                setTimeout(() => window.location.reload(), 1000);
+                await refreshCodesTable();
             } else {
                 showToast(result.error || '批量更新失败', 'error');
             }
@@ -903,9 +904,7 @@
 
             if (response.ok && result.success) {
                 showToast(result.message || '批量删除完成', 'success');
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1000);
+                await refreshCodesTable();
                 return;
             }
 
@@ -925,7 +924,7 @@
             url.searchParams.delete('status_filter');
         }
         url.searchParams.set('page', 1);
-        window.location.href = url.toString();
+        void refreshCodesTable(url, true);
     }
 
     // 删除兑换码
@@ -959,10 +958,7 @@
             if (response.ok && result.success) {
                 hideModal('deleteCodeModal');
                 showToast('删除成功', 'success');
-                // 刷新页面
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1000);
+                await refreshCodesTable();
             } else {
                 showToast(result.error || '删除失败', 'error');
             }
@@ -1069,7 +1065,7 @@
             if (response.ok && result.success) {
                 hideModal('invalidCodesModal');
                 showToast(result.message || '清理成功', 'success');
-                setTimeout(() => window.location.reload(), 1000);
+                await refreshCodesTable();
             } else {
                 showToast(result.error || '清理失败', 'error');
             }
@@ -1147,7 +1143,7 @@
             if (response.ok && result.success) {
                 showToast('更新成功', 'success');
                 hideModal('editCodeModal');
-                setTimeout(() => window.location.reload(), 1000);
+                await refreshCodesTable();
             } else {
                 showToast(result.error || '更新失败', 'error');
             }

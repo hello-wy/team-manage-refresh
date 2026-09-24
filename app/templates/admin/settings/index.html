@@ -1077,9 +1077,6 @@
                 if (typeof applyUiStyle === 'function') {
                     applyUiStyle(data.style || style);
                 }
-                setTimeout(() => {
-                    window.location.reload();
-                }, 300);
             } else {
                 showToast(data.error || '保存失败', 'error');
             }
@@ -1107,9 +1104,10 @@
 
             if (response.ok && data.success) {
                 showToast(data.message || '系统配色已保存', 'success');
-                setTimeout(() => {
-                    window.location.reload();
-                }, 300);
+                const savedTheme = data.theme || theme;
+                try { localStorage.setItem('ui_theme', savedTheme); } catch (e) {}
+                applySystemTheme(savedTheme);
+                updateThemeToggleButton(savedTheme);
             } else {
                 showToast(data.error || '保存失败', 'error');
             }

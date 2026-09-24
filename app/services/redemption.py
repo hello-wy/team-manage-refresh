@@ -7,7 +7,7 @@ import secrets
 import string
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-from sqlalchemy import select, update, delete, and_, or_, func
+from sqlalchemy import select, update, delete, and_, or_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -116,15 +116,34 @@ class RedemptionService:
         pool_type: Optional[str] = None
     ) -> bool:
         """批量同步指定兑换池中的兑换码状态。"""
-        stmt = select(RedemptionCode)
+        now = get_now()
+        target_status = case(
+            (RedemptionCode.used_at.is_not(None), case(
+                (and_(
+                    RedemptionCode.has_warranty.is_(True),
+                    RedemptionCode.warranty_expires_at < now,
+                ), "expired"),
+                else_="used",
+            )),
+            (RedemptionCode.expires_at.is_not(None), case(
+                (RedemptionCode.expires_at < now, "expired"),
+                else_="unused",
+            )),
+            (RedemptionCode.status.not_in(("unused", "used")), "unused"),
+            else_=RedemptionCode.status,
+        )
+        stmt = select(RedemptionCode).where(or_(
+            RedemptionCode.status.is_(None),
+            RedemptionCode.status != target_status,
+        ))
         if pool_type:
             stmt = stmt.where(RedemptionCode.pool_type == pool_type)
 
         result = await db_session.execute(stmt)
-        all_codes = result.scalars().all()
+        changed_codes = result.scalars().all()
 
         status_changed = False
-        for code in all_codes:
+        for code in changed_codes:
             status_changed = self._sync_code_status_fields(code) or status_changed
 
         if status_changed:
@@ -1109,6 +1128,9 @@ class RedemptionService:
             # 1. 构建基础查询
             count_stmt = select(func.count(RedemptionCode.id))
             stmt = select(RedemptionCode).order_by(RedemptionCode.created_at.desc())
+            if pool_type:
+                count_stmt = count_stmt.where(RedemptionCode.pool_type == pool_type)
+                stmt = stmt.where(RedemptionCode.pool_type == pool_type)
 
             # 2. 如果提供了筛选条件,添加过滤条件
             filters = []
@@ -1731,7 +1753,8 @@ class RedemptionService:
     async def get_stats(
         self,
         db_session: AsyncSession,
-        pool_type: Optional[str] = "normal"
+        pool_type: Optional[str] = "normal",
+        sync_statuses: bool = True,
     ) -> Dict[str, int]:
         """
         获取兑换码统计信息
@@ -1740,7 +1763,8 @@ class RedemptionService:
             统计字典, 包含 total, unused, used, expired
         """
         try:
-            await self._sync_pool_code_statuses(db_session, pool_type)
+            if sync_statuses:
+                await self._sync_pool_code_statuses(db_session, pool_type)
 
             # 使用 SQL 聚合统计各状态数量
             stmt = select(

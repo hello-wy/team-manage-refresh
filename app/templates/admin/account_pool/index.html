@@ -347,10 +347,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-    window.accountPoolTeams = {{ account_pool_teams|default([])|tojson }};
-</script>
-<script src="/static/js/account-pool.js?v=20260924-multi-team"></script>
+<script src="/static/js/account-pool.js?v=20260924-lazy-teams"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260924-multi-team"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
 {% endblock %}

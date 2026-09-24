@@ -1735,9 +1735,8 @@ async function generateSingle(event) {
         if (generatedCodeEl && singleResultEl) {
             showToast('兑换码生成成功', 'success');
         }
-        // 如果在列表中，延迟刷新
         if (window.location.pathname === '/admin/codes') {
-            setTimeout(() => location.reload(), 2000);
+            await window.refreshCodesTable();
         }
     } else {
         showToast(getFriendlyAdminErrorMessage(result.error || '生成失败', 0, 'common'), 'error');
@@ -1790,7 +1789,7 @@ async function generateBatch(event) {
             showToast(`成功生成 ${result.data.total} 个兑换码`, 'success');
         }
         if (window.location.pathname === '/admin/codes') {
-            setTimeout(() => location.reload(), 3000);
+            await window.refreshCodesTable();
         }
     } else {
         showToast(getFriendlyAdminErrorMessage(result.error || '生成失败', 0, 'common'), 'error');

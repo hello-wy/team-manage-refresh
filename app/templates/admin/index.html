@@ -1069,7 +1069,8 @@
     {% if pagination.total_pages > 1 %}
     {% set search_param = '&search=' + search|urlencode if search else '' %}
     {% set per_page_param = '&per_page=' + pagination.per_page|string if pagination.per_page != 20 else '' %}
-    {% set base_query = search_param + per_page_param %}
+    {% set status_param = '&status_filter=' + status_filter|urlencode if status_filter else '' %}
+    {% set base_query = search_param + per_page_param + status_param %}
 
     <div class="pagination-controls">
         <!-- 首页 -->
@@ -1904,7 +1905,7 @@
 
     let teamTableRefreshController = null;
 
-    async function refreshAdminTeamTable() {
+    async function refreshAdminTeamTable(targetUrl = window.location.href, pushHistory = false) {
         const region = document.getElementById('teamTableRegion');
         if (!region) return;
 
@@ -1914,7 +1915,7 @@
         teamTableRefreshController = controller;
         region.classList.add('is-loading');
         try {
-            const response = await fetch(window.location.href, {
+            const response = await fetch(targetUrl, {
                 credentials: 'same-origin',
                 headers: {'X-Requested-With': 'XMLHttpRequest'},
                 signal: controller.signal,
@@ -1932,6 +1933,13 @@
             initColumnToggler('.team-list-table-container .data-table', 'team_list_columns');
             updateSelectedCount();
             updateAdminTeamSummary(nextDocument);
+            const nextSearch = nextDocument.querySelector('.team-toolbar .search-form');
+            const currentSearch = document.querySelector('.team-toolbar .search-form');
+            if (nextSearch && currentSearch) currentSearch.replaceWith(nextSearch);
+            const nextStatus = nextDocument.querySelector('#statusFilterToggleBtn span');
+            const currentStatus = document.querySelector('#statusFilterToggleBtn span');
+            if (nextStatus && currentStatus) currentStatus.textContent = nextStatus.textContent.trim();
+            if (pushHistory) history.pushState({}, '', targetUrl);
             if (window.lucide) lucide.createIcons();
         } catch (error) {
             if (error.name !== 'AbortError') showToast(error.message || 'Team 列表加载失败', 'error');
@@ -1942,6 +1950,24 @@
         }
     }
     window.refreshAdminTeamTable = refreshAdminTeamTable;
+
+    document.addEventListener('click', (event) => {
+        const link = event.target.closest('#teamTableRegion .pagination a, .team-toolbar .search-form a');
+        if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        void refreshAdminTeamTable(link.href, true);
+    });
+    document.addEventListener('submit', (event) => {
+        if (!event.target.matches('.team-toolbar .search-form')) return;
+        event.preventDefault();
+        const url = new URL(event.target.action);
+        url.search = new URLSearchParams(new FormData(event.target)).toString();
+        url.searchParams.set('per_page', new URL(location.href).searchParams.get('per_page') || '20');
+        void refreshAdminTeamTable(url, true);
+    });
+    window.addEventListener('popstate', () => {
+        if (location.pathname.replace(/\/$/, '') === dashboardBasePath) void refreshAdminTeamTable();
+    });
 
     function updateAdminTeamSummary(nextDocument) {
         for (const id of ['teamStatsRegion', 'teamHeaderMeta']) {
@@ -1967,7 +1993,7 @@
             url.searchParams.delete('status_filter');
         }
         url.searchParams.set('page', 1);
-        window.location.href = url.toString();
+        void refreshAdminTeamTable(url, true);
     }
 
     function toggleSelectAll(checked) {
@@ -2426,7 +2452,7 @@
         const url = new URL(window.location.href);
         url.searchParams.set('per_page', val);
         url.searchParams.set('page', 1);
-        window.location.href = url.toString();
+        void refreshAdminTeamTable(url, true);
     }
 </script>
 {% endblock %}

@@ -178,6 +178,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/renewal-list-refresh.js?v=20260924-1"></script>
 <script>
     async function extendRenewalRequest(requestId, btn) {
         const daysInput = document.getElementById(`renewalDays${requestId}`);
@@ -205,7 +206,7 @@
             const result = await response.json();
             if (result.success) {
                 showToast(result.message || '续期成功', 'success');
-                setTimeout(() => location.reload(), 800);
+                await refreshRenewalRequests();
                 return;
             }
             showToast(result.error || '续期失败', 'error');
@@ -244,7 +245,7 @@
             const result = await response.json();
             if (result.success) {
                 showToast(result.message || '已忽略', 'success');
-                setTimeout(() => location.reload(), 800);
+                await refreshRenewalRequests();
                 return;
             }
             showToast(result.error || '忽略失败', 'error');
