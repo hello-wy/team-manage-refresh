@@ -1,10 +1,10 @@
 """账号号池录入、删除及登录凭据的加密存储。"""
 from typing import Optional, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AccountPoolEntry
+from app.models import AccountPoolEntry, AccountPoolWorkspace
 from app.services.account_pool_credential_input import (
     AccountPoolCredentialRecord,
     AccountPoolImportResult,
@@ -78,7 +78,12 @@ class AccountPoolCredentialService:
     ) -> AccountPoolImportResult:
         entries = await self._entries_by_email(db_session, records)
         result = self._apply_records(db_session, entries, records)
+        changed = [entries[email].id for email in (*result.restored, *result.updated)]
         await db_session.flush()
+        if changed:
+            await db_session.execute(delete(AccountPoolWorkspace).where(
+                AccountPoolWorkspace.account_pool_id.in_(changed)
+            ))
         await account_pool_history_service.backfill_current_histories(
             db_session,
             [entries[record.email] for record in records],
@@ -178,6 +183,9 @@ class AccountPoolCredentialService:
         if encrypted_secret is not None:
             entry.two_factor_secret_encrypted = encrypted_secret
         self._clear_derived_state(entry)
+        await db_session.execute(delete(AccountPoolWorkspace).where(
+            AccountPoolWorkspace.account_pool_id == entry_id
+        ))
         await db_session.commit()
         return {
             "email": entry.email,

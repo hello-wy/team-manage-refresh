@@ -12,14 +12,8 @@ async function scanAccountPoolWorkspace(button) {
         if (!response.ok || !payload.success) {
             throw new Error(payload.error || '获取当前 Team 失败');
         }
-        const workspaceId = payload.workspace?.workspace_id;
-        const isPersonal = payload.workspace?.status === 'personal_account';
-        const message = isPersonal
-            ? `${button.dataset.email} 当前为个人账户`
-            : workspaceId
-                ? `${button.dataset.email} 当前 Workspace：${workspaceId}`
-                : `${button.dataset.email} 当前未加入 Workspace`;
-        showToast(message, 'success');
+        const count = payload.workspace?.available_workspaces?.length || 0;
+        showToast(`${button.dataset.email} 已刷新 ${count} 个空间的状态和 JSON`, 'success');
         await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '获取当前 Team 失败', 'error');
@@ -30,7 +24,30 @@ async function scanAccountPoolWorkspace(button) {
     }
 }
 
+async function selectAccountPoolWorkspace(control) {
+    control.disabled = true;
+    try {
+        const response = await fetch(
+            `/admin/account-pool/${control.dataset.entryId}/workspace-selection`,
+            {method: 'PATCH', credentials: 'same-origin',
+             headers: {'Content-Type': 'application/json'},
+             body: JSON.stringify({workspace_id: control.value})},
+        );
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.detail || result.error || '选择 Team 失败');
+        await refreshAccountPoolTable();
+    } catch (error) {
+        showToast(error.message || '选择 Team 失败', 'error');
+        await refreshAccountPoolTable();
+    }
+}
+
 function initAccountPoolWorkspaceButtons() {
+    document.querySelectorAll('.account-pool-workspace-selector').forEach(control => {
+        if (control.dataset.bound === 'true') return;
+        control.dataset.bound = 'true';
+        control.addEventListener('change', () => selectAccountPoolWorkspace(control));
+    });
     document.querySelectorAll('.account-pool-workspace-scan-button').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';

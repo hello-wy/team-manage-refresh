@@ -30,7 +30,7 @@ class AccountPoolLivenessService:
         if not credentials or not credentials["password"]:
             return await self._save_failure(session, entry_id, version, "missing", "未保存登录密码")
         try:
-            login_result = await self._authorization.login_entry(session, entry_id)
+            return await self._refresh_workspaces(session, entry, version)
         except AccountPoolAuthorizationError as exc:
             message = str(exc)
             status = "invalid" if any(code in message for code in INVALID_ACCOUNT_CODES) else "error"
@@ -44,14 +44,27 @@ class AccountPoolLivenessService:
                 "error",
                 "检测请求异常，请查看服务端日志",
             )
-        saved = await self._authorization.save_result(
-            session,
-            entry_id,
-            login_result,
-            credential_version=version,
-            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
+
+    async def _refresh_workspaces(self, session, entry, version) -> str | None:
+        scan = await self._authorization.scan_entry(session, entry.id)
+        options = [item for item in scan.get("available_workspaces", []) if item.get("id")]
+        if not options:
+            options = [{"id": scan.get("workspace_id") or "", "is_personal": False}]
+        ids = [str(item["id"]) for item in options]
+        selected = entry.workspace_id if entry.workspace_id in ids else next(
+            (str(item["id"]) for item in options if not item.get("is_personal")), ids[0]
         )
-        return "alive" if saved else None
+        ordered = [selected, *(workspace_id for workspace_id in ids if workspace_id != selected)]
+        for index, workspace_id in enumerate(ordered):
+            result = await self._authorization.login_entry(session, entry.id, workspace_id)
+            saved = await self._authorization.save_result(
+                session, entry.id, result, credential_version=version,
+                liveness=("alive", "密码、2FA 与 OAuth 登录验证通过") if index == 0 else None,
+                update_current=index == 0, workspace_state=scan,
+            )
+            if not saved:
+                return None
+        return "alive"
 
     async def _save_failure(
         self,
@@ -63,6 +76,7 @@ class AccountPoolLivenessService:
     ) -> str | None:
         now = get_now()
         state = {"status": "workspace_error", "error": message}
+        entry = await session.get(AccountPoolEntry, entry_id)
         saved = await session.execute(
             update(AccountPoolEntry)
             .where(
@@ -77,7 +91,8 @@ class AccountPoolLivenessService:
                 liveness_checked_at=now,
                 workspace_status="workspace_error",
                 workspace_checked_at=now,
-                workspace_state_json=json.dumps(state, ensure_ascii=False),
+                workspace_state_json=(entry.workspace_state_json if entry and entry.workspace_state_json
+                                      else json.dumps(state, ensure_ascii=False)),
             )
         )
         await session.commit()

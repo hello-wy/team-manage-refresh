@@ -86,6 +86,13 @@
     white-space: normal;
 }
 
+.account-pool-workspace-selector {
+    width: 100%;
+    min-width: 0;
+    max-width: 230px;
+    font-size: 0.85rem;
+}
+
 .account-pool-team-cell {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 32px;

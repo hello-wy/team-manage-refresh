@@ -1,6 +1,9 @@
 import unittest
+import json
 from unittest.mock import AsyncMock
 
+from app.models import AccountPoolEntry, AccountPoolWorkspace
+from app.services.encryption import encryption_service
 from app.services.account_pool_usage import AccountPoolUsageService, parse_usage
 
 
@@ -30,6 +33,20 @@ class _Client:
 
 
 class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
+    def test_team_usage_requires_matching_workspace_json(self):
+        def encrypted(workspace_id):
+            return encryption_service.encrypt_token(json.dumps({"accounts": [{
+                "credentials": {"access_token": f"token-{workspace_id}",
+                                "chatgpt_account_id": workspace_id}
+            }]}))
+
+        entry = AccountPoolEntry(workspace_id="team-a", export_json_encrypted=encrypted("team-a"))
+        workspace = AccountPoolWorkspace(workspace_id="team-b",
+                                         export_json_encrypted=encrypted("team-b"))
+        self.assertIsNone(AccountPoolUsageService._entry_token(entry, "team-b"))
+        self.assertEqual(AccountPoolUsageService._entry_token(entry, "team-b", workspace),
+                         ("token-team-b", "team-b"))
+
     def test_parse_usage_supports_aliases_and_derived_remaining(self):
         result = parse_usage({
             "rate_limits": {

@@ -132,6 +132,7 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             get_responses=[
                 FakeResponse(302, headers={"location": "/log-in"}),
                 FakeResponse(200), FakeResponse(200), FakeResponse(200),
+                FakeResponse(200),
             ],
             post_responses=[
                 FakeResponse(200, payload={"continue_url": "/log-in/password"}),

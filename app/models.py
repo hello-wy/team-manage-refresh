@@ -196,11 +196,47 @@ class AccountPoolEntry(Base):
         back_populates="account",
         cascade="all, delete-orphan",
     )
+    workspaces = relationship(
+        "AccountPoolWorkspace", back_populates="account", cascade="all, delete-orphan"
+    )
+    export_jobs = relationship("AccountPoolExportJob", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_account_pool_email", "email", unique=True),
         Index("idx_account_pool_workspace", "workspace_id"),
     )
+
+
+class AccountPoolWorkspace(Base):
+    """One discovered workspace and its latest OAuth export for a pool account."""
+    __tablename__ = "account_pool_workspaces"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_pool_id = Column(Integer, ForeignKey("account_pool_entries.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(String(100), nullable=False)
+    name = Column(String(255))
+    is_personal = Column(Boolean, nullable=False, default=False)
+    status = Column(String(30), nullable=False)
+    export_json_encrypted = Column(Text)
+    checked_at = Column(DateTime)
+    json_updated_at = Column(DateTime)
+    account = relationship("AccountPoolEntry", back_populates="workspaces")
+
+    __table_args__ = (Index("idx_pool_workspace_unique", "account_pool_id", "workspace_id", unique=True),)
+
+
+class AccountPoolExportJob(Base):
+    """Status of an asynchronous Sub2API export."""
+    __tablename__ = "account_pool_export_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_pool_id = Column(Integer, ForeignKey("account_pool_entries.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(String(100), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    error = Column(Text)
+    sub2api_account_id = Column(Integer)
+    created_at = Column(DateTime, default=get_now, nullable=False)
+    finished_at = Column(DateTime)
 
 
 class Sub2apiExportRecord(Base):

@@ -129,6 +129,14 @@
                         <td data-label="当前 Team">
                             <div class="account-pool-team-cell">
                                 <div class="account-pool-team">
+                                    {% if entry.workspace_options %}
+                                    <select class="form-control account-pool-workspace-selector" data-entry-id="{{ entry.id }}" aria-label="选择 {{ entry.email }} 的登录空间">
+                                        {% for workspace in entry.workspace_options %}
+                                        <option value="{{ workspace.id }}" {% if workspace.id == entry.workspace_id %}selected{% endif %}>{{ workspace.name }}{% if workspace.is_personal %}（个人）{% endif %} · {{ 'JSON 已保存' if workspace.json_saved else '待刷新 JSON' }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <small>{{ entry.workspace_options|length }} 个空间 · {{ entry.workspace_options|selectattr('json_saved')|list|length }} 份 JSON</small>
+                                    {% endif %}
                                     {% if entry.workspace_is_personal %}
                                     <span>个人账户</span>
                                     <small>未加入 Team Workspace</small>
@@ -144,13 +152,20 @@
                                     <span>获取失败</span>
                                     <small>请重新扫描或查看验活结果</small>
                                     {% else %}<span>-</span>{% endif %}
-                                    {% if entry.json_saved %}<small>JSON 已保存 · {{ entry.json_updated_at|format_datetime }}</small>{% endif %}
+                                    {% if entry.json_saved %}<small>当前 JSON 已保存 · {{ entry.json_updated_at|format_datetime }}</small>{% endif %}
+                                    {% if entry.export_job_id %}
+                                    <small class="account-pool-export-status" data-job-id="{{ entry.export_job_id }}" data-status="{{ entry.export_job_status }}">
+                                        {% if entry.export_job_status == 'completed' %}Sub2API 导出完成
+                                        {% elif entry.export_job_status == 'failed' %}Sub2API 导出失败：{{ entry.export_job_error }}
+                                        {% else %}Sub2API 导出中{% endif %}
+                                    </small>
+                                    {% endif %}
                                 </div>
                                 <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
-                                    title="获取当前 Team"
-                                    aria-label="获取当前 Team"
+                                    title="刷新所有 Team 状态和 JSON"
+                                    aria-label="刷新所有 Team 状态和 JSON"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
                                 >
@@ -335,7 +350,7 @@
 <script>
     window.accountPoolTeams = {{ account_pool_teams|default([])|tojson }};
 </script>
-<script src="/static/js/account-pool.js?v=20260924-local-refresh"></script>
-<script src="/static/js/account-pool-workspace.js?v=20260924-local-refresh"></script>
+<script src="/static/js/account-pool.js?v=20260924-multi-team"></script>
+<script src="/static/js/account-pool-workspace.js?v=20260924-multi-team"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
 {% endblock %}

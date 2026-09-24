@@ -9,7 +9,7 @@ import re
 import zipfile
 from io import BytesIO
 from typing import Any, Optional, List, Dict, Literal
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,7 +56,9 @@ from app.services.member_auto_kick import (
 )
 from app.services.member_rotation import MemberRotationService
 from app.services.replacement_export import ReplacementExportService
-from app.models import AccountPoolEntry, RedemptionCode, RedemptionRecord, RenewalRequest, Sub2apiExportRecord, Team, TeamEmailMapping
+from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, RedemptionCode, RedemptionRecord, RenewalRequest, Sub2apiExportRecord, Team, TeamEmailMapping
+from app.services.account_pool_export import AccountPoolExportService, selected_workspace
+from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.sub2api_export_records import sub2api_export_record_service
@@ -88,6 +90,13 @@ account_pool_authorization_service = AccountPoolAuthorizationService(
     account_pool_credential_service,
     automatic_login_service,
     team_service.chatgpt_service,
+)
+account_pool_liveness_service = AccountPoolLivenessService(
+    account_pool_credential_service, account_pool_authorization_service
+)
+account_pool_export_service = AccountPoolExportService(
+    AsyncSessionLocal, account_pool_authorization_service,
+    sub2api_service, sub2api_export_record_service,
 )
 redemption_service = RedemptionService()
 member_rotation_service = MemberRotationService(
@@ -239,6 +248,10 @@ class AccountPoolAutomaticLoginRequest(BaseModel):
     """账号号池自动登录目标 Team。"""
     team_id: Optional[int] = Field(None, gt=0, description="目标 Team ID；仅有一个当前 Team 时可省略")
     workspace_id: str = Field("", max_length=100, description="扫描得到的 workspace ID")
+
+
+class AccountPoolWorkspaceSelection(BaseModel):
+    workspace_id: str = Field(..., min_length=1, max_length=100)
 
 
 class AccountPoolInviteRequest(BaseModel):
@@ -457,12 +470,16 @@ async def _login_and_save_account_pool_entry(
     entry_id: int,
     payload: AccountPoolAutomaticLoginRequest,
 ):
-    workspace_id = payload.workspace_id.strip()
+    entry = await db.get(AccountPoolEntry, entry_id)
+    if entry is None or entry.deleted_at is not None:
+        raise AccountPoolAuthorizationError("账号不存在")
+    workspace_id = payload.workspace_id
     if payload.team_id is not None:
         team = await db.get(Team, payload.team_id)
         if team is None or not team.account_id:
             raise AccountPoolAuthorizationError("目标 Team 不存在或未配置 workspace")
         workspace_id = team.account_id
+    workspace_id = selected_workspace(entry, workspace_id)
     result = await account_pool_authorization_service.login_entry(
         db,
         entry_id,
@@ -509,44 +526,27 @@ async def export_account_pool_entry_json(
 async def automatic_login_account_pool_entry(
     entry_id: int,
     payload: AccountPoolAutomaticLoginRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """重新登录账号池账号，并将最新授权数据导入配置的 sub2api。"""
+    """Queue an OAuth login and Sub2API import outside the page request."""
     headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
     try:
-        result = await _login_and_save_account_pool_entry(db, entry_id, payload)
-        imported = await sub2api_service.import_member(result.payload, db)
-        workspace_id = str(result.workspace.get("workspace_id") or "").strip()
-        account = (result.payload.get("accounts") or [{}])[0]
-        credentials = account.get("credentials") if isinstance(account, dict) else {}
-        entry = await db.get(AccountPoolEntry, entry_id)
-        email = str((credentials or {}).get("email") or (entry.email if entry else "")).strip().lower()
-        team = await db.get(Team, payload.team_id) if payload.team_id else None
-        await sub2api_export_record_service.record_success(
-            db,
-            email=email,
-            team_space_id=workspace_id,
-            team_id=team.id if team else payload.team_id,
-            team_name=team.team_name if team else result.workspace.get("workspace_name"),
-            team_email=team.email if team else None,
-            sub2api_account_id=imported.get("account_id"),
-        )
-        await db.commit()
+        workspace_id = payload.workspace_id
+        if payload.team_id is not None:
+            team = await db.get(Team, payload.team_id)
+            if team is None or not team.account_id:
+                raise AccountPoolAuthorizationError("目标 Team 不存在或未配置 workspace")
+            workspace_id = team.account_id
+        job = await account_pool_export_service.enqueue(db, entry_id, workspace_id)
+        background_tasks.add_task(account_pool_export_service.run, job.id)
         return JSONResponse(
-            content={
-                "success": True,
-                "message": "账号已导入配置的 sub2api",
-                "account_id": imported["account_id"],
-                "group_count": imported["group_count"],
-                "workspace": result.workspace,
-            },
+            status_code=202,
+            content={"success": True, "message": "导出任务已开始", "job_id": job.id},
             headers=headers,
         )
     except AccountPoolAuthorizationError as exc:
-        await db.rollback()
-        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
-    except Sub2apiError as exc:
         await db.rollback()
         return JSONResponse(status_code=400, content={"success": False, "error": str(exc)}, headers=headers)
     except Exception:
@@ -555,25 +555,39 @@ async def automatic_login_account_pool_entry(
         return JSONResponse(status_code=500, content={"success": False, "error": "导入 sub2api 失败，请检查服务端日志"}, headers=headers)
 
 
+@router.get("/account-pool/export-jobs/{job_id}")
+async def account_pool_export_job_status(
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    job = await db.get(AccountPoolExportJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="导出任务不存在")
+    return JSONResponse(content={
+        "status": job.status,
+        "error": job.error,
+        "account_id": job.sub2api_account_id,
+        "workspace_id": job.workspace_id,
+    }, headers={"Cache-Control": "no-store"})
+
+
 @router.post("/account-pool/{entry_id}/workspace-scan")
 async def scan_account_pool_workspace(
     entry_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """登录账号并保存当前 workspace 与 sub2api JSON 状态。"""
+    """Discover all joined workspaces and refresh each OAuth JSON."""
     try:
-        result = await account_pool_authorization_service.login_entry(db, entry_id)
-        await account_pool_authorization_service.save_result(
-            db,
-            entry_id,
-            result,
-            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
-        )
+        result = await account_pool_liveness_service.check_entry(db, entry_id)
+        entry = await db.get(AccountPoolEntry, entry_id)
+        if result != "alive":
+            raise AccountPoolAuthorizationError(entry.liveness_message if entry else "账号不存在")
         return JSONResponse(content={
             "success": True,
-            "message": "当前 Team 已更新",
-            "workspace": result.workspace,
+            "message": "所有 Team 状态和 JSON 已更新",
+            "workspace": json.loads(entry.workspace_state_json),
         })
     except AccountPoolAuthorizationError as exc:
         await db.rollback()
@@ -585,6 +599,35 @@ async def scan_account_pool_workspace(
             status_code=500,
             content={"success": False, "error": "获取当前 Team 失败，请检查服务端日志"},
         )
+
+
+@router.patch("/account-pool/{entry_id}/workspace-selection")
+async def select_account_pool_workspace(
+    entry_id: int,
+    payload: AccountPoolWorkspaceSelection,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    entry = await db.get(AccountPoolEntry, entry_id)
+    if entry is None or entry.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    workspace_id = selected_workspace(entry, payload.workspace_id)
+    scan = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
+    option = next((item for item in scan.get("available_workspaces") or []
+                   if item.get("id") == workspace_id), None)
+    if option is None:
+        raise HTTPException(status_code=400, detail="所选 Team 尚未完成扫描")
+    record = (await db.execute(select(AccountPoolWorkspace).where(
+        AccountPoolWorkspace.account_pool_id == entry_id,
+        AccountPoolWorkspace.workspace_id == workspace_id,
+    ))).scalar_one_or_none()
+    entry.workspace_id = workspace_id
+    entry.workspace_name = option.get("name") or workspace_id
+    entry.workspace_status = "personal_account" if option.get("is_personal") else "workspace_ok"
+    entry.export_json_encrypted = record.export_json_encrypted if record else None
+    entry.export_json_updated_at = record.json_updated_at if record else None
+    await db.commit()
+    return {"success": True, "workspace_id": workspace_id}
 
 
 @router.post("/account-pool/liveness")

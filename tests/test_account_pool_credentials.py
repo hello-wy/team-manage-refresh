@@ -9,7 +9,7 @@ from app.database import Base
 from app.database import get_db
 from app.dependencies.auth import require_admin
 from app.main import app
-from app.models import AccountPoolEntry, AccountPoolHistory
+from app.models import AccountPoolEntry, AccountPoolHistory, AccountPoolWorkspace
 from app.services.account_pool_credentials import (
     AccountPoolCredentialError,
     AccountPoolCredentialService,
@@ -126,6 +126,11 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
             session.add(entry)
+            await session.flush()
+            session.add(AccountPoolWorkspace(
+                account_pool_id=entry.id, workspace_id="team-a", status="workspace_ok",
+                export_json_encrypted=encryption_service.encrypt_token("old-json"),
+            ))
             await session.commit()
 
             result = await self.service.update_credentials(
@@ -138,6 +143,7 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["password"], "new-password")
             self.assertEqual(result["two_factor_secret"], "JBSWY3DPEHPK3PXP")
             self.assertNotIn("new-password", stored.password_encrypted)
+            self.assertEqual((await session.execute(select(AccountPoolWorkspace))).scalars().all(), [])
 
     async def test_update_credentials_rejects_invalid_two_factor_without_changes(self):
         async with self.sessions() as session:

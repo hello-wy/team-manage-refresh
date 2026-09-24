@@ -6,9 +6,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
-from app.models import AccountPoolEntry
+from app.models import AccountPoolEntry, AccountPoolWorkspace
 from app.services.account_pool_credentials import AccountPoolCredentialError
 from app.services.encryption import encryption_service
 from app.services.member_authorization import CLIENT_ID, REDIRECT_URI
@@ -59,6 +59,18 @@ class AccountPoolAuthorizationService:
             raise AccountPoolAuthorizationError(str(exc)) from exc
         return self._result(entry.email, result, request.account_id)
 
+    async def scan_entry(self, session, entry_id: int) -> dict[str, Any]:
+        entry = await session.get(AccountPoolEntry, entry_id)
+        if entry is None or entry.deleted_at is not None:
+            raise AccountPoolAuthorizationError("账号不存在")
+        credentials = await self._credentials.get_credentials(session, entry.email)
+        self._validate_credentials(credentials)
+        request = self._request(entry, credentials, "", session)
+        try:
+            return await self._login.verify_credentials(request)
+        except OpenAIAutomaticLoginError as exc:
+            raise AccountPoolAuthorizationError(str(exc)) from exc
+
     async def save_result(
         self,
         session,
@@ -67,19 +79,28 @@ class AccountPoolAuthorizationService:
         *,
         credential_version: tuple[str | None, str | None] | None = None,
         liveness: tuple[str, str] | None = None,
+        update_current: bool = True,
+        workspace_state: dict[str, Any] | None = None,
     ) -> bool:
         now = get_now()
+        entry = await session.get(AccountPoolEntry, entry_id)
+        previous = json.loads(entry.workspace_state_json) if entry and entry.workspace_state_json else {}
+        full_state = workspace_state or (
+            previous if previous.get("available_workspaces") else result.workspace
+        )
         values = {
             "workspace_id": result.workspace.get("workspace_id") or None,
             "workspace_name": result.workspace.get("workspace_name") or None,
             "workspace_status": result.workspace.get("status") or "workspace_unknown",
             "workspace_checked_at": now,
-            "workspace_state_json": json.dumps(result.workspace, ensure_ascii=False),
+            "workspace_state_json": json.dumps(full_state, ensure_ascii=False),
             "export_json_encrypted": encryption_service.encrypt_token(
                 json.dumps(result.payload, ensure_ascii=False)
             ),
             "export_json_updated_at": now,
         }
+        if not update_current:
+            values = {"workspace_checked_at": now}
         if liveness:
             values.update({
                 "liveness_status": liveness[0],
@@ -96,8 +117,31 @@ class AccountPoolAuthorizationService:
                 AccountPoolEntry.two_factor_secret_encrypted == credential_version[1],
             )
         saved = await session.execute(statement.values(**values))
+        if saved.rowcount:
+            await self._save_workspace(session, entry_id, result, now)
         await session.commit()
         return bool(saved.rowcount)
+
+    @staticmethod
+    async def _save_workspace(session, entry_id, result, now) -> None:
+        workspace_id = str(result.workspace.get("workspace_id") or "").strip()
+        if not workspace_id:
+            return
+        row = (await session.execute(select(AccountPoolWorkspace).where(
+            AccountPoolWorkspace.account_pool_id == entry_id,
+            AccountPoolWorkspace.workspace_id == workspace_id,
+        ))).scalar_one_or_none()
+        if row is None:
+            row = AccountPoolWorkspace(account_pool_id=entry_id, workspace_id=workspace_id)
+            session.add(row)
+        row.name = result.workspace.get("workspace_name") or None
+        row.is_personal = bool(result.workspace.get("is_personal"))
+        row.status = result.workspace.get("status") or "workspace_unknown"
+        row.export_json_encrypted = encryption_service.encrypt_token(
+            json.dumps(result.payload, ensure_ascii=False)
+        )
+        row.checked_at = now
+        row.json_updated_at = now
 
     @staticmethod
     def _validate_credentials(credentials: dict[str, str] | None) -> None:
@@ -110,11 +154,6 @@ class AccountPoolAuthorizationService:
         draft = self._auth_client.create_oauth_authorize_url(CLIENT_ID, REDIRECT_URI)
         draft.update({"client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI})
         target_id = str(workspace_id or "").strip()
-        if (
-            entry.workspace_status == "personal_account"
-            and target_id == str(entry.workspace_id or "").strip()
-        ):
-            target_id = ""
         return AutomaticLoginRequest(
             email=entry.email,
             password=credentials["password"],
@@ -135,9 +174,12 @@ class AccountPoolAuthorizationService:
         if token_email and token_email != email:
             raise AccountPoolAuthorizationError("自动登录返回了其他账号的凭据")
         workspace = dict(result.get("workspace") or {})
+        token_id = token_workspace_id(access_token)
+        if requested_id and token_id and requested_id != token_id:
+            raise AccountPoolAuthorizationError("登录返回的空间与所选 Team 不一致")
         actual_id = str(requested_id or workspace.get("workspace_id") or "").strip()
         if workspace.get("status") != "no_workspace":
-            actual_id = actual_id or token_workspace_id(access_token)
+            actual_id = actual_id or token_id
         plan_type = token_plan_type(claims, identity)
         is_personal = self._is_personal_workspace(workspace, plan_type)
         status = "personal_account" if is_personal else (

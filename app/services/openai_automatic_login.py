@@ -94,7 +94,12 @@ class OpenAIAutomaticLoginService:
                 state = (parse_qs(urlparse(current_url).query).get("state") or [""])[0]
                 if not secrets.compare_digest(state, request.oauth_draft["state"]):
                     raise OpenAIAutomaticLoginError("账号验活 OAuth state 不匹配")
-            return inspect_workspace_claims(auth_session_claims(session))
+            workspace = inspect_workspace_claims(auth_session_claims(session))
+            if not workspace["available_workspaces"] and not _is_callback(current_url):
+                workspace = await self._workspace_from_page(
+                    session, current_url, device_id, sentinel_token
+                )
+            return workspace
         finally:
             await self._dependencies.clear_session(request.identifier)
 

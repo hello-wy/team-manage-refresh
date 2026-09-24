@@ -193,20 +193,45 @@ async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button)
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({workspace_id: workspaceId || ''})
         });
-        if (!response.ok) {
-            const payload = await response.json();
-            throw new Error(payload.error || '导入 sub2api 失败');
-        }
         const payload = await response.json();
-        if (!payload.success) throw new Error(payload.error || '导入 sub2api 失败');
-        showToast(`${email} 已重新登录并导入 sub2api（账户 ID ${payload.account_id}）`, 'success');
+        if (!response.ok || !payload.success) throw new Error(payload.error || '导入 sub2api 失败');
+        showToast(`${email} 的 Sub2API 导出任务已开始`, 'success');
         await refreshAccountPoolTable();
+        watchAccountPoolExportJob(payload.job_id, email);
     } catch (error) {
         showToast(error.message || '导入 sub2api 失败', 'error');
     } finally {
         button.disabled = false;
         button.innerHTML = original;
         if (window.lucide) lucide.createIcons();
+    }
+}
+
+const accountPoolWatchedJobs = new Set();
+
+async function watchAccountPoolExportJob(jobId, email) {
+    if (accountPoolWatchedJobs.has(jobId)) return;
+    accountPoolWatchedJobs.add(jobId);
+    try {
+        while (true) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const response = await fetch(`/admin/account-pool/export-jobs/${jobId}`, {
+                credentials: 'same-origin', cache: 'no-store'
+            });
+            if (!response.ok) throw new Error('读取导出任务状态失败');
+            const job = await response.json();
+            if (job.status === 'pending' || job.status === 'running') continue;
+            if (job.status === 'failed') throw new Error(job.error || '导入 Sub2API 失败');
+            if (job.status !== 'completed') throw new Error(`未知导出状态：${job.status}`);
+            showToast(`${email} 已导入 Sub2API（账户 ID ${job.account_id}）`, 'success');
+            await refreshAccountPoolTable();
+            break;
+        }
+    } catch (error) {
+        showToast(error.message || '导入 Sub2API 失败', 'error');
+        await refreshAccountPoolTable();
+    } finally {
+        accountPoolWatchedJobs.delete(jobId);
     }
 }
 
@@ -444,6 +469,7 @@ async function refreshAccountPoolTable(options = {}) {
         if (count && currentCount) currentCount.replaceWith(count);
         window.history.replaceState({}, '', url);
         initAccountPoolRowActions();
+        initAccountPoolExportJobs();
         initAccountPoolPageSizeControl();
         initAccountPoolColumnToggler();
         window.initAccountPoolWorkspaceButtons?.();
@@ -500,6 +526,15 @@ function initAccountPoolRowActions() {
     });
 }
 
+function initAccountPoolExportJobs() {
+    document.querySelectorAll('.account-pool-export-status').forEach(label => {
+        if (label.dataset.status === 'pending' || label.dataset.status === 'running') {
+            const email = label.closest('[data-account-pool-row]')?.querySelector('[data-label="邮箱"]')?.textContent?.trim() || '账号';
+            watchAccountPoolExportJob(Number(label.dataset.jobId), email);
+        }
+    });
+}
+
 function initAccountPoolPageSizeControl() {
     const control = document.getElementById('accountPoolPageSize');
     if (!control || control.dataset.bound === 'true') return;
@@ -517,6 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
     document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
     initAccountPoolRowActions();
+    initAccountPoolExportJobs();
     initAccountPoolPageSizeControl();
     document.getElementById('accountPoolStatusFilter')?.addEventListener('change', event => {
         refreshAccountPoolTable({page: 1, statusFilter: event.target.value});

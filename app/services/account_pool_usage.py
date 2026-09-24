@@ -9,7 +9,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AccountPoolEntry
+from app.models import AccountPoolEntry, AccountPoolWorkspace
 from app.services.encryption import encryption_service
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -86,11 +86,17 @@ class AccountPoolUsageService:
         self.concurrency = concurrency
 
     @staticmethod
-    def _entry_token(entry: AccountPoolEntry | None, team_space_id: str = "") -> tuple[str, str] | None:
-        if not entry or not entry.export_json_encrypted:
+    def _entry_token(entry: AccountPoolEntry | None, team_space_id: str = "",
+                     workspace: AccountPoolWorkspace | None = None) -> tuple[str, str] | None:
+        if not entry:
+            return None
+        encrypted = workspace.export_json_encrypted if workspace else entry.export_json_encrypted
+        if team_space_id and not workspace and entry.workspace_id != team_space_id:
+            return None
+        if not encrypted:
             return None
         try:
-            payload = json.loads(encryption_service.decrypt_token(entry.export_json_encrypted))
+            payload = json.loads(encryption_service.decrypt_token(encrypted))
             accounts = payload.get("accounts") or []
             selected = None
             for account in accounts:
@@ -99,7 +105,7 @@ class AccountPoolUsageService:
                 if team_space_id and account_id == team_space_id:
                     selected = credentials
                     break
-                if selected is None and isinstance(credentials, dict):
+                if not team_space_id and selected is None and isinstance(credentials, dict):
                     selected = credentials
             token = str((selected or {}).get("access_token") or "").strip()
             account_id = str((selected or {}).get("chatgpt_account_id") or "").strip()
@@ -140,7 +146,14 @@ class AccountPoolUsageService:
                 AccountPoolEntry.deleted_at.is_(None),
             )
         )
-        return await self._check_token(self._entry_token(result.scalar_one_or_none(), team_space_id))
+        entry = result.scalar_one_or_none()
+        workspace = None
+        if entry and team_space_id:
+            workspace = (await db.execute(select(AccountPoolWorkspace).where(
+                AccountPoolWorkspace.account_pool_id == entry.id,
+                AccountPoolWorkspace.workspace_id == team_space_id,
+            ))).scalar_one_or_none()
+        return await self._check_token(self._entry_token(entry, team_space_id, workspace))
 
     async def check_many(
         self,
@@ -170,8 +183,21 @@ class AccountPoolUsageService:
             )
         )
         entries = {entry.email: entry for entry in rows.scalars().all()}
+        requested_ids = {space_id for _, _, space_id in normalized if space_id}
+        workspaces = {}
+        if entries and requested_ids:
+            saved = await db.execute(select(AccountPoolWorkspace).where(
+                AccountPoolWorkspace.account_pool_id.in_([entry.id for entry in entries.values()]),
+                AccountPoolWorkspace.workspace_id.in_(requested_ids),
+            ))
+            workspaces = {
+                (row.account_pool_id, row.workspace_id): row for row in saved.scalars().all()
+            }
         token_data = [
-            (key, self._entry_token(entries.get(email), team_space_id))
+            (key, self._entry_token(
+                entries.get(email), team_space_id,
+                workspaces.get((entries[email].id, team_space_id)) if email in entries else None,
+            ))
             for key, email, team_space_id in normalized
         ]
         semaphore = asyncio.Semaphore(self.concurrency)
