@@ -3696,6 +3696,7 @@ class TeamService:
                 "status": team.status,
                 "account_role": team.account_role,
                 "device_code_auth_enabled": team.device_code_auth_enabled,
+                "rotation_mode": team.rotation_mode,
                 "warranty_seat_enabled": team.warranty_seat_enabled,
                 "last_sync": team.last_sync.isoformat() if team.last_sync else None,
                 "created_at": team.created_at.isoformat() if team.created_at else None

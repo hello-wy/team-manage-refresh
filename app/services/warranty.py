@@ -878,6 +878,7 @@ class WarrantyService:
                     RedemptionCode.used_by_email.is_not(None),
                     RedemptionCode.used_team_id.is_not(None),
                     RedemptionCode.used_at.is_not(None),
+                    RedemptionCode.used_team_id.in_(select(Team.id).where(Team.rotation_mode == "off")),
                 )
                 .order_by(RedemptionCode.used_at.asc(), RedemptionCode.id.asc())
             )
@@ -1218,6 +1219,7 @@ class WarrantyService:
                 .join(Team, Team.id == TeamEmailMapping.team_id)
                 .where(
                     TeamEmailMapping.status.in_(("invited", "joined")),
+                    Team.rotation_mode == "off",
                     TeamEmailMapping.is_admin_invited.is_(False),
                     TeamEmailMapping.created_at.is_not(None),
                     TeamEmailMapping.created_at >= enabled_since,
@@ -1546,6 +1548,7 @@ class WarrantyService:
                 .join(Team, Team.id == TeamEmailMapping.team_id)
                 .where(
                     TeamEmailMapping.status.in_(("invited", "joined")),
+                    Team.rotation_mode == "off",
                     TeamEmailMapping.is_admin_invited.is_(True),
                     TeamEmailMapping.created_at.is_not(None),
                     TeamEmailMapping.created_at >= enabled_since,

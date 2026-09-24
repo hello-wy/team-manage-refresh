@@ -67,6 +67,8 @@ class AccountPoolService:
         self,
         team_id: int,
         db_session: AsyncSession,
+        *,
+        excluded_ids: frozenset[int] = frozenset(),
     ) -> Optional[AccountPoolEntry]:
         cutoff = get_now() - timedelta(days=TEAM_REINVITE_COOLDOWN_DAYS)
         active_mapping = select(TeamEmailMapping.id).where(
@@ -85,6 +87,7 @@ class AccountPoolService:
                 AccountPoolEntry.deleted_at.is_(None),
                 ~active_mapping.exists(),
                 ~recent_team_invite.exists(),
+                ~AccountPoolEntry.id.in_(excluded_ids),
             )
             .order_by(AccountPoolEntry.updated_at.asc(), AccountPoolEntry.id.asc())
             .limit(1)

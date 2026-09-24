@@ -6,9 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Team, TeamEmailMapping
+from app.models import MemberAuthorization, Team, TeamEmailMapping
 from app.services.member_auto_kick import MemberAutoKickService
 from app.services.replacement_export import ReplacementExportService
+from app.services.sub2api import Sub2apiImportUncertain
 
 EMAIL = "member@example.com"
 
@@ -42,6 +43,7 @@ class ReplacementExportTests(unittest.IsolatedAsyncioTestCase):
             team_id=1, email=EMAIL, status="invited",
             replacement_export_pending=True,
         ))
+        session.add(MemberAuthorization(team_id=1, account_id="workspace", email=EMAIL))
         await session.commit()
         return (await session.execute(select(TeamEmailMapping))).scalar_one()
 
@@ -122,6 +124,21 @@ class ReplacementExportTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(mapping.replacement_export_pending)
             self.authorization.automatic_login.assert_not_awaited()
             self.sub2api.import_member.assert_not_awaited()
+
+    async def test_uncertain_import_is_recorded_and_not_retried(self):
+        async with self.sessions() as session:
+            await self._pending(session)
+            self.authorization.check.return_value = {
+                "authorized": True, "sub2api_exported": False, "membership": "joined",
+            }
+            self.sub2api.import_member.side_effect = Sub2apiImportUncertain("结果不确定")
+            with self.assertLogs("app.services.member_auto_kick", level="ERROR"):
+                await self.runner.process_pending_exports(session, self.exporter.complete)
+            with self.assertLogs("app.services.member_auto_kick", level="ERROR"):
+                await self.runner.process_pending_exports(session, self.exporter.complete)
+            self.assertEqual(self.sub2api.import_member.await_count, 1)
+            record = (await session.execute(select(MemberAuthorization))).scalar_one()
+            self.assertTrue(record.sub2api_import_uncertain)
 
     async def test_failed_member_does_not_block_the_next_pending_member(self):
         async with self.sessions() as session:

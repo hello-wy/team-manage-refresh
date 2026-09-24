@@ -340,7 +340,7 @@ function initAccountPoolColumnToggler() {
     const container = document.getElementById('accountPoolColumnToggleDropdown');
     if (!table || !container) return;
 
-    const storageKey = 'account_pool_list_columns';
+    const storageKey = 'account_pool_list_columns_v2';
     const hiddenColumns = loadAccountPoolHiddenColumns(storageKey);
     container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
@@ -486,6 +486,7 @@ async function refreshAccountPoolTable(options = {}) {
         window.initAccountPoolRotateButtons?.();
         window.initAccountPoolBatchSelection?.();
         if (window.lucide) lucide.createIcons();
+        formatQuotaResetTimes();
     } catch (error) {
         if (error.name !== 'AbortError') showToast(error.message || '账号列表加载失败', 'error');
     } finally {
@@ -574,4 +575,5 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     initAccountPoolColumnToggler();
     initAccountPoolColumnDropdown();
+    formatQuotaResetTimes();
 });

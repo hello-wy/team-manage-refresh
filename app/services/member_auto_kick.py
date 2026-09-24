@@ -198,6 +198,7 @@ class MemberAutoKickService:
             select(Team)
             .outerjoin(TeamReplacementQueue)
             .where(
+                Team.rotation_mode == "off",
                 (Team.pending_replacements > 0)
                 | TeamReplacementQueue.id.is_not(None)
             )
@@ -376,6 +377,7 @@ class MemberAutoKickService:
                 TeamEmailMapping.auto_kick_exempt.is_(False),
                 TeamEmailMapping.upstream_user_id.is_not(None),
                 TeamEmailMapping.member_role != OWNER_ROLE,
+                Team.rotation_mode == "off",
             )
             .order_by(TeamEmailMapping.auto_kick_at.asc())
         )

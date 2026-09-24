@@ -66,6 +66,7 @@ def run_auto_migration():
             "export_json_updated_at": "DATETIME",
             "sub2api_account_id": "INTEGER",
             "sub2api_exported_at": "DATETIME",
+            "sub2api_import_uncertain": "BOOLEAN NOT NULL DEFAULT 0",
         }
         if table_exists(cursor, "member_authorizations"):
             for column_name, column_type in member_authorization_columns.items():
@@ -79,6 +80,9 @@ def run_auto_migration():
             if not column_exists(cursor, "teams", column):
                 cursor.execute(f"ALTER TABLE teams ADD COLUMN {column} INTEGER")
                 migrations_applied.append(f"teams.{column}")
+        if not column_exists(cursor, "teams", "rotation_mode"):
+            cursor.execute("ALTER TABLE teams ADD COLUMN rotation_mode VARCHAR(20) NOT NULL DEFAULT 'off'")
+            migrations_applied.append("teams.rotation_mode")
         
         # 检查并添加质保相关字段
         if not column_exists(cursor, "redemption_codes", "has_warranty"):

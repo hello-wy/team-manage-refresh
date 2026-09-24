@@ -30,6 +30,10 @@ class Sub2apiError(ValueError):
     pass
 
 
+class Sub2apiImportUncertain(Sub2apiError):
+    pass
+
+
 @dataclass(frozen=True)
 class Sub2apiConfig:
     base_url: str
@@ -170,6 +174,8 @@ class Sub2apiService:
             async with self.client_factory(
                     timeout=REQUEST_TIMEOUT_SECONDS, headers={"x-api-key": config.api_key}) as client:
                 response = await client.post(f"{config.base_url}/api/v1/admin/accounts", json=account)
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as exc:
+            raise Sub2apiImportUncertain("sub2api 创建结果不确定，请在目标站点核对后再处理") from exc
         except httpx.RequestError as exc:
             raise Sub2apiError("无法连接 sub2api，请检查站点地址与网络") from exc
         created = response_data(response)

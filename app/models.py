@@ -35,6 +35,7 @@ class Team(Base):
     device_code_auth_enabled = Column(Boolean, default=False, comment="是否开启设备代码身份验证")
     warranty_seat_enabled = Column(Boolean, default=False, comment="是否作为质保兑换码分流目标 Team")
     member_auto_kick_hours = Column(Integer, default=2, nullable=False, comment="成员加入后自动踢出小时数")
+    rotation_mode = Column(String(20), default="off", nullable=False)
     pending_replacements = Column(Integer, default=0, nullable=False, comment="自动踢人后待补账号数")
     error_count = Column(Integer, default=0, comment="连续报错次数")
     last_sync = Column(DateTime, comment="最后同步时间")
@@ -68,6 +69,7 @@ class MemberAuthorization(Base):
     export_json_updated_at = Column(DateTime, comment="JSON 快照最近更新时间")
     sub2api_account_id = Column(Integer, comment="最近一次导入的 sub2api 账户 ID")
     sub2api_exported_at = Column(DateTime, comment="最近一次成功导入 sub2api 的时间")
+    sub2api_import_uncertain = Column(Boolean, nullable=False, default=False)
     oauth_state = Column(String(100))
     verifier_encrypted = Column(Text)
     oauth_expires_at = Column(DateTime)
@@ -167,6 +169,68 @@ class TeamEmailMapping(Base):
         Index("idx_team_email_status", "team_id", "status"),
         Index("idx_team_email_auto_kick", "status", "auto_kick_at"),
     )
+
+
+class RotationMemberState(Base):
+    __tablename__ = "rotation_member_states"
+
+    id = Column(Integer, primary_key=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    email = Column(String(255), nullable=False)
+    cycle_id = Column(Integer, nullable=False, default=1)
+    phase = Column(String(30), nullable=False, default="standard")
+    standard_completed_at = Column(DateTime)
+    premium_completed_at = Column(DateTime)
+    queued_at = Column(DateTime)
+    blocked_reason = Column(String(100))
+    version = Column(Integer, nullable=False, default=1)
+    __table_args__ = (Index("idx_rotation_member", "team_id", "email", unique=True),)
+
+
+class QuotaSnapshot(Base):
+    __tablename__ = "quota_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    team_space_id = Column(String(100), nullable=False)
+    observed_seat_type = Column(String(20))
+    short_remaining = Column(Integer)
+    short_limit = Column(Integer)
+    short_reset_at = Column(String(50))
+    weekly_remaining = Column(Integer)
+    weekly_limit = Column(Integer)
+    weekly_reset_at = Column(String(50))
+    status = Column(String(20), nullable=False)
+    error = Column(String(255))
+    observed_at = Column(DateTime, nullable=False, default=get_now)
+    version = Column(Integer, nullable=False, default=1)
+    __table_args__ = (Index("idx_quota_snapshot_space", "email", "team_space_id", unique=True),)
+
+
+class RotationAction(Base):
+    __tablename__ = "rotation_actions"
+
+    id = Column(Integer, primary_key=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    email = Column(String(255), nullable=False)
+    action_type = Column(String(30), nullable=False)
+    idempotency_key = Column(String(255), nullable=False, unique=True)
+    status = Column(String(20), nullable=False, default="pending")
+    reason = Column(String(255))
+    result = Column(Text)
+    attempts = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=get_now)
+    updated_at = Column(DateTime, nullable=False, default=get_now, onupdate=get_now)
+    __table_args__ = (Index("idx_rotation_actions_team", "team_id", "created_at"),)
+
+
+class RotationLease(Base):
+    __tablename__ = "rotation_leases"
+
+    resource_key = Column(String(255), primary_key=True)
+    holder = Column(String(100), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
 
 
 class AccountPoolEntry(Base):

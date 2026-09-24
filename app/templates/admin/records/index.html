@@ -1,19 +1,7 @@
 {% extends "base.html" %}
 {% block title %}导出记录 - GPT Team 管理系统{% endblock %}
-{% block extra_css %}<link rel="stylesheet" href="/static/css/records.css?v=20260924-quota">{% endblock %}
-{% macro quota_cell(window, period) %}
-  {% if window.get('remaining') is not none and window.get('limit', 0) > 0 %}
-    {% set percent = ((window.get('used', 0) / window.get('limit')) * 100) | int %}
-    <div class="quota-window">
-      <div class="quota-window-main">
-        <span class="quota-period quota-period-{{ period }}">{{ period }}</span>
-        <progress class="quota-progress{% if window.get('state') == 'exhausted' %} is-exhausted{% endif %}" max="100" value="{{ percent }}" aria-label="{{ period }} 已使用额度">{{ percent }}%</progress>
-        <strong class="quota-percent">{{ percent }}%</strong>
-      </div>
-      <div class="quota-reset">重置 {% if window.get('reset_at') %}<time class="quota-reset-time" data-reset-at="{{ window.get('reset_at') }}">{{ window.get('reset_at') }}</time>{% else %}时间未知{% endif %}</div>
-    </div>
-  {% else %}<span class="quota-unavailable">暂无额度</span>{% endif %}
-{% endmacro %}
+{% from "admin/_quota_cell.html" import quota_cell %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/records.css?v=20260925-quota"><link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">{% endblock %}
 {% block content %}
 <div class="workspace-page records-workspace-page">
   <div class="workbench-panel">
@@ -31,15 +19,14 @@
     </div>
     <div class="content-section workbench-table-card">
       <div class="table-section-head"><div class="table-section-copy"><h3>导出明细</h3></div><div class="table-section-meta"><span class="table-meta-pill"><i data-lucide="database"></i>{{ pagination.total }} 条</span></div></div>
-      {% if records %}<div class="table-container mobile-card-table-container"><table class="data-table mobile-card-table"><thead><tr><th>邮箱</th><th>Team 名称</th><th>空间 ID</th><th>席位类型</th><th>加入日期</th><th>5h 额度</th><th>1week 额度</th><th>1week 状态</th><th>Team 5x</th><th>高级席位额度</th><th>导出次数</th><th>最近导出</th></tr></thead><tbody>
+      {% if records %}<div class="table-container mobile-card-table-container"><table class="data-table mobile-card-table"><thead><tr><th>邮箱</th><th>Team 名称</th><th>空间 ID</th><th>席位类型</th><th>加入日期</th><th>额度</th><th>1week 状态</th><th>本轮标准阶段</th><th>本轮高级阶段</th><th>导出次数</th><th>最近导出</th></tr></thead><tbody>
       {% for record in records %}{% set usage=record.usage %}{% set short=usage.get('5h') or {} %}{% set weekly=usage.get('1week') or {} %}<tr>
         <td data-label="邮箱"><strong>{{ record.email }}</strong></td><td data-label="Team 名称">{{ record.team_name }}</td><td data-label="空间 ID"><code>{{ record.team_space_id }}</code></td>
         <td data-label="席位类型">{% if record.seat_type == 'premium' %}<span class="badge badge-warning">高级</span>{% elif record.seat_type == 'standard' %}<span class="badge badge-secondary">标准</span>{% else %}-{% endif %}</td><td data-label="加入日期">{{ record.joined_at }}</td>
-        <td data-label="5h 额度">{{ quota_cell(short, '5h') }}</td>
-        <td data-label="1week 额度">{{ quota_cell(weekly, '7d') }}</td>
+        <td data-label="额度">{{ quota_cell(short, weekly) }}</td>
         <td data-label="1week 状态">{% if weekly.get('state') == 'exhausted' %}<span class="badge badge-danger">已用完</span>{% elif weekly.get('state') == 'available' %}<span class="badge badge-success">未用完</span>{% elif usage.get('status') == 'invalid' %}<span class="badge badge-danger">Token 无效</span>{% elif usage.get('status') == 'error' %}<span class="badge badge-warning">查询失败</span>{% else %}<span class="badge badge-secondary">未知</span>{% endif %}</td>
-        <td data-label="Team 5x">{% if record.team_5x_completed is sameas true %}<span class="badge badge-success">已完成</span>{% elif record.team_5x_completed is sameas false %}<span class="badge badge-secondary">未完成</span>{% else %}<span class="badge badge-secondary">未知</span>{% endif %}</td>
-        <td data-label="高级席位额度">{% if record.seat_type != 'premium' %}-{% elif record.premium_quota_exhausted is sameas true %}<span class="badge badge-danger">已跑完</span>{% elif record.premium_quota_exhausted is sameas false %}<span class="badge badge-success">未跑完</span>{% else %}<span class="badge badge-secondary">未知</span>{% endif %}</td>
+        <td data-label="本轮标准阶段">{{ '已完成' if record.standard_completed else '未记录' }}</td>
+        <td data-label="本轮高级阶段">{{ '已完成' if record.premium_completed else '未记录' }}</td>
         <td data-label="导出次数">{{ record.export_count }}</td><td data-label="最近导出">{{ record.last_exported_at }}</td>
       </tr>{% endfor %}</tbody></table></div>
       <div class="pagination"><div class="per-page-selector">每页 <select class="per-page-select" onchange="changePerPage(this.value)"><option value="20" {% if pagination.per_page==20 %}selected{% endif %}>20</option><option value="50" {% if pagination.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if pagination.per_page==100 %}selected{% endif %}>100</option></select></div>{% if pagination.total_pages > 1 %}<div class="pagination-controls">{% for p in range(1, pagination.total_pages + 1) %}<a href="?page={{ p }}&per_page={{ pagination.per_page }}&search={{ filters.search|urlencode }}&usage_filter={{ filters.usage_filter|urlencode }}&joined_filter={{ filters.joined_filter|urlencode }}" class="page-number {% if p == pagination.current_page %}active{% endif %}">{{ p }}</a>{% endfor %}</div>{% endif %}<span class="pagination-summary">共 {{ pagination.total }} 条记录</span></div>
@@ -48,28 +35,12 @@
   </div>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="/static/js/records-list-refresh.js?v=20260924-quota"></script><script>
+{% block extra_js %}<script src="/static/js/quota.js?v=20260925-1"></script><script src="/static/js/records-list-refresh.js?v=20260925-quota"></script><script>
 function prepareFloatingDropdowns(){document.querySelectorAll('.dropdown-menu-floating').forEach(m=>{const w=m.closest('.dropdown-wrapper');if(w&&m.parentElement!==document.body){m._dropdownWrapper=w;document.body.appendChild(m)}})}
 function positionFloatingDropdown(m){const w=m?._dropdownWrapper;if(!w)return;const r=w.getBoundingClientRect();m.style.position='fixed';m.style.top=`${r.bottom+8}px`;m.style.left=`${Math.max(16,Math.min(r.left,innerWidth-276))}px`;m.style.zIndex='9999'}
 function closeFloatingDropdowns(){document.querySelectorAll('.dropdown-menu-floating.show').forEach(m=>m.classList.remove('show'))}
 function toggleDropdown(id){const m=document.getElementById(id);if(!m)return;const show=!m.classList.contains('show');closeFloatingDropdowns();if(show){m.classList.add('show');positionFloatingDropdown(m)}}
 function initColumns(){const t=document.querySelector('.data-table'),c=document.getElementById('columnToggleDropdown');if(!t||!c)return;c.innerHTML='<div class="dropdown-header">显示/隐藏列</div>';let saved=[];try{saved=JSON.parse(localStorage.getItem('sub2api_export_columns_v2')||'[]')}catch(e){}t.querySelectorAll('thead th').forEach((th,i)=>{const visible=!saved.includes(i);if(!visible){th.style.display='none';t.querySelectorAll(`tbody tr td:nth-child(${i+1})`).forEach(td=>td.style.display='none')}const item=document.createElement('label');item.className='dropdown-item';item.innerHTML=`<input type="checkbox" ${visible?'checked':''}><span>${th.innerText.trim()}</span>`;item.querySelector('input').onchange=e=>{const on=e.target.checked;th.style.display=on?'':'none';t.querySelectorAll(`tbody tr td:nth-child(${i+1})`).forEach(td=>td.style.display=on?'':'none');const next=saved.filter(x=>x!==i);if(!on)next.push(i);saved=next;localStorage.setItem('sub2api_export_columns_v2',JSON.stringify(saved))};c.appendChild(item)})}
-function formatQuotaResetTimes(){
-  const SECOND_MS=1000,MINUTE_MS=60*SECOND_MS,HOUR_MS=60*MINUTE_MS,DAY_MS=24*HOUR_MS;
-  const EPOCH_MILLISECONDS_MIN=1_000_000_000_000;
-  document.querySelectorAll('.records-workspace-page .quota-reset-time').forEach(element=>{
-    const raw=element.dataset.resetAt;
-    const numeric=Number(raw);
-    const timestamp=Number.isFinite(numeric)&&raw.trim()!=='' ? (numeric>=EPOCH_MILLISECONDS_MIN?numeric:numeric*SECOND_MS) : Date.parse(raw);
-    if(!Number.isFinite(timestamp))return;
-    const remaining=Math.max(0,timestamp-Date.now());
-    const days=Math.floor(remaining/DAY_MS);
-    const hours=Math.floor((remaining%DAY_MS)/HOUR_MS);
-    const minutes=Math.ceil((remaining%HOUR_MS)/MINUTE_MS);
-    element.textContent=remaining===0?'现在':days?`${days}d ${hours}h`:hours?`${hours}h ${minutes}m`:`${minutes}m`;
-    element.title=new Date(timestamp).toLocaleString('zh-CN');
-  });
-}
 function changePerPage(v){const u=new URL(location.href);u.searchParams.set('per_page',v);u.searchParams.set('page','1');void refreshRecordsTable(u,true)}
 document.addEventListener('DOMContentLoaded',()=>{prepareFloatingDropdowns();initColumns();formatQuotaResetTimes();document.addEventListener('click',e=>{if(!e.target.closest('.dropdown-wrapper')&&!e.target.closest('.dropdown-menu'))closeFloatingDropdowns()})});
 </script>{% endblock %}

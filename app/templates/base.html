@@ -87,6 +87,7 @@
                         <img class="solidapi-nav-icon" src="/static/solidapi-s-icon.svg" alt="" aria-hidden="true">
                         <span>导出记录</span>
                     </a>
+                    <a href="/admin/rotation" class="desktop-nav-link {% if active_page == 'rotation' %}active{% endif %}"><i data-lucide="repeat-2"></i><span>额度轮转</span></a>
                     <a href="/admin/settings" class="desktop-nav-link {% if system_active %}active{% endif %}">
                         <i data-lucide="settings-2"></i>
                         <span>系统中心</span>
@@ -165,6 +166,7 @@
                         <span class="menu-text">导出记录</span>
                     </a>
                 </li>
+                <li class="menu-item {% if active_page == 'rotation' %}active{% endif %}"><a href="/admin/rotation"><span class="menu-icon" data-lucide="repeat-2"></span><span class="menu-text">额度轮转</span></a></li>
                 <li class="menu-item {% if system_active %}active{% endif %}">
                     <a href="/admin/settings">
                         <span class="menu-icon" data-lucide="settings-2"></span>

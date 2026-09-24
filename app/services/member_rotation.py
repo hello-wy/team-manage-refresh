@@ -32,11 +32,12 @@ class MemberRotationService:
         replacement = await self.account_pool.invite_replacement(
             team_id,
             db_session,
-            invite_member=lambda current_team_id, replacement_email, session: (
+            invite_member=lambda current_team_id, replacement_email, session, seat_type: (
                 self.team_service.add_team_member(
                     current_team_id, replacement_email, session, seat_type=seat_type
                 )
             ),
+            seat_type=seat_type or "standard",
         )
         if replacement.get("status") != "invited":
             return self._partial_result(

@@ -9,7 +9,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AccountPoolEntry, AccountPoolWorkspace
+from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization
 from app.services.encryption import encryption_service
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -113,6 +113,18 @@ class AccountPoolUsageService:
         except Exception:
             return None
 
+    @staticmethod
+    def _authorization_token(record: MemberAuthorization | None, team_space_id: str):
+        if not record or not record.credentials_encrypted:
+            return None
+        payload = json.loads(encryption_service.decrypt_token(record.credentials_encrypted))
+        credentials = payload.get("credentials", payload)
+        account_id = str(credentials.get("chatgpt_account_id") or "").strip()
+        token = str(credentials.get("access_token") or "").strip()
+        if account_id != team_space_id or not token:
+            return None
+        return token, account_id
+
     async def _check_token(self, token_data: tuple[str, str] | None) -> dict[str, Any]:
         if not token_data:
             return {"status": "unavailable", "error": "账号池没有可用 JSON"}
@@ -153,7 +165,14 @@ class AccountPoolUsageService:
                 AccountPoolWorkspace.account_pool_id == entry.id,
                 AccountPoolWorkspace.workspace_id == team_space_id,
             ))).scalar_one_or_none()
-        return await self._check_token(self._entry_token(entry, team_space_id, workspace))
+        token = self._entry_token(entry, team_space_id, workspace)
+        if not token and team_space_id:
+            record = (await db.execute(select(MemberAuthorization).where(
+                MemberAuthorization.email == normalized_email,
+                MemberAuthorization.account_id == team_space_id,
+            ))).scalar_one_or_none()
+            token = self._authorization_token(record, team_space_id)
+        return await self._check_token(token)
 
     async def check_many(
         self,
@@ -200,6 +219,18 @@ class AccountPoolUsageService:
             ))
             for key, email, team_space_id in normalized
         ]
+        missing = [(email, space) for (_, email, space), (_, token)
+                   in zip(normalized, token_data) if space and not token]
+        if missing:
+            records = (await db.execute(select(MemberAuthorization).where(
+                MemberAuthorization.email.in_({email for email, _ in missing}),
+                MemberAuthorization.account_id.in_({space for _, space in missing}),
+            ))).scalars().all()
+            auth_by_key = {(record.email, record.account_id): record for record in records}
+            token_data = [
+                (key, token or self._authorization_token(auth_by_key.get((email, space)), space))
+                for (key, email, space), (_, token) in zip(normalized, token_data)
+            ]
         semaphore = asyncio.Semaphore(self.concurrency)
 
         async def check(key: Any, credentials: tuple[str, str] | None):

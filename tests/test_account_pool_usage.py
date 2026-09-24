@@ -69,7 +69,7 @@ class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await invalid._check_token(("token", "account")))["status"], "invalid")
         self.assertEqual((await forbidden._check_token(("token", "account")))["status"], "unknown")
 
-    async def test_check_many_does_single_database_read_before_network(self):
+    async def test_check_many_reads_member_authorizations_for_missing_pool_tokens(self):
         service = AccountPoolUsageService()
         service._check_token = AsyncMock(return_value={"status": "unavailable"})
         scalars = unittest.mock.MagicMock()
@@ -84,7 +84,7 @@ class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
             [("one@example.com", "space-a"), ("two@example.com", "space-b")],
         )
 
-        self.assertEqual(db.execute.await_count, 1)
+        self.assertEqual(db.execute.await_count, 2)
         self.assertEqual(len(values), 2)
         self.assertEqual(service._check_token.await_count, 2)
 

@@ -1,0 +1,25 @@
+{% macro quota_window(window, period) %}
+  {% set window = window or {} %}
+  <div class="quota-window{% if window.get('state') == 'exhausted' %} is-exhausted{% endif %}">
+    <div class="quota-window-main">
+      <span class="quota-period quota-period-{{ period }}">{{ period }}</span>
+      {% if window.get('remaining') is not none and window.get('limit', 0) > 0 %}
+        {% set percent = ((window.get('used', 0) / window.get('limit')) * 100) | int %}
+        <progress class="quota-progress" max="100" value="{{ percent }}" aria-label="{{ period }} 已使用额度">{{ percent }}%</progress>
+        <strong class="quota-percent">{{ percent }}%</strong>
+        {% if window.get('reset_at') %}<time class="quota-reset-time" data-reset-at="{{ window.get('reset_at') }}">{{ window.get('reset_at') }}</time>{% endif %}
+      {% elif window.get('state') == 'not_applicable' %}
+        <span class="quota-unavailable">不适用</span>
+      {% else %}
+        <span class="quota-unavailable">暂无额度</span>
+      {% endif %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro quota_cell(short, weekly) %}
+  <div class="quota-cell">
+    {{ quota_window(short, '5h') }}
+    {{ quota_window(weekly, '7d') }}
+  </div>
+{% endmacro %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}额度轮转 - GPT Team 管理系统{% endblock %}
+{% block content %}
+<div class="workspace-page records-workspace-page">
+  <header class="page-header"><div><h1>额度轮转</h1></div></header>
+  {% for team in rotation_teams %}
+  <section class="content-section" data-team-id="{{ team.team_id }}">
+    <div class="table-section-head">
+      <div class="table-section-copy"><h3>{{ team.team_name or ('Team #' ~ team.team_id) }}</h3>
+        <span class="badge badge-secondary">{{ {'off':'关闭','dry_run':'仅预览','auto':'自动轮转'}[team.rotation_mode] }}</span>
+      </div>
+      <div class="form-actions" style="display:flex;gap:.5rem">
+        <button type="button" class="btn btn-secondary" onclick="refreshRotation({{ team.team_id }})" title="刷新成员与额度"><i data-lucide="refresh-cw"></i> 刷新</button>
+        <button type="button" class="btn btn-secondary" onclick="previewRotation({{ team.team_id }})"><i data-lucide="scan-eye"></i> 预览</button>
+        <button type="button" class="btn btn-primary" onclick="runRotation({{ team.team_id }})" {% if team.rotation_mode == 'off' %}disabled{% endif %}><i data-lucide="play"></i> 执行一次</button>
+      </div>
+    </div>
+    <div class="rotation-result" aria-live="polite"></div>
+    <div class="table-container mobile-card-table-container"><table class="data-table mobile-card-table">
+      <thead><tr><th>邮箱</th><th>角色</th><th>成员状态</th><th>实际席位</th><th>轮转阶段</th><th>5h 剩余</th><th>周剩余</th><th>数据更新时间</th><th>阻塞原因</th></tr></thead>
+      <tbody>{% for member in team.members %}{% set usage=member.usage %}
+        <tr><td data-label="邮箱">{{ member.email }}</td><td data-label="角色">{{ member.role }}</td>
+          <td data-label="成员状态">{{ member.status }}</td><td data-label="实际席位">{{ member.seat_type or '未知' }}</td>
+          <td data-label="轮转阶段">{{ member.phase }}</td>
+          <td data-label="5h 剩余">{{ '不适用' if usage.get('5h', {}).get('state') == 'not_applicable' else (usage.get('5h', {}).get('remaining') if usage.get('5h', {}).get('remaining') is not none else '未知') }}</td>
+          <td data-label="周剩余">{{ usage.get('1week', {}).get('remaining') if usage.get('1week', {}).get('remaining') is not none else '未知' }}</td>
+          <td data-label="数据更新时间">{{ usage.get('observed_at', '未同步') }}</td>
+          <td data-label="阻塞原因">{{ member.blocked_reason or ('额度数据过期或不可用' if not member.quota_fresh else '-') }}</td></tr>
+      {% else %}<tr><td colspan="9">暂无成员</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <details><summary>动作历史</summary><div class="rotation-actions" data-team-id="{{ team.team_id }}"></div></details>
+  </section>
+  {% else %}<p>暂无 Team。</p>{% endfor %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/rotation.js?v=1"></script>{% endblock %}

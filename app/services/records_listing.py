@@ -1,4 +1,4 @@
-"""Build the Sub2API export list and fetch quota only for visible rows."""
+"""Build the Sub2API export list from background quota snapshots."""
 import math
 from datetime import timedelta
 from typing import Any
@@ -6,7 +6,8 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Sub2apiExportRecord, TeamEmailMapping
+from app.models import QuotaSnapshot, RotationMemberState, Sub2apiExportRecord, TeamEmailMapping
+from app.services.rotation_read_model import snapshot_usage
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -63,7 +64,7 @@ async def _load_candidates(db: AsyncSession, options: dict[str, Any]):
     return visible, total if paginated else len(visible), page, paginated
 
 
-def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any]) -> dict[str, Any]:
+def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any], state=None) -> dict[str, Any]:
     return {
         "id": row.id,
         "email": row.email,
@@ -71,8 +72,8 @@ def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any]) -> dict[str, A
         "team_name": row.team_name or "-",
         "seat_type": row.seat_type or "unknown",
         "joined_at": row.joined_at.strftime("%Y-%m-%d %H:%M:%S") if row.joined_at else "-",
-        "team_5x_completed": row.team_5x_completed,
-        "premium_quota_exhausted": row.premium_quota_exhausted,
+        "standard_completed": bool(state and state.standard_completed_at),
+        "premium_completed": bool(state and state.premium_completed_at),
         "export_count": row.export_count,
         "last_exported_at": row.last_exported_at.strftime("%Y-%m-%d %H:%M:%S")
         if row.last_exported_at else "-",
@@ -81,27 +82,24 @@ def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any]) -> dict[str, A
 
 
 async def _enrich_records(db: AsyncSession, rows, usage_filter: str, usage_service):
-    keys = [(row.email, row.team_space_id) for row in rows]
-    usage_by_account = await usage_service.check_many(db, keys)
+    emails = [row.email for row in rows]
+    spaces = [row.team_space_id for row in rows]
+    snapshots = (await db.execute(select(QuotaSnapshot).where(
+        QuotaSnapshot.email.in_(emails), QuotaSnapshot.team_space_id.in_(spaces),
+    ))).scalars().all()
+    by_key = {(row.email, row.team_space_id): row for row in snapshots}
+    states = (await db.execute(select(RotationMemberState).where(
+        RotationMemberState.team_id.in_([row.team_id for row in rows if row.team_id]),
+        RotationMemberState.email.in_(emails),
+    ))).scalars().all()
+    by_state = {(row.team_id, row.email): row for row in states}
     enriched = []
-    quota_updated = False
     for row in rows:
-        usage = usage_by_account.get(
-            (row.email, row.team_space_id),
-            {"status": "unavailable", "error": "账号池没有可用 JSON"},
-        )
+        usage = snapshot_usage(by_key.get((row.email, row.team_space_id)))
         weekly_state = (usage.get("1week") or {}).get("state")
         if usage_filter and weekly_state != usage_filter:
             continue
-        if usage.get("status") == "ok" and weekly_state in {"exhausted", "available"}:
-            completed = weekly_state == "exhausted"
-            row.team_5x_completed = completed
-            row.premium_quota_exhausted = completed and row.seat_type == "premium"
-            row.quota_checked_at = get_now()
-            quota_updated = True
-        enriched.append(_record_view(row, usage))
-    if quota_updated:
-        await db.commit()
+        enriched.append(_record_view(row, usage, by_state.get((row.team_id, row.email))))
     return enriched
 
 

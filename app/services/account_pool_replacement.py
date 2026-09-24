@@ -34,4 +34,5 @@ async def mark_replacement_pending(db_session, team_id: int, email: str) -> None
         authorization.export_json_updated_at = None
         authorization.sub2api_account_id = None
         authorization.sub2api_exported_at = None
+        authorization.sub2api_import_uncertain = False
     await db_session.commit()

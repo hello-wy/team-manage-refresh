@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% from "admin/_quota_cell.html" import quota_cell %}
 
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/account-pool.css?v=20260924-4">
+<link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
 {% block content %}
@@ -102,6 +104,7 @@
                         <th>验活状态</th>
                         <th>当前 Team</th>
                         <th>最近加入时间</th>
+                        <th>额度</th>
                         <th>加入历史</th>
                         <th style="text-align: right;">操作</th>
                     </tr>
@@ -181,6 +184,8 @@
                             </div>
                         </td>
                         <td data-label="最近加入时间">{{ entry.joined_at|format_datetime }}</td>
+                        {% set usage = entry.usage or {} %}
+                        <td data-label="额度">{{ quota_cell(usage.get('5h'), usage.get('1week')) }}</td>
                         <td data-label="加入历史">
                             <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
                                 <i data-lucide="history" style="width: 14px; height: 14px;"></i>
@@ -371,7 +376,8 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260924-batch"></script>
+<script src="/static/js/quota.js?v=20260925-1"></script>
+<script src="/static/js/account-pool.js?v=20260925-quota"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260924-team-list"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
 <script src="/static/js/account-pool-batch.js?v=20260924-1"></script>

@@ -18,13 +18,13 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from contextlib import asynccontextmanager
 # 导入路由
 from app import __version__
-from app.routes import account_pool_batch, account_pool_credentials, account_pool_totp, redeem, auth, admin, api, user, warranty
+from app.routes import account_pool_batch, account_pool_credentials, account_pool_totp, redeem, auth, admin, api, user, warranty, rotation
 from app.config import settings
 from app.database import init_db, close_db, AsyncSessionLocal, engine
 from app.services.auth import auth_service
@@ -33,6 +33,10 @@ from app.services.member_auto_kick import member_auto_kick_service
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.replacement_export import ReplacementExportService
+from app.models import Team
+from app.services.account_pool_usage import account_pool_usage_service
+from app.services.quota_rotation import RotationDependencies, run_team
+from app.services.quota_sync import refresh_export_snapshots
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -63,6 +67,8 @@ DEFAULT_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 12
 MIN_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 1
 MAX_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 24 * 7
 MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES = 1
+ROTATION_SCAN_INTERVAL_MINUTES = 1
+EXPORT_QUOTA_SYNC_INTERVAL_MINUTES = 5
 DEFAULT_ACCOUNT_POOL_LIVENESS_CRON = "30 2 * * *"
 ACCOUNT_POOL_LIVENESS_JOB_ID = "account_pool_liveness"
 
@@ -239,6 +245,36 @@ def configure_member_auto_kick_job() -> int:
     if not scheduler.running:
         scheduler.start()
     return MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES
+
+
+async def scheduled_rotation():
+    async with AsyncSessionLocal() as session:
+        teams = (await session.execute(select(Team).where(
+            Team.rotation_mode != "off").order_by(Team.id))).scalars().all()
+        for team in teams:
+            try:
+                result = await run_team(session, team, RotationDependencies(
+                    team_service, account_pool_usage_service, account_pool_service))
+                logger.info("额度轮转扫描: team=%s result=%s", team.id, result)
+            except Exception:
+                await session.rollback()
+                logger.exception("额度轮转扫描失败: team=%s", team.id)
+
+
+async def scheduled_export_quota_sync():
+    async with AsyncSessionLocal() as session:
+        count = await refresh_export_snapshots(session, account_pool_usage_service)
+        logger.info("导出账号额度快照同步: count=%s", count)
+
+
+def configure_rotation_jobs():
+    scheduler.add_job(scheduled_rotation, IntervalTrigger(minutes=ROTATION_SCAN_INTERVAL_MINUTES),
+                      id="quota_rotation", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(scheduled_export_quota_sync,
+                      IntervalTrigger(minutes=EXPORT_QUOTA_SYNC_INTERVAL_MINUTES),
+                      id="export_quota_sync", replace_existing=True, max_instances=1, coalesce=True)
+    if not scheduler.running:
+        scheduler.start()
 
 
 def account_pool_liveness_trigger(expression: str) -> CronTrigger:
@@ -558,6 +594,7 @@ async def lifespan(app: FastAPI):
             "定时任务已启动: 每 %s 分钟检查成员计划下线时间",
             member_auto_kick_interval,
         )
+        configure_rotation_jobs()
 
         liveness_cron = await configure_account_pool_liveness_job_from_settings()
         logger.info("账号号池验活任务已启动: cron=%s timezone=%s", liveness_cron, settings.timezone)
@@ -686,6 +723,7 @@ app.include_router(redeem.router)
 app.include_router(warranty.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(rotation.router)
 app.include_router(account_pool_credentials.router)
 app.include_router(account_pool_totp.router)
 app.include_router(account_pool_batch.router)

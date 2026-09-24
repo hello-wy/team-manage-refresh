@@ -418,6 +418,25 @@ async def admin_dashboard(
         )
 
 
+async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    keys = [
+        (entry["email"], entry.get("workspace_id") or "")
+        for entry in entries
+    ]
+    usage_by_account = await account_pool_usage_service.check_many(db, keys)
+    unavailable = {"status": "unavailable", "error": "账号池没有可用 JSON"}
+    return [
+        {
+            **entry,
+            "usage": usage_by_account.get(
+                (entry["email"], entry.get("workspace_id") or ""),
+                unavailable,
+            ),
+        }
+        for entry in entries
+    ]
+
+
 @router.get("/account-pool", response_class=HTMLResponse)
 async def account_pool_page(
     request: Request,
@@ -438,6 +457,7 @@ async def account_pool_page(
         search=search,
         status_filter=status_filter,
     )
+    listing["entries"] = await _attach_account_pool_usage(db, listing["entries"])
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     context.update({
         **listing,

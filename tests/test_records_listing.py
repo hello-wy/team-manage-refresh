@@ -1,25 +1,15 @@
 import unittest
+from unittest.mock import AsyncMock
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Sub2apiExportRecord
+from app.models import QuotaSnapshot, Sub2apiExportRecord
 from app.services.records_listing import list_export_records
+from app.utils.time_utils import get_now
 
 TOTAL_RECORDS = 25
 PAGE_SIZE = 10
-
-
-class UsageStub:
-    def __init__(self):
-        self.requested = []
-
-    async def check_many(self, db, keys):
-        self.requested.append(keys)
-        return {key: {
-            "status": "ok",
-            "1week": {"state": "exhausted" if int(key[0].split("@")[0]) % 2 else "available"},
-        } for key in keys}
 
 
 class RecordsListingTests(unittest.IsolatedAsyncioTestCase):
@@ -37,13 +27,19 @@ class RecordsListingTests(unittest.IsolatedAsyncioTestCase):
                 )
                 for index in range(TOTAL_RECORDS)
             ])
+            session.add_all([
+                QuotaSnapshot(email=f"{index}@example.com", team_space_id=f"space-{index}",
+                              status="ok", observed_at=get_now(),
+                              weekly_remaining=0 if index % 2 else 10)
+                for index in range(TOTAL_RECORDS)
+            ])
             await session.commit()
 
     async def asyncTearDown(self):
         await self.engine.dispose()
 
-    async def test_default_page_checks_only_visible_accounts(self):
-        usage = UsageStub()
+    async def test_default_page_reads_snapshots_without_live_quota_calls(self):
+        usage = AsyncMock()
         async with self.sessions() as session:
             result = await list_export_records(session, {
                 "search": "", "joined_filter": "all", "usage_filter": "",
@@ -51,15 +47,16 @@ class RecordsListingTests(unittest.IsolatedAsyncioTestCase):
             }, usage)
         self.assertEqual(result["pagination"]["total"], TOTAL_RECORDS)
         self.assertEqual(len(result["records"]), PAGE_SIZE)
-        self.assertEqual(len(usage.requested[0]), PAGE_SIZE)
+        usage.check_many.assert_not_awaited()
+        self.assertEqual(result["records"][0]["usage"]["status"], "ok")
 
     async def test_usage_filter_checks_all_candidates_before_pagination(self):
-        usage = UsageStub()
+        usage = AsyncMock()
         async with self.sessions() as session:
             result = await list_export_records(session, {
                 "search": "", "joined_filter": "all", "usage_filter": "exhausted",
                 "page": 1, "per_page": PAGE_SIZE,
             }, usage)
-        self.assertEqual(len(usage.requested[0]), TOTAL_RECORDS)
+        usage.check_many.assert_not_awaited()
         self.assertEqual(result["pagination"]["total"], TOTAL_RECORDS // 2)
         self.assertEqual(len(result["records"]), PAGE_SIZE)

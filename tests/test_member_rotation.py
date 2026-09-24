@@ -1,7 +1,12 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.database import Base
+from app.models import AccountPoolEntry, Team, TeamEmailMapping
+from app.services.account_pool import account_pool_service
 from app.services.member_rotation import MemberRotationService
 
 
@@ -42,7 +47,7 @@ class MemberRotationServiceTests(unittest.IsolatedAsyncioTestCase):
             1, "user-1", unittest.mock.ANY, email="old@example.com"
         )
         invite = self.account_pool.invite_replacement.await_args.kwargs["invite_member"]
-        await invite(1, "new@example.com", object())
+        await invite(1, "new@example.com", object(), seat_type="premium")
         self.team_service.add_team_member.assert_awaited_once_with(
             1, "new@example.com", unittest.mock.ANY, seat_type="premium"
         )
@@ -87,6 +92,28 @@ class MemberRotationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["completed"])
         self.assertEqual(result["status"], "replacement_failed")
         self.assertIn("已踢出", result["message"])
+
+    async def test_real_pool_invitation_accepts_seat_type_callback(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                db.add(Team(id=1, email="owner@example.com", account_id="space",
+                            access_token_encrypted="token"))
+                db.add(AccountPoolEntry(email="new@example.com"))
+                await db.commit()
+                service = MemberRotationService(self.team_service, account_pool_service,
+                                                self.exporter)
+                result = await service.rotate(1, "user-1", "old@example.com", db)
+                self.assertEqual(result["status"], "exported")
+                self.team_service.add_team_member.assert_awaited_once_with(
+                    1, "new@example.com", db, seat_type="premium")
+                mapping = (await db.execute(select(TeamEmailMapping))).scalar_one()
+                self.assertTrue(mapping.replacement_export_pending)
+        finally:
+            await engine.dispose()
 
 
 if __name__ == "__main__":
