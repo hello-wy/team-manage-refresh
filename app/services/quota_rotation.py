@@ -2,22 +2,20 @@
 
 import json
 from dataclasses import dataclass
-from datetime import timedelta
-from uuid import uuid4
 
-from sqlalchemy import delete, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 
-from app.models import (AccountPoolHistory, MemberAuthorization, QuotaSnapshot, RotationAction,
-                        RotationLease, RotationMemberState, Team, TeamEmailMapping)
+from app.models import (QuotaSnapshot, RotationAction,
+                        RotationMemberState, Team, TeamEmailMapping)
 from app.models import Sub2apiExportRecord
 from app.services.account_pool_replacement import mark_replacement_pending
-from app.services.quota_rotation_policy import ADMIN_ROLES, MAX_SNAPSHOT_AGE, next_action
+from app.services.quota_rotation_policy import ADMIN_ROLES, next_action
 from app.services.quota_sync import refresh_team
+from app.services.rotation_candidates import find_rotation_candidate
+from app.services.rotation_lease import acquire_lease, release_lease
 from app.utils.time_utils import get_now
 
-LEASE_DURATION = timedelta(minutes=10)
-OPEN_STATUSES = ("pending", "executing", "reconciling", "blocked")
+OPEN_STATUSES = ("pending", "executing", "reconciling")
 
 
 @dataclass(frozen=True)
@@ -25,32 +23,6 @@ class RotationDependencies:
     teams: object
     usage: object
     pool: object
-
-
-async def acquire_lease(db, resource_key):
-    now = get_now()
-    holder = str(uuid4())
-    changed = await db.execute(update(RotationLease).where(
-        RotationLease.resource_key == resource_key, RotationLease.expires_at <= now,
-    ).values(holder=holder, expires_at=now + LEASE_DURATION,
-             version=RotationLease.version + 1))
-    if changed.rowcount:
-        await db.commit()
-        return holder
-    db.add(RotationLease(resource_key=resource_key, holder=holder,
-                         expires_at=now + LEASE_DURATION))
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        return None
-    return holder
-
-
-async def release_lease(db, resource_key, holder):
-    await db.execute(delete(RotationLease).where(
-        RotationLease.resource_key == resource_key, RotationLease.holder == holder))
-    await db.commit()
 
 
 async def load_rotation_data(db, team):
@@ -87,6 +59,9 @@ async def record_stages(db, team, mappings, *, snapshots, states, seat_balance):
             state.queued_at = None
             state.blocked_reason = None
         if snapshot.weekly_remaining != 0:
+            if mapping.seat_type == "premium" and state.premium_completed_at:
+                state.cycle_id += 1
+                state.premium_completed_at = None
             state.blocked_reason = None
             continue
         if mapping.seat_type == "standard" and not state.standard_completed_at:
@@ -105,6 +80,33 @@ async def pending_action(db, team_id):
     return (await db.execute(select(RotationAction).where(
         RotationAction.team_id == team_id, RotationAction.status.in_(OPEN_STATUSES),
     ).order_by(RotationAction.id.asc()))).scalars().first()
+
+
+async def block_unverified_removal(db, team, decision, states):
+    exported = (await db.execute(select(Sub2apiExportRecord.id).where(
+        Sub2apiExportRecord.email == decision.email,
+        Sub2apiExportRecord.team_space_id == team.account_id,
+    ).limit(1))).scalar_one_or_none()
+    if not exported:
+        return None
+    state = states.get(decision.email)
+    cycle = state.cycle_id if state else 1
+    key = f"{team.id}:{decision.email}:{cycle}:remove"
+    existing = (await db.execute(select(RotationAction).where(
+        RotationAction.idempotency_key == key))).scalar_one_or_none()
+    if existing:
+        return {"status": existing.status, "action_id": existing.id,
+                "reason": existing.reason}
+    action = RotationAction(team_id=team.id, email=decision.email,
+                            action_type="remove",
+                            idempotency_key=key,
+                            status="blocked", reason="SUB2API_PAUSE_UNVERIFIED",
+                            result="该账号已导出，尚未验证下游暂停接口")
+    db.add(action)
+    if state:
+        state.blocked_reason = "SUB2API_PAUSE_UNVERIFIED"
+    await db.commit()
+    return {"status": "blocked", "action_id": action.id, "reason": action.reason}
 
 
 def action_confirmed(action, members):
@@ -155,41 +157,6 @@ async def _complete_action(db, action):
     elif action.action_type == "remove":
         state.phase = "removed"
         state.cycle_id += 1
-
-
-async def _candidate(db, team, pool):
-    excluded = set()
-    while candidate := await pool.find_replacement_candidate(
-        team.id, db, excluded_ids=frozenset(excluded)
-    ):
-        excluded.add(candidate.id)
-        history = (await db.execute(select(AccountPoolHistory.id).where(
-            AccountPoolHistory.account_pool_id == candidate.id,
-            AccountPoolHistory.team_id == team.id,
-        ).limit(1))).scalar_one_or_none()
-        exported = (await db.execute(select(Sub2apiExportRecord.id).where(
-            Sub2apiExportRecord.email == candidate.email,
-            Sub2apiExportRecord.team_space_id == team.account_id,
-        ).limit(1))).scalar_one_or_none()
-        if exported:
-            continue
-        uncertain = (await db.execute(select(MemberAuthorization.id).where(
-            MemberAuthorization.email == candidate.email,
-            MemberAuthorization.account_id == team.account_id,
-            MemberAuthorization.sub2api_import_uncertain.is_(True),
-        ).limit(1))).scalar_one_or_none()
-        if uncertain:
-            continue
-        if not history:
-            return candidate
-        snapshot = (await db.execute(select(QuotaSnapshot).where(
-            QuotaSnapshot.email == candidate.email,
-            QuotaSnapshot.team_space_id == team.account_id,
-        ))).scalar_one_or_none()
-        if (snapshot and snapshot.status == "ok" and snapshot.weekly_remaining
-                and snapshot.observed_at >= get_now() - MAX_SNAPSHOT_AGE):
-            return candidate
-    return None
 
 
 async def _execute_remote(db, team, action, *, mapping, team_service):
@@ -271,7 +238,7 @@ async def _run_locked(db, team, deps: RotationDependencies):
     if decision is None:
         standard = members_result["seat_balance"]["balance"]["standard"]["remaining"]
         if standard and not any(row.get("status") == "invited" for row in members_result["members"]):
-            candidate = await _candidate(db, team, deps.pool)
+            candidate = await find_rotation_candidate(db, team, deps.pool)
             if candidate:
                 from app.services.quota_rotation_policy import RotationDecision
                 decision = RotationDecision(candidate.email, "invite", "标准席位空缺")
@@ -279,6 +246,10 @@ async def _run_locked(db, team, deps: RotationDependencies):
                 return {"status": "blocked", "reason": "暂无符合资格的标准席位候选账号"}
     if decision is None:
         return {"status": "idle"}
+    if decision.action == "remove":
+        blocked = await block_unverified_removal(db, team, decision, states)
+        if blocked:
+            return blocked
     mapping = next((row for row in mappings if row.email == decision.email), None)
     if decision.action != "invite":
         return await execute_action(db, team, decision, mapping=mapping, team_service=deps.teams)

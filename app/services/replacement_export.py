@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.models import MemberAuthorization, Team, TeamEmailMapping
 from app.services.member_authorization import MemberAuthorizationError
-from app.services.sub2api import Sub2apiImportUncertain
+from app.services.sub2api import Sub2apiError, Sub2apiImportUncertain
 from app.services.sub2api_export_records import sub2api_export_record_service
 
 
@@ -35,10 +35,14 @@ class ReplacementExportService:
         if record.sub2api_import_uncertain:
             raise Sub2apiImportUncertain("上次导入结果不确定，请先在 sub2api 核对")
         payload = await self.authorization.export(team_id, email, db_session)
+        record.sub2api_import_uncertain = True
+        await db_session.commit()
         try:
             result = await self.sub2api.import_member(payload, db_session)
         except Sub2apiImportUncertain:
-            record.sub2api_import_uncertain = True
+            raise
+        except Sub2apiError:
+            record.sub2api_import_uncertain = False
             await db_session.commit()
             raise
         team = await db_session.get(Team, team_id)
@@ -54,6 +58,7 @@ class ReplacementExportService:
         await self.authorization.mark_sub2api_exported(
             team_id, email, result["account_id"], db_session
         )
+        record.sub2api_import_uncertain = False
         await self._clear_pending(team_id, email, db_session)
         return "exported"
 

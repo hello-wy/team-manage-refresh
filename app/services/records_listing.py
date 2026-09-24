@@ -86,7 +86,7 @@ def _record_view(row: Sub2apiExportRecord, usage: dict[str, Any], state=None, ma
     }
 
 
-async def _enrich_records(db: AsyncSession, rows, usage_filter: str, usage_service):
+async def _enrich_records(db: AsyncSession, rows, usage_filter: str):
     emails = [row.email for row in rows]
     spaces = [row.team_space_id for row in rows]
     snapshots = (await db.execute(select(QuotaSnapshot).where(
@@ -115,16 +115,14 @@ async def _enrich_records(db: AsyncSession, rows, usage_filter: str, usage_servi
 
 
 async def list_export_records(
-    db: AsyncSession, options: dict[str, Any], usage_service: Any
+    db: AsyncSession, options: dict[str, Any]
 ) -> dict[str, Any]:
     candidates, total, page, paginated = await _load_candidates(db, options)
     per_page = options["per_page"]
     total_pages = max(1, math.ceil(total / per_page))
     page = max(1, min(page, total_pages))
     if options["usage_filter"]:
-        rows = await _enrich_records(
-            db, candidates, options["usage_filter"], usage_service
-        )
+        rows = await _enrich_records(db, candidates, options["usage_filter"])
         total = len(rows)
         total_pages = max(1, math.ceil(total / per_page))
         page = max(1, min(page, total_pages))
@@ -133,7 +131,7 @@ async def list_export_records(
         selected = candidates if paginated else candidates[
             (page - 1) * per_page:page * per_page
         ]
-        rows = await _enrich_records(db, selected, "", usage_service)
+        rows = await _enrich_records(db, selected, "")
     return {
         "records": rows,
         "pagination": {

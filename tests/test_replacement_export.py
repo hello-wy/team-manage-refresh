@@ -9,7 +9,7 @@ from app.database import Base
 from app.models import MemberAuthorization, Team, TeamEmailMapping
 from app.services.member_auto_kick import MemberAutoKickService
 from app.services.replacement_export import ReplacementExportService
-from app.services.sub2api import Sub2apiImportUncertain
+from app.services.sub2api import Sub2apiError, Sub2apiImportUncertain
 
 EMAIL = "member@example.com"
 
@@ -89,7 +89,7 @@ class ReplacementExportTests(unittest.IsolatedAsyncioTestCase):
                 "membership": "joined",
             }
             self.sub2api.import_member.side_effect = [
-                ValueError("sub2api 暂不可用"),
+                Sub2apiError("sub2api 暂不可用"),
                 {"account_id": 42, "group_count": 1},
             ]
 

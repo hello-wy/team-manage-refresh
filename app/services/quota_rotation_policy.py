@@ -45,6 +45,8 @@ def next_action(members, snapshots, states, seat_balance):
         if member.status != "joined" or not quota_ready(member, snapshot):
             continue
         state = states.get(member.email)
+        if state and state.blocked_reason:
+            continue
         if state and state.phase in {"wait_reset", "removed"}:
             continue
         if member.seat_type == "premium" and snapshot.weekly_remaining == 0:
@@ -61,6 +63,8 @@ def next_action(members, snapshots, states, seat_balance):
         if member.status != "joined" or member.seat_type != "standard":
             continue
         state = states.get(member.email)
+        if state and state.blocked_reason:
+            continue
         if state and state.phase in {"wait_reset", "removed"}:
             continue
         if quota_ready(member, snapshot) and snapshot.weekly_remaining == 0:

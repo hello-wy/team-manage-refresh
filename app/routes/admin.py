@@ -2707,7 +2707,7 @@ async def records_page(
         "joined_filter": joined_filter,
         "page": int(page or 1),
         "per_page": per_page,
-    }, account_pool_usage_service)
+    })
     context = await build_admin_base_context(request, db, current_user, "records")
     context.update({
         **listing,

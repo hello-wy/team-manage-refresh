@@ -131,8 +131,10 @@ class Sub2apiService:
                     timeout=REQUEST_TIMEOUT_SECONDS, headers={"x-api-key": config.api_key}) as client:
                 response = await client.get(f"{config.base_url}/api/v1/admin/groups/all",
                                             params={"platform": "openai"})
-        except httpx.RequestError as exc:
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
             raise Sub2apiError("无法连接 sub2api，请检查站点地址与网络") from exc
+        except httpx.RequestError as exc:
+            raise Sub2apiImportUncertain("sub2api 创建结果不确定，请在目标站点核对") from exc
         groups = response_data(response)
         if not isinstance(groups, list):
             raise Sub2apiError("sub2api 分组响应格式错误")
@@ -181,7 +183,7 @@ class Sub2apiService:
         try:
             created = response_data(response)
         except Sub2apiError as exc:
-            if response.is_success:
+            if response.is_success or response.status_code >= 500:
                 raise Sub2apiImportUncertain("sub2api 创建响应不完整，请在目标站点核对") from exc
             raise
         if not isinstance(created, dict) or not isinstance(created.get("id"), int):

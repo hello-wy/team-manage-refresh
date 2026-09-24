@@ -21,6 +21,10 @@ async function refreshRotation(teamId) {
 async function previewRotation(teamId) {
     try {
         const result = await rotationRequest(teamId, 'preview');
+        if (!result.seat_balance?.success) {
+            showRotationResult(teamId, result.seat_balance?.error || '席位余额未知');
+            return;
+        }
         const action = result.next_action;
         showRotationResult(teamId, action ? `${action.email}: ${action.reason}` : '当前没有可执行动作');
     } catch (error) { showRotationResult(teamId, error.message); }
@@ -35,11 +39,13 @@ async function runRotation(teamId) {
 }
 
 document.querySelectorAll('.rotation-actions').forEach(async (element) => {
-    const response = await fetch(`/admin/teams/${element.dataset.teamId}/rotation/actions`);
-    if (!response.ok) return;
-    const result = await response.json();
-    element.textContent = result.actions.length
-        ? result.actions.map((row) => `${row.created_at}  ${row.email}  ${row.action}  ${row.status}  ${row.result || ''}`).join('\n')
-        : '暂无动作记录';
-    element.style.whiteSpace = 'pre-line';
+    try {
+        const response = await fetch(`/admin/teams/${element.dataset.teamId}/rotation/actions`);
+        if (!response.ok) throw new Error('动作历史读取失败');
+        const result = await response.json();
+        element.textContent = result.actions.length
+            ? result.actions.map((row) => `${row.created_at}  ${row.email}  ${row.action}  ${row.status}  ${row.result || ''}`).join('\n')
+            : '暂无动作记录';
+        element.style.whiteSpace = 'pre-line';
+    } catch (error) { element.textContent = error.message; }
 });

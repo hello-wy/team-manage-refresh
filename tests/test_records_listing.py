@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import AsyncMock
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -39,24 +38,20 @@ class RecordsListingTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_default_page_reads_snapshots_without_live_quota_calls(self):
-        usage = AsyncMock()
         async with self.sessions() as session:
             result = await list_export_records(session, {
                 "search": "", "joined_filter": "all", "usage_filter": "",
                 "page": 2, "per_page": PAGE_SIZE,
-            }, usage)
+            })
         self.assertEqual(result["pagination"]["total"], TOTAL_RECORDS)
         self.assertEqual(len(result["records"]), PAGE_SIZE)
-        usage.check_many.assert_not_awaited()
         self.assertEqual(result["records"][0]["usage"]["status"], "ok")
 
     async def test_usage_filter_checks_all_candidates_before_pagination(self):
-        usage = AsyncMock()
         async with self.sessions() as session:
             result = await list_export_records(session, {
                 "search": "", "joined_filter": "all", "usage_filter": "exhausted",
                 "page": 1, "per_page": PAGE_SIZE,
-            }, usage)
-        usage.check_many.assert_not_awaited()
+            })
         self.assertEqual(result["pagination"]["total"], TOTAL_RECORDS // 2)
         self.assertEqual(len(result["records"]), PAGE_SIZE)

@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import RotationAction, Team, TeamEmailMapping
-from app.services.quota_rotation import RotationDependencies, reconcile_action, run_team
-from app.services.quota_rotation_policy import next_action
+from app.models import RotationAction, Sub2apiExportRecord, Team, TeamEmailMapping
+from app.services.quota_rotation import (RotationDependencies, block_unverified_removal,
+                                         reconcile_action, run_team)
+from app.services.quota_rotation_policy import RotationDecision, next_action
 from app.utils.time_utils import get_now
 
 
@@ -66,6 +67,26 @@ class RotationPolicyTests(unittest.TestCase):
 
 
 class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exported_account_removal_is_explicitly_blocked(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                team = Team(id=1, email="owner@example.com", account_id="space",
+                            access_token_encrypted="token", rotation_mode="auto")
+                db.add(team)
+                db.add(Sub2apiExportRecord(email="member@example.com", team_space_id="space"))
+                await db.commit()
+                result = await block_unverified_removal(db, team,
+                    RotationDecision("member@example.com", "remove", "高级周额度耗尽"), {})
+                self.assertEqual(result["reason"], "SUB2API_PAUSE_UNVERIFIED")
+                self.assertEqual((await db.get(RotationAction, result["action_id"])).status,
+                                 "blocked")
+        finally:
+            await engine.dispose()
+
     async def test_restart_reconciles_without_repeating_remote_call(self):
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
