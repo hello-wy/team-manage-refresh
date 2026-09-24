@@ -1,0 +1,114 @@
+.records-workspace-page,
+.records-workspace-page .workbench-panel,
+.records-workspace-page .workbench-table-card {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.records-workspace-page .workbench-panel {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.records-workspace-page .table-container {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+}
+
+.records-workspace-page .data-table {
+    width: max-content;
+    min-width: 100%;
+}
+
+.quota-window {
+    display: grid;
+    gap: 0.3rem;
+    width: 190px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.quota-window-main {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.quota-period {
+    min-width: 2.3rem;
+    padding: 0.2rem 0.35rem;
+    border-radius: 5px;
+    background: #e6ebff;
+    color: #3445a6;
+    text-align: center;
+    font-weight: 700;
+}
+
+.quota-period-7d {
+    background: #d9f8ec;
+    color: #086b4b;
+}
+
+.quota-progress {
+    width: 66px;
+    height: 7px;
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    background: #e5e7eb;
+}
+
+.quota-progress::-webkit-progress-bar {
+    border-radius: 999px;
+    background: #e5e7eb;
+}
+
+.quota-progress::-webkit-progress-value {
+    border-radius: 999px;
+    background: #278b71;
+}
+
+.quota-progress::-moz-progress-bar {
+    border-radius: 999px;
+    background: #278b71;
+}
+
+.quota-progress.is-exhausted::-webkit-progress-value {
+    background: #e34b53;
+}
+
+.quota-progress.is-exhausted::-moz-progress-bar {
+    background: #e34b53;
+}
+
+.quota-percent {
+    min-width: 2.8rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.quota-reset {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    white-space: nowrap;
+}
+
+.quota-unavailable {
+    color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+    .records-workspace-page .table-container {
+        overflow-x: visible;
+    }
+
+    .records-workspace-page .data-table {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .records-workspace-page .quota-window-main {
+        flex-wrap: wrap;
+    }
+}

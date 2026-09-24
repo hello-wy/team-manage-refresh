@@ -12,7 +12,7 @@ async function refreshRecordsTable(target = location.href, pushHistory = false) 
             headers: {'X-Requested-With': 'XMLHttpRequest'},
             signal: controller.signal,
         });
-        if (!response.ok) throw new Error('使用记录加载失败');
+        if (!response.ok) throw new Error('导出记录加载失败');
         const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
         if (controller.signal.aborted) return;
         for (const selector of [
@@ -21,11 +21,12 @@ async function refreshRecordsTable(target = location.href, pushHistory = false) 
         ]) {
             const current = document.querySelector(selector);
             const next = nextDocument.querySelector(selector);
-            if (!current || !next) throw new Error('使用记录响应缺少 ' + selector);
+            if (!current || !next) throw new Error('导出记录响应缺少 ' + selector);
             current.replaceWith(next);
         }
         if (pushHistory) history.pushState({}, '', url);
         initColumns();
+        formatQuotaResetTimes();
         if (window.lucide) lucide.createIcons();
     } catch (error) {
         if (error.name !== 'AbortError') {
