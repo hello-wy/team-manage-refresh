@@ -1708,6 +1708,70 @@ async def push_team_to_cliproxyapi(
         )
 
 
+async def _push_team_owner_to_sub2api(team_id: int, db: AsyncSession):
+    team = await db.get(Team, team_id)
+    if team is None:
+        raise MemberAuthorizationError("Team 不存在")
+    if not team.refresh_token_encrypted:
+        raise MemberAuthorizationError("母号缺少 Refresh Token，请先更新 Team 凭证")
+    email = team.email.strip().lower()
+    payload = await member_authorization_service.export(team_id, email, db)
+    imported = await sub2api_service.import_member(payload, db)
+    await member_authorization_service.mark_sub2api_exported(
+        team_id, email, imported["account_id"], db
+    )
+    return {"team_id": team_id, "email": email, **imported}
+
+
+@router.post("/teams/{team_id}/push-sub2api")
+async def push_team_to_sub2api(
+    team_id: int, db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    try:
+        result = await _push_team_owner_to_sub2api(team_id, db)
+        return JSONResponse(content={"success": True, "data": result}, headers={"Cache-Control": "no-store"})
+    except (MemberAuthorizationError, Sub2apiError) as exc:
+        await db.rollback()
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
+    except Exception:
+        await db.rollback()
+        logger.exception("推送 Team %s 到 sub2api 失败", team_id)
+        return JSONResponse(status_code=500, content={"success": False, "error": "推送失败，请检查服务端日志"})
+
+
+@router.post("/teams/batch-push-sub2api")
+async def batch_push_teams_to_sub2api(
+    action_data: BulkActionRequest, db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    if not action_data.ids:
+        return JSONResponse(status_code=400, content={"success": False, "error": "请选择要推送的 Team"})
+    results = []
+    for team_id in action_data.ids:
+        try:
+            imported = await _push_team_owner_to_sub2api(team_id, db)
+            results.append({**imported, "success": True})
+        except (MemberAuthorizationError, Sub2apiError) as exc:
+            await db.rollback()
+            results.append({"team_id": team_id, "success": False, "error": str(exc)})
+        except Exception:
+            await db.rollback()
+            logger.exception("批量推送 Team %s 到 sub2api 失败", team_id)
+            results.append({"team_id": team_id, "success": False, "error": "推送失败，请检查服务端日志"})
+    succeeded = sum(item["success"] for item in results)
+    failed = len(results) - succeeded
+    message = f"批量推送到 sub2api：成功 {succeeded}，失败 {failed}"
+    if not succeeded:
+        failure = results[0]
+        message += f"。Team {failure['team_id']}: {failure['error']}"
+    return JSONResponse(status_code=200 if succeeded else 400, content={
+        "success": bool(succeeded), "message": message,
+        "error": message if not succeeded else None,
+        "success_count": succeeded, "failed_count": failed, "results": results,
+    }, headers={"Cache-Control": "no-store"})
+
+
 # ==================== 批量操作路由 ====================
 
 @router.post("/teams/batch-push-cliproxyapi")

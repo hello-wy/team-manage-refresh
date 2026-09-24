@@ -251,7 +251,8 @@ class MemberAuthorizationService:
             # 判定、持久化人数与页面刷新共用一次上游快照，避免第二次读取显示旧状态。
             snapshot = await self.teams.get_team_members(team.id, db)
             if not snapshot.get("success"):
-                raise MemberAuthorizationError("成员列表读取失败，暂时无法确认入组结果")
+                message = snapshot.get("error") if snapshot.get("owner_authorization_error") else None
+                raise MemberAuthorizationError(message or "成员列表读取失败，暂时无法确认入组结果")
             data["members_snapshot"] = snapshot
             member = next((m for m in snapshot["members"] if m["email"] == email), None)
             if member:

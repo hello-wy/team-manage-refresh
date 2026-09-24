@@ -489,27 +489,27 @@
     }
 
     body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary,
+    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary,
     html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary {
+    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary {
         color: var(--team-warm-minimal-primary-fg);
         background: var(--team-warm-minimal-primary-bg);
         border-color: var(--team-warm-minimal-primary-border);
     }
 
     body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:hover,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:hover,
+    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:hover,
     html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:hover,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:hover {
+    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:hover {
         color: var(--team-warm-minimal-primary-fg);
         background: var(--team-warm-minimal-primary-hover-bg);
         border-color: color-mix(in srgb, var(--team-warm-minimal-primary-border) 68%, var(--team-warm-minimal-primary-fg) 32%);
     }
 
     body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:focus-visible,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:focus-visible,
+    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:focus-visible,
     html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:focus-visible,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-cliproxyapi.btn-minimal.btn-primary:focus-visible {
+    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:focus-visible {
         box-shadow: 0 0 0 3px var(--team-warm-minimal-primary-focus);
     }
 
@@ -829,8 +829,8 @@
                     <button type="button" id="btnBatchEnableDeviceAuth" class="btn btn-success btn-sm">
                         <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i> 批量开启验证
                     </button>
-                    <button type="button" id="btnBatchPushCliproxyapi" class="btn btn-primary btn-sm">
-                        <i data-lucide="send" style="width: 14px; height: 14px;"></i> 批量推送
+                    <button type="button" id="btnBatchPushSub2api" class="btn btn-primary btn-sm" title="批量推送母号到 sub2api">
+                        <i data-lucide="send" style="width: 14px; height: 14px;"></i> 批量推送到 sub2api
                     </button>
                     <button type="button" id="btnBatchExportJson" class="btn btn-secondary btn-sm">
                         <i data-lucide="download" style="width: 14px; height: 14px;"></i> 批量导出 JSON
@@ -1024,8 +1024,8 @@
                             <i data-lucide="{{ 'badge-check' if team.device_code_auth_enabled else 'shield-check' }}" style="width: 16px; height: 16px;"></i>
                             <span class="btn-icon-fallback" aria-hidden="true">验</span>
                         </button>
-                        <button class="btn btn-sm btn-icon btn-minimal btn-primary btn-push-cliproxyapi"
-                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="推送到 CliproxyAPI" aria-label="推送到 CliproxyAPI">
+                        <button class="btn btn-sm btn-icon btn-minimal btn-primary btn-push-sub2api"
+                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="推送母号到 sub2api" aria-label="推送母号到 sub2api">
                             <i data-lucide="send" style="width: 16px; height: 16px;"></i>
                             <span class="btn-icon-fallback" aria-hidden="true">推</span>
                         </button>
@@ -1354,11 +1354,11 @@
             });
         });
 
-        document.querySelectorAll('.btn-push-cliproxyapi').forEach(btn => {
+        document.querySelectorAll('.btn-push-sub2api').forEach(btn => {
             btn.addEventListener('click', () => {
                 const id = btn.getAttribute('data-id');
                 const email = btn.getAttribute('data-email');
-                pushTeamToCliproxyapi(id, email);
+                pushTeamToSub2api(id, email);
             });
         });
 
@@ -1381,7 +1381,7 @@
         // 绑定批量操作按钮（避免依赖内联 onclick，兼容更严格的 CSP）
         document.getElementById('btnBatchRefresh')?.addEventListener('click', handleBatchRefresh);
         document.getElementById('btnBatchEnableDeviceAuth')?.addEventListener('click', handleBatchEnableDeviceAuth);
-        document.getElementById('btnBatchPushCliproxyapi')?.addEventListener('click', handleBatchPushCliproxyapi);
+        document.getElementById('btnBatchPushSub2api')?.addEventListener('click', handleBatchPushSub2api);
         document.getElementById('btnBatchExportJson')?.addEventListener('click', handleBatchExportJson);
         document.getElementById('btnBatchDelete')?.addEventListener('click', handleBatchDelete);
         document.getElementById('btnBatchTransferPool')?.addEventListener('click', handleBatchTransferPool);
@@ -1446,37 +1446,22 @@
     }
 
 
-    async function pushTeamToCliproxyapi(teamId, email = '') {
+    async function pushTeamToSub2api(teamId, email = '') {
         const targetLabel = email ? `"${email}"` : `ID=${teamId}`;
-        if (!confirm(`确定要将 Team ${targetLabel} 推送到 CliproxyAPI 吗?`)) {
+        if (!confirm(`确定要将 Team ${targetLabel} 的母号推送到 sub2api 吗？`)) {
             return;
         }
 
         try {
-            showToast('正在推送到 CliproxyAPI...', 'info');
-            const response = await fetch(`/admin/teams/${teamId}/push-cliproxyapi`, {
+            showToast('正在推送到 sub2api...', 'info');
+            const response = await fetch(`/admin/teams/${teamId}/push-sub2api`, {
                 method: 'POST'
             });
 
             const data = await response.json();
 
             if (response.ok && data.success) {
-                if (data.warning) {
-                    showToast(`${data.message || '推送成功'}；${data.warning}`, 'warning', {
-                        title: data.action === 'skipped' ? '凭证仍不完整' : '已推送，但凭证不完整',
-                        duration: 8600
-                    });
-                } else if (data.action === 'skipped') {
-                    showToast(data.message || '远端认证文件已是最新', 'info', {
-                        title: '无需重复推送',
-                        duration: 5600
-                    });
-                } else {
-                    showToast(data.message || '推送成功', 'success', {
-                        title: data.action === 'updated' ? '推送已更新' : '推送成功',
-                        duration: 7200
-                    });
-                }
+                showToast(`已推送到 sub2api，绑定 ${data.data.group_count} 个分组`, 'success');
             } else {
                 showToast(data.error || '推送失败', 'error');
             }
@@ -2002,7 +1987,7 @@
     }
 
     function setBatchActionButtonsDisabled(disabled) {
-        ['btnBatchRefresh', 'btnBatchEnableDeviceAuth', 'btnBatchPushCliproxyapi', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
+        ['btnBatchRefresh', 'btnBatchEnableDeviceAuth', 'btnBatchPushSub2api', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
             const button = document.getElementById(id);
             if (button) button.disabled = disabled;
         });
@@ -2315,14 +2300,15 @@
         handleBatchAction('/admin/teams/batch-enable-device-auth', '批量开启验证');
     }
 
-    function handleBatchPushCliproxyapi() {
-        handleBatchAction('/admin/teams/batch-push-cliproxyapi', '批量推送到 CliproxyAPI', {
+    function handleBatchPushSub2api() {
+        handleBatchAction('/admin/teams/batch-push-sub2api', '批量推送到 sub2api', {
             onSuccessToast(result) {
-                if (result.warning_count > 0) {
+                if (result.failed_count > 0) {
+                    const failure = result.results.find(item => !item.success);
                     return {
-                        message: result.message,
+                        message: `${result.message}。Team ${failure.team_id}: ${failure.error}`,
                         type: 'warning',
-                        title: '批量推送已完成，但部分凭证不完整',
+                        title: '部分 Team 推送失败，请核对结果',
                         duration: 8600
                     };
                 }
