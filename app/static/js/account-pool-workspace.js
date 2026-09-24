@@ -12,8 +12,10 @@ async function scanAccountPoolWorkspace(button) {
         if (!response.ok || !payload.success) {
             throw new Error(payload.error || '获取当前 Team 失败');
         }
-        const count = payload.workspace?.available_workspaces?.length || 0;
-        showToast(`${button.dataset.email} 已刷新 ${count} 个空间的状态和 JSON`, 'success');
+        const count = (payload.workspace?.available_workspaces || []).filter(
+            workspace => !workspace.is_personal,
+        ).length;
+        showToast(`${button.dataset.email} 已获取 ${count} 个 Team`, 'success');
         await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '获取当前 Team 失败', 'error');
@@ -25,6 +27,7 @@ async function scanAccountPoolWorkspace(button) {
 }
 
 async function selectAccountPoolWorkspace(control) {
+    const previousId = control.dataset.selectedId;
     control.disabled = true;
     try {
         const response = await fetch(
@@ -35,10 +38,12 @@ async function selectAccountPoolWorkspace(control) {
         );
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.detail || result.error || '选择 Team 失败');
-        await refreshAccountPoolTable();
+        control.dataset.selectedId = result.workspace_id;
     } catch (error) {
+        control.value = previousId;
         showToast(error.message || '选择 Team 失败', 'error');
-        await refreshAccountPoolTable();
+    } finally {
+        control.disabled = false;
     }
 }
 

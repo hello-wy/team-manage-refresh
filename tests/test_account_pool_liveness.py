@@ -135,6 +135,39 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.args[0].account_id for call in self.login.login.await_args_list],
                          ["team-a", "team-b"])
 
+    async def test_team_list_refresh_uses_one_verification_without_json_login(self):
+        entry_id = await self.add_account(
+            "member@example.com----password----JBSWY3DPEHPK3PXP"
+        )
+        async with self.sessions() as session:
+            entry = await session.get(AccountPoolEntry, entry_id)
+            entry.workspace_id = "team-b"
+            entry.export_json_encrypted = "existing-json"
+            session.add(AccountPoolWorkspace(
+                account_pool_id=entry_id, workspace_id="team-b", name="Old name",
+                status="workspace_ok", export_json_encrypted="existing-json",
+            ))
+            await session.commit()
+            self.login.verify_credentials.return_value = {
+                "available_workspaces": [
+                    {"id": "personal", "name": "Personal", "is_personal": True},
+                    {"id": "team-a", "name": "Team A"},
+                    {"id": "team-b", "name": "Team B"},
+                ],
+            }
+            state = await self.authorization.refresh_team_list(session, entry_id)
+            rows = (await session.scalars(select(AccountPoolWorkspace))).all()
+
+        entry = await self.read_account(entry_id)
+        self.assertEqual([item["id"] for item in state["available_workspaces"]],
+                         ["team-a", "team-b"])
+        self.assertEqual(entry.workspace_id, "team-b")
+        self.assertEqual(entry.workspace_name, "Team B")
+        self.assertEqual(entry.export_json_encrypted, "existing-json")
+        self.assertEqual(len(rows), 1)
+        self.login.verify_credentials.assert_awaited_once()
+        self.login.login.assert_not_awaited()
+
     async def test_personal_account_is_persisted_without_team_plan(self):
         entry_id = await self.add_account(
             "personal@example.com----password----JBSWY3DPEHPK3PXP"

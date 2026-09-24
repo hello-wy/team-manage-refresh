@@ -346,7 +346,7 @@ function initAccountPoolColumnToggler() {
 
     table.querySelectorAll('thead th').forEach((header, index) => {
         const label = header.innerText.trim();
-        if (!label || label === '操作') return;
+        if (!label || label === '操作' || header.querySelector('input[type="checkbox"]')) return;
 
         const visible = !hiddenColumns.has(index);
         setAccountPoolColumnVisibility(table, index, visible);
@@ -484,6 +484,7 @@ async function refreshAccountPoolTable(options = {}) {
         initAccountPoolColumnToggler();
         window.initAccountPoolWorkspaceButtons?.();
         window.initAccountPoolRotateButtons?.();
+        window.initAccountPoolBatchSelection?.();
         if (window.lucide) lucide.createIcons();
     } catch (error) {
         if (error.name !== 'AbortError') showToast(error.message || '账号列表加载失败', 'error');

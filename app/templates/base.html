@@ -35,7 +35,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=20260921-sub2api-icon">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260924-solidapi-nav">
     <link rel="stylesheet" href="/static/css/totp-code.css?v=20260920">
     <link rel="stylesheet" href="/static/css/member-account-credentials.css?v=20260920-auto-login">
     <!-- Lucide Icons -->
@@ -84,8 +84,8 @@
                         <span>兑换码</span>
                     </a>
                     <a href="/admin/records" class="desktop-nav-link {% if active_page == 'records' %}active{% endif %}">
-                        <i data-lucide="file-text"></i>
-                        <span>使用记录</span>
+                        <img class="solidapi-nav-icon" src="/static/solidapi-s-icon.svg" alt="" aria-hidden="true">
+                        <span>导出记录</span>
                     </a>
                     <a href="/admin/settings" class="desktop-nav-link {% if system_active %}active{% endif %}">
                         <i data-lucide="settings-2"></i>
@@ -161,8 +161,8 @@
                 </li>
                 <li class="menu-item {% if active_page == 'records' %}active{% endif %}">
                     <a href="/admin/records">
-                        <span class="menu-icon" data-lucide="file-text"></span>
-                        <span class="menu-text">使用记录</span>
+                        <span class="menu-icon"><img class="solidapi-nav-icon" src="/static/solidapi-s-icon.svg" alt="" aria-hidden="true"></span>
+                        <span class="menu-text">导出记录</span>
                     </a>
                 </li>
                 <li class="menu-item {% if system_active %}active{% endif %}">

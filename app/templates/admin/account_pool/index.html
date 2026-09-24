@@ -3,7 +3,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260924-2">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260924-4">
 {% endblock %}
 
 {% block content %}
@@ -77,12 +77,23 @@
             </div>
         </div>
 
+        <div class="account-pool-batch-bar" id="accountPoolBatchBar">
+            <span id="accountPoolSelectedCount">已选择 0 个账号</span>
+            <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchJson" disabled><i data-lucide="download"></i> 合并 JSON</button>
+            <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchSub2api" disabled><i data-lucide="upload"></i> 导出到 Sub2API</button>
+            <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchRotate" disabled><i data-lucide="key-round"></i> 更换 2FA</button>
+            <button type="button" class="btn btn-sm btn-danger" id="accountPoolBatchDelete" disabled><i data-lucide="trash-2"></i> 删除</button>
+            <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchClear" disabled>清除选择</button>
+            <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchHistory"><i data-lucide="history"></i> 2FA 记录</button>
+        </div>
+        <div id="accountPoolBatchProgress" class="account-pool-batch-progress" role="status" aria-live="polite" hidden></div>
         <div id="accountPoolTableRegion" class="account-pool-table-region" data-current-page="{{ current_page }}" data-total-pages="{{ total_pages }}">
         {% if entries %}
         <div class="table-container mobile-card-table-container" style="margin-top: 1rem;">
             <table class="data-table">
                 <thead>
                     <tr>
+                        <th class="account-pool-select-cell"><input type="checkbox" id="accountPoolSelectPage" aria-label="选择本页全部账号"></th>
                         <th>邮箱</th>
                         <th>密码</th>
                         <th>2FA</th>
@@ -98,6 +109,7 @@
                 <tbody>
                     {% for entry in entries %}
                     <tr data-account-pool-row="{{ entry.id }}">
+                        <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}"></td>
                         <td data-label="邮箱"><strong>{{ entry.email }}</strong></td>
                         <td data-label="密码">
                             <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" title="复制登录密码" aria-label="复制登录密码" onclick='copyAccountPoolCredential({{ entry.email|tojson }}, "password", "登录密码")'>
@@ -129,30 +141,25 @@
                         <td data-label="当前 Team">
                             <div class="account-pool-team-cell">
                                 <div class="account-pool-team">
-                                    {% if entry.workspace_options %}
-                                    <select class="form-control account-pool-workspace-selector" data-entry-id="{{ entry.id }}" aria-label="选择 {{ entry.email }} 的登录空间">
-                                        {% for workspace in entry.workspace_options %}
-                                        <option value="{{ workspace.id }}" {% if workspace.id == entry.workspace_id %}selected{% endif %}>{{ workspace.name }}{% if workspace.is_personal %}（个人）{% endif %} · {{ 'JSON 已保存' if workspace.json_saved else '待刷新 JSON' }}</option>
+                                    {% if entry.workspace_is_personal %}
+                                    {% set current_team_label = '个人账户' %}
+                                    {% elif entry.workspace_id and entry.workspace_in_pool %}
+                                    {% set current_team_label = entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) %}
+                                    {% elif entry.workspace_id %}
+                                    {% set current_team_label = entry.workspace_name or entry.workspace_id %}
+                                    {% elif entry.workspace_status == 'no_workspace' %}
+                                    {% set current_team_label = '未加入 Team' %}
+                                    {% elif entry.workspace_status == 'workspace_error' %}
+                                    {% set current_team_label = '获取失败' %}
+                                    {% else %}{% set current_team_label = '-' %}{% endif %}
+                                    {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
+                                    {% if selectable_teams %}
+                                    <select class="account-pool-workspace-selector" data-entry-id="{{ entry.id }}" data-selected-id="{{ entry.workspace_id or '' }}" aria-label="选择 {{ entry.email }} 的 Team" title="选择 {{ entry.email }} 的 Team">
+                                        {% for workspace in selectable_teams %}
+                                        <option value="{{ workspace.id }}" {% if workspace.id == entry.workspace_id %}selected{% endif %}>{{ workspace.name }}</option>
                                         {% endfor %}
                                     </select>
-                                    <small>{{ entry.workspace_options|length }} 个空间 · {{ entry.workspace_options|selectattr('json_saved')|list|length }} 份 JSON</small>
-                                    {% endif %}
-                                    {% if entry.workspace_is_personal %}
-                                    <span>个人账户</span>
-                                    <small>未加入 Team Workspace</small>
-                                    {% elif entry.workspace_id and entry.workspace_in_pool %}
-                                    <span>{{ entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) }}</span>
-                                    <small>已加入 Team Workspace</small>
-                                    {% elif entry.workspace_id %}
-                                    <span>{{ entry.workspace_name or '外部 Workspace' }}</span>
-                                    {% elif entry.workspace_status == 'no_workspace' %}
-                                    <span>未加入 Workspace</span>
-                                    <small>可使用个人账号自动登录</small>
-                                    {% elif entry.workspace_status == 'workspace_error' %}
-                                    <span>获取失败</span>
-                                    <small>请重新扫描或查看验活结果</small>
-                                    {% else %}<span>-</span>{% endif %}
-                                    {% if entry.json_saved %}<small>当前 JSON 已保存 · {{ entry.json_updated_at|format_datetime }}</small>{% endif %}
+                                    {% else %}<span class="account-pool-team-name">{{ current_team_label }}</span>{% endif %}
                                     {% if entry.export_job_id %}
                                     <small class="account-pool-export-status" data-job-id="{{ entry.export_job_id }}" data-status="{{ entry.export_job_status }}">
                                         {% if entry.export_job_status == 'completed' %}Sub2API 导出完成
@@ -164,8 +171,8 @@
                                 <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
-                                    title="刷新所有 Team 状态和 JSON"
-                                    aria-label="刷新所有 Team 状态和 JSON"
+                                    title="刷新已加入的 Team"
+                                    aria-label="刷新已加入的 Team"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
                                 >
@@ -267,6 +274,23 @@
     </section>
 </div>
 
+<div id="accountPoolBatchHistoryModal" class="modal-overlay">
+    <div class="modal modal-large">
+        <div class="modal-header">
+            <h3><i data-lucide="history"></i> 2FA 更换记录</h3>
+            <button class="modal-close" type="button" onclick="hideModal('accountPoolBatchHistoryModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="accountPoolBatchHistoryResults" class="account-pool-batch-history"></div>
+            <div class="pagination-controls">
+                <button type="button" class="btn btn-sm btn-secondary" id="accountPoolHistoryPrev" title="上一页" aria-label="上一页"><i data-lucide="chevron-left"></i></button>
+                <span id="accountPoolHistoryPage"></span>
+                <button type="button" class="btn btn-sm btn-secondary" id="accountPoolHistoryNext" title="下一页" aria-label="下一页"><i data-lucide="chevron-right"></i></button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="accountPoolRotate2faModal" class="modal-overlay">
     <div class="modal">
         <div class="modal-header">
@@ -347,7 +371,8 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool.js?v=20260924-lazy-teams"></script>
-<script src="/static/js/account-pool-workspace.js?v=20260924-multi-team"></script>
+<script src="/static/js/account-pool.js?v=20260924-batch"></script>
+<script src="/static/js/account-pool-workspace.js?v=20260924-team-list"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
+<script src="/static/js/account-pool-batch.js?v=20260924-1"></script>
 {% endblock %}

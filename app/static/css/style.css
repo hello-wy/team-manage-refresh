@@ -533,7 +533,8 @@ body.admin-theme .toast {
     height: 24px;
 }
 
-.account-pool-sub2api-icon {
+.account-pool-sub2api-icon,
+.solidapi-nav-icon {
     display: block;
     width: 20px;
     height: 20px;

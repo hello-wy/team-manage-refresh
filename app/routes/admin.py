@@ -56,13 +56,12 @@ from app.services.member_auto_kick import (
 )
 from app.services.member_rotation import MemberRotationService
 from app.services.replacement_export import ReplacementExportService
-from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, RedemptionCode, RedemptionRecord, RenewalRequest, Sub2apiExportRecord, Team, TeamEmailMapping
+from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool_export import AccountPoolExportService, selected_workspace
 from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.sub2api_export_records import sub2api_export_record_service
-from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
 
@@ -589,16 +588,13 @@ async def scan_account_pool_workspace(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Discover all joined workspaces and refresh each OAuth JSON."""
+    """Discover joined Team names and IDs with one credential verification."""
     try:
-        result = await account_pool_liveness_service.check_entry(db, entry_id)
-        entry = await db.get(AccountPoolEntry, entry_id)
-        if result != "alive":
-            raise AccountPoolAuthorizationError(entry.liveness_message if entry else "账号不存在")
+        workspace = await account_pool_authorization_service.refresh_team_list(db, entry_id)
         return JSONResponse(content={
             "success": True,
-            "message": "所有 Team 状态和 JSON 已更新",
-            "workspace": json.loads(entry.workspace_state_json),
+            "message": "当前 Team 列表已更新",
+            "workspace": workspace,
         })
     except AccountPoolAuthorizationError as exc:
         await db.rollback()
@@ -638,7 +634,8 @@ async def select_account_pool_workspace(
     entry.export_json_encrypted = record.export_json_encrypted if record else None
     entry.export_json_updated_at = record.json_updated_at if record else None
     await db.commit()
-    return {"success": True, "workspace_id": workspace_id}
+    return {"success": True, "workspace_id": workspace_id,
+            "workspace_name": entry.workspace_name}
 
 
 @router.post("/account-pool/liveness")

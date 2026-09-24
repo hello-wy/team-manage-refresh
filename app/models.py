@@ -239,6 +239,21 @@ class AccountPoolExportJob(Base):
     finished_at = Column(DateTime)
 
 
+class AccountPoolTotpJob(Base):
+    """Per-account audit record for a background TOTP rotation."""
+    __tablename__ = "account_pool_totp_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    batch_id = Column(String(36), nullable=False, index=True)
+    account_pool_id = Column(Integer, nullable=False)
+    email = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    error = Column(Text)
+    new_secret_encrypted = Column(Text)
+    created_at = Column(DateTime, default=get_now, nullable=False)
+    finished_at = Column(DateTime)
+
+
 class Sub2apiExportRecord(Base):
     """成功导入 sub2api 的邮箱与 Team 空间去重记录。"""
     __tablename__ = "sub2api_export_records"

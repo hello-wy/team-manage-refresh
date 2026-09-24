@@ -435,20 +435,16 @@ class MemberAuthorizationRouteTests(unittest.TestCase):
         login.assert_awaited_once_with(unittest.mock.ANY, 7, "")
         save.assert_awaited_once()
 
-    def test_account_pool_workspace_scan_persists_result(self):
+    def test_account_pool_workspace_scan_returns_team_list(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
-        workspace = {"status": "workspace_ok", "workspace_id": "workspace-1"}
+        workspace = {"available_workspaces": [{"id": "workspace-1", "name": "Team One"}]}
         async def db():
-            database = AsyncMock()
-            database.get.return_value = SimpleNamespace(
-                workspace_state_json=json.dumps(workspace), liveness_message=""
-            )
-            yield database
+            yield AsyncMock()
         app.dependency_overrides[get_db] = db
-        with patch.object(admin.account_pool_liveness_service, "check_entry",
-                          new=AsyncMock(return_value="alive")) as check:
+        with patch.object(admin.account_pool_authorization_service, "refresh_team_list",
+                          new=AsyncMock(return_value=workspace)) as scan:
             response = self.client.post("/admin/account-pool/7/workspace-scan")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["workspace"]["workspace_id"], "workspace-1")
-        check.assert_awaited_once()
+        self.assertEqual(response.json()["workspace"], workspace)
+        scan.assert_awaited_once()

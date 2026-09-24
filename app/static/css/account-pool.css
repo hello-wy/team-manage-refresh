@@ -87,10 +87,23 @@
 }
 
 .account-pool-workspace-selector {
-    width: 100%;
+    width: fit-content;
     min-width: 0;
     max-width: 230px;
-    font-size: 0.85rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-main);
+    font: inherit;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    appearance: none;
+}
+
+.account-pool-workspace-selector:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
 }
 
 .account-pool-team-cell {
@@ -123,9 +136,52 @@
     padding: 0;
 }
 
-.account-pool-page .data-table th:nth-child(3),
-.account-pool-page .data-table td:nth-child(3) {
+.account-pool-page .data-table th:nth-child(4),
+.account-pool-page .data-table td:nth-child(4) {
     min-width: 180px;
+}
+
+.account-pool-select-cell {
+    width: 38px;
+    min-width: 38px;
+    text-align: center;
+}
+
+.account-pool-batch-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.account-pool-batch-bar > span {
+    margin-right: 0.5rem;
+    color: var(--text-muted);
+}
+
+.account-pool-batch-progress {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-base);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.account-pool-batch-history {
+    display: grid;
+    gap: 0.5rem;
+    max-height: 60vh;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+}
+
+.account-pool-batch-history-item {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border-base);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .account-pool-toolbar-actions {
@@ -283,6 +339,10 @@
 
     .account-pool-status-filter {
         min-width: 0;
+    }
+
+    .account-pool-row-actions {
+        flex-wrap: wrap;
     }
 
     .account-pool-page .page-meta-pill {
