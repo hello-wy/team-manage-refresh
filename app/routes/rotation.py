@@ -14,6 +14,7 @@ from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
 from app.services.quota_sync import refresh_team
 from app.services.rotation_read_model import load_team_rotation
+from app.services.rotation_candidates import find_rotation_candidate
 
 router = APIRouter(prefix="/admin", tags=["rotation"])
 
@@ -31,9 +32,19 @@ async def _team(db, team_id):
 
 async def _team_view(db, team):
     live = await team_service.get_team_members(team.id, db)
-    balance = live.get("seat_balance") if live.get("success") else {"success": False,
-                                                                  "error": live.get("error")}
-    return await load_team_rotation(db, team, balance)
+    balance = live.get("seat_balance") if live.get("success") else None
+    if balance is None:
+        balance = {"success": False, "error": live.get("error") or "席位余额未知"}
+    view = await load_team_rotation(db, team, balance)
+    standard = ((balance or {}).get("balance") or {}).get("standard", {}).get("remaining")
+    if not view["next_action"] and standard and not any(
+        row.get("status") == "invited" for row in live.get("members", [])
+    ):
+        candidate = await find_rotation_candidate(db, team, account_pool_service)
+        if candidate:
+            view["next_action"] = {"email": candidate.email, "action": "invite",
+                                   "reason": "标准席位空缺"}
+    return view
 
 
 @router.get("/rotation", response_class=HTMLResponse)

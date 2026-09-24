@@ -2,8 +2,10 @@
 
 from sqlalchemy import select
 
-from app.models import MemberAuthorization, QuotaSnapshot, RotationMemberState, Team, TeamEmailMapping
-from app.services.quota_rotation_policy import next_action, quota_ready
+from app.models import (MemberAuthorization, QuotaSnapshot, RotationMemberState,
+                        RotationSeatSnapshot, Team, TeamEmailMapping)
+from app.services.quota_rotation_policy import MAX_SNAPSHOT_AGE, next_action, quota_ready
+from app.utils.time_utils import get_now
 
 
 def snapshot_usage(snapshot):
@@ -28,6 +30,18 @@ def snapshot_usage(snapshot):
 
 
 async def load_team_rotation(db, team: Team, seat_balance=None):
+    if seat_balance is None:
+        seats = await db.get(RotationSeatSnapshot, team.id)
+        if seats:
+            fresh = seats.observed_at >= get_now() - MAX_SNAPSHOT_AGE
+            seat_balance = {"success": fresh, "observed_at": seats.observed_at.isoformat(),
+                "error": None if fresh else "席位快照已过期",
+                "balance": {
+                    "standard": {"known": True, "paid": seats.standard_paid,
+                                 "remaining": seats.standard_remaining},
+                    "premium": {"known": True, "paid": seats.premium_paid,
+                                "remaining": seats.premium_remaining},
+                }}
     mappings = (await db.execute(select(TeamEmailMapping).where(
         TeamEmailMapping.team_id == team.id,
         TeamEmailMapping.status.in_(("joined", "invited")),

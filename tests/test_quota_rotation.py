@@ -3,13 +3,21 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from fastapi import HTTPException
 
 from app.database import Base
-from app.models import RotationAction, Sub2apiExportRecord, Team, TeamEmailMapping
+from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
+                        RotationAction, RotationSeatSnapshot, Sub2apiExportRecord,
+                        Team, TeamEmailMapping, TeamReplacementQueue)
+from app.routes.rotation import RotationConfig, rotation_config
+from app.services.account_pool import account_pool_service
 from app.services.quota_rotation import (RotationDependencies, block_unverified_removal,
                                          reconcile_action, run_team)
 from app.services.quota_rotation_policy import RotationDecision, next_action
+from app.services.rotation_candidates import find_rotation_candidate
+from app.services.quota_sync import refresh_historical_candidates
 from app.utils.time_utils import get_now
 
 
@@ -27,8 +35,8 @@ def snapshot(seat="standard", weekly=0, short=0):
 
 def balance(standard=1, premium=1):
     return {"success": True, "balance": {
-        "standard": {"known": True, "remaining": standard},
-        "premium": {"known": True, "remaining": premium},
+        "standard": {"known": True, "paid": 2, "remaining": standard},
+        "premium": {"known": True, "paid": 1, "remaining": premium},
     }}
 
 
@@ -67,6 +75,75 @@ class RotationPolicyTests(unittest.TestCase):
 
 
 class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_team_mode_setting_checks_old_replacement_queue(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                db.add(Team(id=1, email="owner@example.com", account_id="space",
+                            access_token_encrypted="token"))
+                await db.commit()
+                configured = await rotation_config(1, RotationConfig(mode="auto"),
+                                                   db=db, user={})
+                self.assertEqual(configured["mode"], "auto")
+                db.add(TeamReplacementQueue(team_id=1, seat_type="standard"))
+                await db.commit()
+                with self.assertRaises(HTTPException) as error:
+                    await rotation_config(1, RotationConfig(mode="dry_run"),
+                                          db=db, user={})
+                self.assertEqual(error.exception.status_code, 409)
+        finally:
+            await engine.dispose()
+
+    async def test_historical_candidate_quota_is_refreshed_by_workspace(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                db.add(Team(id=1, email="owner@example.com", account_id="space",
+                            access_token_encrypted="token", rotation_mode="auto"))
+                db.add(AccountPoolEntry(id=1, email="member@example.com"))
+                db.add(AccountPoolHistory(account_pool_id=1, team_id=1,
+                                          joined_at=get_now() - timedelta(days=8),
+                                          left_at=get_now() - timedelta(days=7)))
+                await db.commit()
+                usage = SimpleNamespace(check_many=AsyncMock(return_value={
+                    ("member@example.com", "space"): {
+                        "status": "ok", "1week": {"remaining": 5}},
+                }))
+                self.assertEqual(await refresh_historical_candidates(db, usage), 1)
+                observed = (await db.execute(select(QuotaSnapshot))).scalar_one()
+                self.assertEqual(observed.team_space_id, "space")
+                self.assertEqual(observed.weekly_remaining, 5)
+        finally:
+            await engine.dispose()
+
+    async def test_candidate_with_in_flight_invite_is_skipped(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                team = Team(id=2, email="owner@example.com", account_id="space-2",
+                            access_token_encrypted="token", rotation_mode="auto")
+                db.add_all([team, Team(id=1, email="other@example.com",
+                                       account_id="space-1", access_token_encrypted="token")])
+                now = get_now()
+                db.add_all([AccountPoolEntry(id=1, email="a@example.com", updated_at=now),
+                            AccountPoolEntry(id=2, email="b@example.com", updated_at=now)])
+                db.add(RotationAction(team_id=1, email="a@example.com", action_type="invite",
+                                      idempotency_key="other-team:invite", status="executing"))
+                await db.commit()
+                candidate = await find_rotation_candidate(db, team, account_pool_service)
+                self.assertEqual(candidate.email, "b@example.com")
+        finally:
+            await engine.dispose()
+
     async def test_exported_account_removal_is_explicitly_blocked(self):
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -142,6 +219,7 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 }))
                 result = await run_team(db, team, RotationDependencies(teams, usage, object()))
                 self.assertEqual(result["status"], "succeeded")
+                self.assertEqual((await db.get(RotationSeatSnapshot, 1)).premium_remaining, 1)
                 teams.update_member_seat_type.assert_awaited_once_with(
                     1, "user-1", "premium", "standard", db)
         finally:

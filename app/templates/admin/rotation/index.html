@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}额度轮转 - GPT Team 管理系统{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/records.css?v=20260925-rotation">{% endblock %}
 {% block content %}
 <div class="workspace-page records-workspace-page">
   <header class="page-header"><div><h1>额度轮转</h1></div></header>
@@ -8,6 +9,7 @@
     <div class="table-section-head">
       <div class="table-section-copy"><h3>{{ team.team_name or ('Team #' ~ team.team_id) }}</h3>
         <span class="badge badge-secondary">{{ {'off':'关闭','dry_run':'仅预览','auto':'自动轮转'}[team.rotation_mode] }}</span>
+        {% if team.seat_balance and team.seat_balance.success %}<span class="text-muted">标准剩余 {{ team.seat_balance.balance.standard.remaining }} / 高级剩余 {{ team.seat_balance.balance.premium.remaining }}</span>{% elif team.seat_balance %}<span class="text-muted">{{ team.seat_balance.error }}</span>{% endif %}
       </div>
       <div class="form-actions" style="display:flex;gap:.5rem">
         <button type="button" class="btn btn-secondary" onclick="refreshRotation({{ team.team_id }})" title="刷新成员与额度"><i data-lucide="refresh-cw"></i> 刷新</button>

@@ -207,6 +207,17 @@ class QuotaSnapshot(Base):
     __table_args__ = (Index("idx_quota_snapshot_space", "email", "team_space_id", unique=True),)
 
 
+class RotationSeatSnapshot(Base):
+    __tablename__ = "rotation_seat_snapshots"
+
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True)
+    standard_paid = Column(Integer, nullable=False)
+    standard_remaining = Column(Integer, nullable=False)
+    premium_paid = Column(Integer, nullable=False)
+    premium_remaining = Column(Integer, nullable=False)
+    observed_at = Column(DateTime, nullable=False, default=get_now)
+
+
 class RotationAction(Base):
     __tablename__ = "rotation_actions"
 

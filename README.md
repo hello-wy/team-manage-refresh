@@ -20,6 +20,7 @@
     <a href="#-快速开始"><strong>快速开始</strong></a> ·
     <a href="#-版本升级"><strong>版本升级</strong></a> ·
     <a href="docs/manual.md"><strong>部署与操作手册</strong></a> ·
+    <a href="docs/quota-rotation.md"><strong>额度轮转</strong></a> ·
     <a href="integration_docs.md"><strong>集成文档</strong></a> ·
     <a href="#-社区--community"><strong>社区</strong></a>
   </p>

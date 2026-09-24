@@ -27,6 +27,31 @@ def quota_ready(mapping, snapshot):
     return snapshot.weekly_remaining is not None
 
 
+def _eligible(member, snapshot, state):
+    return (member.status == "joined" and quota_ready(member, snapshot)
+            and not (state and (state.blocked_reason or state.phase in {"wait_reset", "removed"})))
+
+
+def _exit_decision(member, snapshot, state, standard_remaining):
+    if not _eligible(member, snapshot, state):
+        return None
+    if member.seat_type != "premium" or snapshot.weekly_remaining != 0:
+        return None
+    if member.member_role in ADMIN_ROLES or member.auto_kick_exempt:
+        if standard_remaining == 0:
+            return None
+        return RotationDecision(member.email, "return_standard", "高级周额度耗尽，保留管理员")
+    return RotationDecision(member.email, "remove", "高级周额度耗尽")
+
+
+def _upgrade_decision(member, snapshot, state):
+    if member.seat_type != "standard" or not _eligible(member, snapshot, state):
+        return None
+    if snapshot.weekly_remaining == 0:
+        return RotationDecision(member.email, "upgrade", "标准周额度耗尽，按 FIFO 使用高级席位")
+    return None
+
+
 def next_action(members, snapshots, states, seat_balance):
     """Pick one confirmed action; unknown quota blocks only that member."""
     balance = seat_balance.get("balance") or {}
@@ -41,32 +66,16 @@ def next_action(members, snapshots, states, seat_balance):
         member.id,
     ))
     for member in ordered:
-        snapshot = snapshots.get(member.email)
-        if member.status != "joined" or not quota_ready(member, snapshot):
-            continue
-        state = states.get(member.email)
-        if state and state.blocked_reason:
-            continue
-        if state and state.phase in {"wait_reset", "removed"}:
-            continue
-        if member.seat_type == "premium" and snapshot.weekly_remaining == 0:
-            if member.member_role in ADMIN_ROLES or member.auto_kick_exempt:
-                if balance["standard"]["remaining"] == 0:
-                    continue
-                return RotationDecision(member.email, "return_standard", "高级周额度耗尽，保留管理员")
-            return RotationDecision(member.email, "remove", "高级周额度耗尽")
+        decision = _exit_decision(member, snapshots.get(member.email),
+                                  states.get(member.email), balance["standard"]["remaining"])
+        if decision:
+            return decision
     premium_available = balance["premium"]["remaining"]
     if premium_available is None or premium_available <= 0:
         return None
     for member in ordered:
-        snapshot = snapshots.get(member.email)
-        if member.status != "joined" or member.seat_type != "standard":
-            continue
-        state = states.get(member.email)
-        if state and state.blocked_reason:
-            continue
-        if state and state.phase in {"wait_reset", "removed"}:
-            continue
-        if quota_ready(member, snapshot) and snapshot.weekly_remaining == 0:
-            return RotationDecision(member.email, "upgrade", "标准周额度耗尽，按 FIFO 使用高级席位")
+        decision = _upgrade_decision(member, snapshots.get(member.email),
+                                     states.get(member.email))
+        if decision:
+            return decision
     return None

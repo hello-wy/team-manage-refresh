@@ -9,7 +9,7 @@ from app.models import (QuotaSnapshot, RotationAction,
                         RotationMemberState, Team, TeamEmailMapping)
 from app.models import Sub2apiExportRecord
 from app.services.account_pool_replacement import mark_replacement_pending
-from app.services.quota_rotation_policy import ADMIN_ROLES, next_action
+from app.services.quota_rotation_policy import ADMIN_ROLES, RotationDecision, next_action
 from app.services.quota_sync import refresh_team
 from app.services.rotation_candidates import find_rotation_candidate
 from app.services.rotation_lease import acquire_lease, release_lease
@@ -233,17 +233,19 @@ async def _run_locked(db, team, deps: RotationDependencies):
     await record_stages(db, team, mappings, snapshots=snapshots, states=states,
                         seat_balance=balance)
     decision = next_action(mappings, snapshots, states, balance)
-    if team.rotation_mode == "dry_run":
-        return {"status": "preview", "next_action": vars(decision) if decision else None}
     if decision is None:
         standard = members_result["seat_balance"]["balance"]["standard"]["remaining"]
         if standard and not any(row.get("status") == "invited" for row in members_result["members"]):
             candidate = await find_rotation_candidate(db, team, deps.pool)
             if candidate:
-                from app.services.quota_rotation_policy import RotationDecision
                 decision = RotationDecision(candidate.email, "invite", "标准席位空缺")
             else:
+                if team.rotation_mode == "dry_run":
+                    return {"status": "preview", "next_action": None,
+                            "blocked_reason": "暂无符合资格的标准席位候选账号"}
                 return {"status": "blocked", "reason": "暂无符合资格的标准席位候选账号"}
+    if team.rotation_mode == "dry_run":
+        return {"status": "preview", "next_action": vars(decision) if decision else None}
     if decision is None:
         return {"status": "idle"}
     if decision.action == "remove":

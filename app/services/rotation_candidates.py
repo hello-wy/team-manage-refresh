@@ -3,7 +3,7 @@
 from sqlalchemy import select
 
 from app.models import (AccountPoolHistory, MemberAuthorization, QuotaSnapshot,
-                        Sub2apiExportRecord)
+                        RotationAction, Sub2apiExportRecord)
 from app.services.quota_rotation_policy import MAX_SNAPSHOT_AGE
 from app.utils.time_utils import get_now
 
@@ -14,6 +14,13 @@ async def find_rotation_candidate(db, team, pool):
         team.id, db, excluded_ids=frozenset(excluded)
     ):
         excluded.add(candidate.id)
+        in_flight = (await db.execute(select(RotationAction.id).where(
+            RotationAction.email == candidate.email,
+            RotationAction.action_type == "invite",
+            RotationAction.status.in_(("pending", "executing", "reconciling")),
+        ).limit(1))).scalar_one_or_none()
+        if in_flight:
+            continue
         exported = (await db.execute(select(Sub2apiExportRecord.id).where(
             Sub2apiExportRecord.email == candidate.email,
             Sub2apiExportRecord.team_space_id == team.account_id,

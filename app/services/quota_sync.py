@@ -3,7 +3,7 @@
 from sqlalchemy import select
 
 from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
-                        Sub2apiExportRecord, Team, TeamEmailMapping)
+                        RotationSeatSnapshot, Sub2apiExportRecord, Team, TeamEmailMapping)
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -45,6 +45,17 @@ async def refresh_team(db, team: Team, team_service, *, usage_service):
         TeamEmailMapping.team_id == team.id,
         TeamEmailMapping.status == "joined",
     ))).scalars().all()
+    seat_snapshot = await db.get(RotationSeatSnapshot, team.id)
+    if seat_snapshot is None:
+        seat_snapshot = RotationSeatSnapshot(team_id=team.id)
+        db.add(seat_snapshot)
+    standard = balance["balance"]["standard"]
+    premium = balance["balance"]["premium"]
+    seat_snapshot.standard_paid = standard["paid"]
+    seat_snapshot.standard_remaining = standard["remaining"]
+    seat_snapshot.premium_paid = premium["paid"]
+    seat_snapshot.premium_remaining = premium["remaining"]
+    seat_snapshot.observed_at = get_now()
     keys = [(row.email, team.account_id) for row in mappings]
     usage_by_key = await usage_service.check_many(db, keys)
     for mapping in mappings:
@@ -75,7 +86,6 @@ async def refresh_export_snapshots(db, usage_service):
 
 async def refresh_historical_candidates(db, usage_service):
     active = select(TeamEmailMapping.id).where(
-        TeamEmailMapping.team_id == Team.id,
         TeamEmailMapping.email == AccountPoolEntry.email,
         TeamEmailMapping.status.in_(("joined", "invited")),
     )
