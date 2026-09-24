@@ -203,6 +203,36 @@ class AccountPoolEntry(Base):
     )
 
 
+class Sub2apiExportRecord(Base):
+    """成功导入 sub2api 的邮箱与 Team 空间去重记录。"""
+    __tablename__ = "sub2api_export_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), nullable=False, comment="导出账号邮箱(统一存小写)")
+    team_space_id = Column(String(100), nullable=False, comment="Team workspace/account ID")
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    team_name = Column(String(255), comment="Team 名称快照")
+    team_email = Column(String(255), comment="Team 管理员邮箱快照")
+    sub2api_account_id = Column(Integer, comment="最近一次创建的 sub2api 账户 ID")
+    seat_type = Column(String(20), comment="成员席位类型: standard/premium/unknown")
+    joined_at = Column(DateTime, comment="成员加入 Team 的时间")
+    team_5x_completed = Column(Boolean, nullable=True, comment="Team 5x/1week 额度是否已用完")
+    premium_quota_exhausted = Column(Boolean, nullable=True, comment="高级席位额度是否已用完")
+    quota_checked_at = Column(DateTime, comment="额度状态最近检查时间")
+    export_count = Column(Integer, nullable=False, default=1, comment="成功导入次数")
+    first_exported_at = Column(DateTime, nullable=False, default=get_now)
+    last_exported_at = Column(DateTime, nullable=False, default=get_now)
+    created_at = Column(DateTime, nullable=False, default=get_now)
+    updated_at = Column(DateTime, nullable=False, default=get_now, onupdate=get_now)
+
+    __table_args__ = (
+        Index("idx_sub2api_export_email_space", "email", "team_space_id", unique=True),
+        Index("idx_sub2api_export_email", "email"),
+        Index("idx_sub2api_export_team_name", "team_name"),
+        Index("idx_sub2api_export_last_exported", "last_exported_at"),
+    )
+
+
 class AccountPoolHistory(Base):
     """账号邮箱加入过 Team 的历史记录。"""
     __tablename__ = "account_pool_histories"

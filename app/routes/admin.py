@@ -56,8 +56,11 @@ from app.services.member_auto_kick import (
 )
 from app.services.member_rotation import MemberRotationService
 from app.services.replacement_export import ReplacementExportService
-from app.models import AccountPoolEntry, RedemptionCode, RedemptionRecord, RenewalRequest, Team
+from app.models import AccountPoolEntry, RedemptionCode, RedemptionRecord, RenewalRequest, Sub2apiExportRecord, Team, TeamEmailMapping
 from app.services.account_pool import account_pool_service
+from app.services.account_pool_usage import account_pool_usage_service
+from app.services.sub2api_export_records import sub2api_export_record_service
+from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
 
@@ -514,6 +517,22 @@ async def automatic_login_account_pool_entry(
     try:
         result = await _login_and_save_account_pool_entry(db, entry_id, payload)
         imported = await sub2api_service.import_member(result.payload, db)
+        workspace_id = str(result.workspace.get("workspace_id") or "").strip()
+        account = (result.payload.get("accounts") or [{}])[0]
+        credentials = account.get("credentials") if isinstance(account, dict) else {}
+        entry = await db.get(AccountPoolEntry, entry_id)
+        email = str((credentials or {}).get("email") or (entry.email if entry else "")).strip().lower()
+        team = await db.get(Team, payload.team_id) if payload.team_id else None
+        await sub2api_export_record_service.record_success(
+            db,
+            email=email,
+            team_space_id=workspace_id,
+            team_id=team.id if team else payload.team_id,
+            team_name=team.team_name if team else result.workspace.get("workspace_name"),
+            team_email=team.email if team else None,
+            sub2api_account_id=imported.get("account_id"),
+        )
+        await db.commit()
         return JSONResponse(
             content={
                 "success": True,
@@ -1252,6 +1271,17 @@ async def import_member_sub2api(team_id: int, payload: MemberAuthorizationReques
     try:
         data = await member_authorization_service.export(team_id, payload.email, db)
         result = await sub2api_service.import_member(data, db)
+        team = await db.get(Team, team_id)
+        team_space_id = str(getattr(team, "account_id", "") or "")
+        await sub2api_export_record_service.record_success(
+            db,
+            email=payload.email,
+            team_space_id=team_space_id,
+            team_id=team_id,
+            team_name=team.team_name if team else None,
+            team_email=team.email if team else None,
+            sub2api_account_id=result.get("account_id"),
+        )
         await member_authorization_service.mark_sub2api_exported(
             team_id, payload.email, result["account_id"], db
         )
@@ -1717,6 +1747,15 @@ async def _push_team_owner_to_sub2api(team_id: int, db: AsyncSession):
     email = team.email.strip().lower()
     payload = await member_authorization_service.export(team_id, email, db)
     imported = await sub2api_service.import_member(payload, db)
+    await sub2api_export_record_service.record_success(
+        db,
+        email=email,
+        team_space_id=str(getattr(team, "account_id", "") or ""),
+        team_id=team_id,
+        team_name=getattr(team, "team_name", None),
+        team_email=getattr(team, "email", None),
+        sub2api_account_id=imported.get("account_id"),
+    )
     await member_authorization_service.mark_sub2api_exported(
         team_id, email, imported["account_id"], db
     )
@@ -2575,171 +2614,124 @@ async def batch_delete_codes(
 @router.get("/records", response_class=HTMLResponse)
 async def records_page(
     request: Request,
-    email: Optional[str] = None,
-    code: Optional[str] = None,
-    team_id: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    page: Optional[str] = "1",
+    search: str = "",
+    usage_filter: str = "",
+    joined_filter: str = "all",
+    page: int = 1,
     per_page: int = 20,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin)
+    current_user: dict = Depends(require_admin),
 ):
-    """
-    使用记录页面
+    """Show deduplicated Sub2API exports with live quota information."""
+    from datetime import timedelta
+    import math
 
-    Args:
-        request: FastAPI Request 对象
-        email: 邮箱筛选
-        code: 兑换码筛选
-        team_id: Team ID 筛选
-        start_date: 开始日期
-        end_date: 结束日期
-        page: 页码
-        per_page: 每页数量
-        db: 数据库会话
-        current_user: 当前用户（需要登录）
+    from app.main import templates
+    from sqlalchemy import or_
 
-    Returns:
-        使用记录页面 HTML
-    """
-    try:
-        from app.main import templates
-        from datetime import datetime, timedelta
-        import math
+    per_page = max(1, min(int(per_page or 20), 100))
+    search_value = str(search or "").strip()
+    usage_filter = usage_filter if usage_filter in {"exhausted", "available"} else ""
+    joined_filter = joined_filter if joined_filter == "within_7_days" else "all"
 
-        # 解析参数
-        try:
-            actual_team_id = int(team_id) if team_id and team_id.strip() else None
-        except (ValueError, TypeError):
-            actual_team_id = None
-            
-        try:
-            page_int = int(page) if page and page.strip() else 1
-        except (ValueError, TypeError):
-            page_int = 1
-            
-        logger.info(f"管理员访问使用记录页面 (page={page_int}, per_page={per_page})")
+    query = select(Sub2apiExportRecord).order_by(
+        Sub2apiExportRecord.last_exported_at.desc()
+    )
+    if search_value:
+        pattern = f"%{search_value}%"
+        query = query.where(or_(
+            Sub2apiExportRecord.email.ilike(pattern),
+            Sub2apiExportRecord.team_name.ilike(pattern),
+            Sub2apiExportRecord.team_space_id.ilike(pattern),
+        ))
+    candidates = list((await db.execute(query)).scalars().all())
 
-        # 获取记录 (支持邮箱、兑换码、Team ID 筛选)
-        records_result = await redemption_service.get_all_records(
-            db, 
-            email=email, 
-            code=code, 
-            team_id=actual_team_id
+    mapping_keys = {(row.team_id, row.email) for row in candidates if row.team_id}
+    mappings = {}
+    if mapping_keys:
+        team_ids = {key[0] for key in mapping_keys}
+        emails = {key[1] for key in mapping_keys}
+        mapping_rows = await db.execute(
+            select(TeamEmailMapping).where(
+                TeamEmailMapping.team_id.in_(team_ids),
+                TeamEmailMapping.email.in_(emails),
+                TeamEmailMapping.status == "joined",
+            )
         )
-        all_records = records_result.get("records", [])
-
-        # 仅由于日期范围筛选目前还在内存中处理，如果未来记录数极大可以移至数据库
-        filtered_records = []
-        for record in all_records:
-            # 日期范围筛选
-            if start_date or end_date:
-                try:
-                    record_date = datetime.fromisoformat(record["redeemed_at"]).date()
-
-                    if start_date:
-                        start = datetime.strptime(start_date, "%Y-%m-%d").date()
-                        if record_date < start:
-                            continue
-
-                    if end_date:
-                        end = datetime.strptime(end_date, "%Y-%m-%d").date()
-                        if record_date > end:
-                            continue
-                except:
-                    pass
-
-            filtered_records.append(record)
-
-        # 获取Team信息并关联到记录
-        teams_result = await team_service.get_all_teams(db)
-        teams = teams_result.get("teams", [])
-        team_map = {team["id"]: team for team in teams}
-
-        # 为记录添加Team名称
-        for record in filtered_records:
-            team = team_map.get(record["team_id"])
-            record["team_name"] = team["team_name"] if team else None
-
-        # 计算统计数据
-        now = get_now()
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_start = today_start - timedelta(days=today_start.weekday())
-        month_start = today_start.replace(day=1)
-
-        stats = {
-            "total": len(filtered_records),
-            "today": 0,
-            "this_week": 0,
-            "this_month": 0
+        mappings = {
+            (mapping.team_id, mapping.email): mapping
+            for mapping in mapping_rows.scalars().all()
         }
 
-        for record in filtered_records:
-            try:
-                record_time = datetime.fromisoformat(record["redeemed_at"])
-                if record_time >= today_start:
-                    stats["today"] += 1
-                if record_time >= week_start:
-                    stats["this_week"] += 1
-                if record_time >= month_start:
-                    stats["this_month"] += 1
-            except:
-                pass
+    usage_keys = [(row.email, row.team_space_id) for row in candidates]
+    usage_by_account = await account_pool_usage_service.check_many(db, usage_keys)
+    cutoff = get_now() - timedelta(days=7)
+    enriched = []
+    quota_updated = False
+    for row in candidates:
+        mapping = mappings.get((row.team_id, row.email))
+        if mapping:
+            normalized_seat = normalize_seat_type(mapping.seat_type)
+            if normalized_seat != "unknown":
+                row.seat_type = normalized_seat
+            row.joined_at = mapping.joined_at or row.joined_at
+        if joined_filter == "within_7_days" and (
+            row.joined_at is None or row.joined_at < cutoff
+        ):
+            continue
 
-        # 分页
-        # per_page = 20 (Removed hardcoded value)
-        total_records = len(filtered_records)
-        total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+        usage = usage_by_account.get(
+            (row.email, row.team_space_id),
+            {"status": "unavailable", "error": "账号池没有可用 JSON"},
+        )
+        weekly = usage.get("1week") or {}
+        weekly_state = weekly.get("state")
+        if usage_filter and weekly_state != usage_filter:
+            continue
 
-        # 确保页码有效
-        if page_int < 1:
-            page_int = 1
-        if page_int > total_pages:
-            page_int = total_pages
+        if usage.get("status") == "ok" and weekly_state in {"exhausted", "available"}:
+            completed = weekly_state == "exhausted"
+            row.team_5x_completed = completed
+            row.premium_quota_exhausted = completed and row.seat_type == "premium"
+            row.quota_checked_at = get_now()
+            quota_updated = True
 
-        start_idx = (page_int - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_records = filtered_records[start_idx:end_idx]
-
-        # 格式化时间
-        for record in paginated_records:
-            try:
-                dt = datetime.fromisoformat(record["redeemed_at"])
-                record["redeemed_at"] = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except:
-                pass
-
-        context = await build_admin_base_context(request, db, current_user, "records")
-        context.update({
-            "records": paginated_records,
-            "stats": stats,
-            "filters": {
-                "email": email,
-                "code": code,
-                "team_id": team_id,
-                "start_date": start_date,
-                "end_date": end_date
-            },
-            "pagination": {
-                "current_page": page_int,
-                "total_pages": total_pages,
-                "total": total_records,
-                "per_page": per_page
-            }
+        enriched.append({
+            "id": row.id,
+            "email": row.email,
+            "team_space_id": row.team_space_id,
+            "team_name": row.team_name or "-",
+            "seat_type": row.seat_type or "unknown",
+            "joined_at": row.joined_at.strftime("%Y-%m-%d %H:%M:%S") if row.joined_at else "-",
+            "team_5x_completed": row.team_5x_completed,
+            "premium_quota_exhausted": row.premium_quota_exhausted,
+            "export_count": row.export_count,
+            "last_exported_at": row.last_exported_at.strftime("%Y-%m-%d %H:%M:%S") if row.last_exported_at else "-",
+            "usage": usage,
         })
-        return templates.TemplateResponse(
-            request,
-            "admin/records/index.html",
-            context,
-        )
+    if quota_updated:
+        await db.commit()
 
-    except Exception as e:
-        logger.exception("获取使用记录失败")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="获取使用记录失败，请稍后重试"
-        )
+    total = len(enriched)
+    total_pages = max(1, math.ceil(total / per_page))
+    current_page = max(1, min(int(page or 1), total_pages))
+    rows = enriched[(current_page - 1) * per_page:current_page * per_page]
+    context = await build_admin_base_context(request, db, current_user, "records")
+    context.update({
+        "records": rows,
+        "filters": {
+            "search": search_value,
+            "usage_filter": usage_filter,
+            "joined_filter": joined_filter,
+        },
+        "pagination": {
+            "current_page": current_page,
+            "total_pages": total_pages,
+            "total": total,
+            "per_page": per_page,
+        },
+    })
+    return templates.TemplateResponse(request, "admin/records/index.html", context)
 
 
 @router.post("/records/{record_id}/withdraw")

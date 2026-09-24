@@ -2,8 +2,9 @@
 
 from sqlalchemy import select
 
-from app.models import TeamEmailMapping
+from app.models import Team, TeamEmailMapping
 from app.services.member_authorization import MemberAuthorizationError
+from app.services.sub2api_export_records import sub2api_export_record_service
 
 
 class ReplacementExportService:
@@ -28,6 +29,16 @@ class ReplacementExportService:
             raise MemberAuthorizationError(status["message"])
         payload = await self.authorization.export(team_id, email, db_session)
         result = await self.sub2api.import_member(payload, db_session)
+        team = await db_session.get(Team, team_id)
+        await sub2api_export_record_service.record_success(
+            db_session,
+            email=email,
+            team_space_id=str(team.account_id or "") if team else "",
+            team_id=team_id,
+            team_name=team.team_name if team else None,
+            team_email=team.email if team else None,
+            sub2api_account_id=result.get("account_id"),
+        )
         await self.authorization.mark_sub2api_exported(
             team_id, email, result["account_id"], db_session
         )

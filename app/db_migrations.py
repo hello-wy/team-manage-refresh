@@ -330,6 +330,63 @@ def run_auto_migration():
                     )
                     migrations_applied.append(f"account_pool_entries.{column_name}")
 
+        if not table_exists(cursor, "sub2api_export_records"):
+            logger.info("创建 sub2api_export_records 表")
+            cursor.execute("""
+                CREATE TABLE sub2api_export_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) NOT NULL,
+                    team_space_id VARCHAR(100) NOT NULL,
+                    team_id INTEGER,
+                    team_name VARCHAR(255),
+                    team_email VARCHAR(255),
+                    sub2api_account_id INTEGER,
+                    seat_type VARCHAR(20),
+                    joined_at DATETIME,
+                    team_5x_completed BOOLEAN,
+                    premium_quota_exhausted BOOLEAN,
+                    quota_checked_at DATETIME,
+                    export_count INTEGER NOT NULL DEFAULT 1,
+                    first_exported_at DATETIME NOT NULL,
+                    last_exported_at DATETIME NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE SET NULL
+                )
+            """)
+            migrations_applied.append("sub2api_export_records")
+
+        sub2api_export_columns = {
+            "seat_type": "VARCHAR(20)",
+            "joined_at": "DATETIME",
+            "team_5x_completed": "BOOLEAN",
+            "premium_quota_exhausted": "BOOLEAN",
+            "quota_checked_at": "DATETIME",
+        }
+        for column_name, column_type in sub2api_export_columns.items():
+            if not column_exists(cursor, "sub2api_export_records", column_name):
+                cursor.execute(
+                    f"ALTER TABLE sub2api_export_records ADD COLUMN {column_name} {column_type}"
+                )
+                migrations_applied.append(f"sub2api_export_records.{column_name}")
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sub2api_export_email_space
+            ON sub2api_export_records (email, team_space_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sub2api_export_email
+            ON sub2api_export_records (email)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sub2api_export_team_name
+            ON sub2api_export_records (team_name)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sub2api_export_last_exported
+            ON sub2api_export_records (last_exported_at)
+        """)
+
         if not table_exists(cursor, "account_pool_histories"):
             logger.info("创建 account_pool_histories 表")
             cursor.execute("""
