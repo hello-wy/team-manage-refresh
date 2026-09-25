@@ -275,10 +275,40 @@ class AccountPoolEntry(Base):
         "AccountPoolWorkspace", back_populates="account", cascade="all, delete-orphan"
     )
     export_jobs = relationship("AccountPoolExportJob", cascade="all, delete-orphan")
+    team_usages = relationship(
+        "AccountPoolTeamUsage", back_populates="account", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("idx_account_pool_email", "email", unique=True),
         Index("idx_account_pool_workspace", "workspace_id"),
+    )
+
+
+class AccountPoolTeamUsage(Base):
+    """席位切换与额度状态在号池账号和 Team 之间的持久记录。"""
+    __tablename__ = "account_pool_team_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_pool_id = Column(
+        Integer, ForeignKey("account_pool_entries.id", ondelete="CASCADE"), nullable=False
+    )
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    team_space_id = Column(String(100), nullable=False)
+    seat_type = Column(String(20))
+    seat_switch_count = Column(Integer, nullable=False, default=0)
+    seat_switched_at = Column(DateTime)
+    premium_used = Column(Boolean)
+    premium_used_at = Column(DateTime)
+    quota_checked_at = Column(DateTime)
+    short_reset_at = Column(String(50))
+    weekly_reset_at = Column(String(50))
+
+    account = relationship("AccountPoolEntry", back_populates="team_usages")
+
+    __table_args__ = (
+        Index("idx_account_pool_team_usage_unique", "account_pool_id", "team_id", unique=True),
+        Index("idx_account_pool_team_usage_space", "team_space_id"),
     )
 
 

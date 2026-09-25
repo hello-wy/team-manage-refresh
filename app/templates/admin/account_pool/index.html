@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260924-4">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260925-1">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -105,6 +105,8 @@
                         <th>当前 Team</th>
                         <th>最近加入时间</th>
                         <th>额度</th>
+                        <th>高级使用</th>
+                        <th>额度刷新</th>
                         <th>加入历史</th>
                         <th style="text-align: right;">操作</th>
                     </tr>
@@ -186,6 +188,22 @@
                         <td data-label="最近加入时间">{{ entry.joined_at|format_datetime }}</td>
                         {% set usage = entry.usage or {} %}
                         <td data-label="额度">{{ quota_cell(usage.get('5h'), usage.get('1week')) }}</td>
+                        {% set team_usage = entry.team_usage or {} %}
+                        <td data-label="高级使用">
+                            {% if entry.team_usage %}
+                            <span class="status-badge {% if team_usage.premium_used is sameas true %}status-active{% elif team_usage.premium_used is sameas false %}status-pending{% else %}status-banned{% endif %}">
+                                {{ '已使用' if team_usage.premium_used is sameas true else ('未使用' if team_usage.premium_used is sameas false else '待确认') }}
+                            </span>
+                            {% if team_usage.premium_used_at %}<small>首次：{{ team_usage.premium_used_at|format_datetime }}</small>{% endif %}
+                            {% if team_usage.seat_switch_count %}<small>切换：{{ team_usage.seat_switch_count }} 次{% if team_usage.seat_switched_at %}，最近 {{ team_usage.seat_switched_at|format_datetime }}{% endif %}</small>{% endif %}
+                            {% else %}-{% endif %}
+                        </td>
+                        <td data-label="额度刷新">
+                            {% if team_usage.quota_checked_at %}<small>检查：{{ team_usage.quota_checked_at|format_datetime }}</small>{% endif %}
+                            {% if team_usage.weekly_reset_at %}<small>7d：<time class="quota-reset-time" data-reset-at="{{ team_usage.weekly_reset_at }}">{{ team_usage.weekly_reset_at }}</time></small>{% endif %}
+                            {% if team_usage.short_reset_at %}<small>5h：<time class="quota-reset-time" data-reset-at="{{ team_usage.short_reset_at }}">{{ team_usage.short_reset_at }}</time></small>{% endif %}
+                            {% if not team_usage %}-{% endif %}
+                        </td>
                         <td data-label="加入历史">
                             <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
                                 <i data-lucide="history" style="width: 14px; height: 14px;"></i>

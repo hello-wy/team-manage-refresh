@@ -61,6 +61,7 @@ from app.services.account_pool_export import AccountPoolExportService, selected_
 from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
+from app.services.account_pool_team_usage import record_quota_observation
 from app.services.sub2api_export_records import sub2api_export_record_service
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
@@ -425,16 +426,35 @@ async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, A
     ]
     usage_by_account = await account_pool_usage_service.check_many(db, keys)
     unavailable = {"status": "unavailable", "error": "账号池没有可用 JSON"}
-    return [
-        {
-            **entry,
-            "usage": usage_by_account.get(
-                (entry["email"], entry.get("workspace_id") or ""),
-                unavailable,
-            ),
-        }
-        for entry in entries
-    ]
+    attached = []
+    for entry in entries:
+        usage = usage_by_account.get(
+            (entry["email"], entry.get("workspace_id") or ""), unavailable
+        )
+        team_space_id = entry.get("workspace_id") or ""
+        if team_space_id and entry.get("workspace_team_id"):
+            tracked = await record_quota_observation(
+                db,
+                email=entry["email"],
+                team_space_id=team_space_id,
+                seat_type=entry.get("seat_type"),
+                usage=usage,
+            )
+            if tracked:
+                entry["team_usage"] = {
+                    "seat_type": tracked.seat_type,
+                    "seat_switch_count": tracked.seat_switch_count,
+                    "seat_switched_at": tracked.seat_switched_at,
+                    "premium_used": tracked.premium_used,
+                    "premium_used_at": tracked.premium_used_at,
+                    "quota_checked_at": tracked.quota_checked_at,
+                    "short_reset_at": tracked.short_reset_at,
+                    "weekly_reset_at": tracked.weekly_reset_at,
+                }
+        attached.append({**entry, "usage": usage})
+    if any(entry.get("team_usage") for entry in attached):
+        await db.commit()
+    return attached
 
 
 @router.get("/account-pool", response_class=HTMLResponse)
@@ -1487,6 +1507,8 @@ async def update_member_seat_type(
     result = await team_service.update_member_seat_type(
         team_id, user_id, payload.seat_type, payload.expected_seat_type, db,
     )
+    if db is not None and result.get("success") and result.get("status") in {"applied", "pending"}:
+        await db.commit()
     return JSONResponse(content=result, status_code=200 if result["success"] else 400)
 
 

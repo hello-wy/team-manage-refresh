@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
                         RotationSeatSnapshot, Sub2apiExportRecord, Team, TeamEmailMapping)
+from app.services.account_pool_team_usage import record_quota_observation
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -30,6 +31,13 @@ async def store_quota(db, *, email, space_id, seat_type, usage):
     snapshot.error = usage.get("error")
     snapshot.observed_at = get_now()
     snapshot.version = (snapshot.version or 0) + 1
+    await record_quota_observation(
+        db,
+        email=email,
+        team_space_id=space_id,
+        seat_type=seat_type,
+        usage=usage,
+    )
     return snapshot
 
 

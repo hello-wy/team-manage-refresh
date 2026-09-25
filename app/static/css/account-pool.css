@@ -121,6 +121,19 @@
     overflow-wrap: anywhere;
 }
 
+.account-pool-page td[data-label="高级使用"],
+.account-pool-page td[data-label="额度刷新"] {
+    min-width: 130px;
+    white-space: normal;
+}
+
+.account-pool-page td[data-label="高级使用"] small,
+.account-pool-page td[data-label="额度刷新"] small {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--text-muted);
+}
+
 .account-pool-secret-button,
 .account-pool-invite-button,
 .account-pool-json-export-button,

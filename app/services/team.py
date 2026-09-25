@@ -23,6 +23,7 @@ from app.utils.seats import calculate_seat_balance, normalize_seat_type, summari
 from app.utils.seat_lock import seat_account_lock
 from app.config import settings
 from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS, account_pool_service
+from app.services.account_pool_team_usage import record_seat_switch
 
 logger = logging.getLogger(__name__)
 
@@ -2609,9 +2610,15 @@ class TeamService:
             _, updated = await read_member()
             if updated and normalize_seat_type(updated.get("seat_type")) == target:
                 await self._release_member_seat(team.account_id, "member", user_id, db_session)
+                await record_seat_switch(
+                    db_session, team_id=team_id, email=member.get("email", ""), seat_type=target
+                )
                 return {"success": True, "status": "applied", "message": "席位类型已更新", "error": None}
             if updated and normalize_seat_type(updated.get("pending_seat_type")) == target:
                 await self._release_member_seat(team.account_id, "member", user_id, db_session)
+                await record_seat_switch(
+                    db_session, team_id=team_id, email=member.get("email", ""), seat_type=target
+                )
                 return {"success": True, "status": "pending", "message": "席位变更已提交，等待上游生效", "error": None}
             if not changed.get("success") or changed.get("data", {}).get("success") is False:
                 if 400 <= changed.get("status_code", 0) < 500 or changed.get("data", {}).get("success") is False:

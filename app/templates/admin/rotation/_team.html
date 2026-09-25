@@ -1,0 +1,38 @@
+<section class="content-section rotation-team" data-team-id="{{ team.team_id }}">
+  <div class="table-section-head">
+    <div class="table-section-copy">
+      <h3>{{ team.team_name or ('Team #' ~ team.team_id) }}</h3>
+      <label class="rotation-switch">
+        <input type="checkbox" class="rotation-mode" {% if team.rotation_mode != 'off' %}checked{% endif %} aria-label="开启 {{ team.team_name or ('Team #' ~ team.team_id) }} 轮转">
+        <span class="rotation-switch-track" aria-hidden="true"></span>
+        <span class="rotation-mode-label">{{ '已开启' if team.rotation_mode != 'off' else '已关闭' }}</span>
+      </label>
+      {% if team.seat_balance and team.seat_balance.success %}
+      <span class="text-muted">标准剩余 {{ team.seat_balance.balance.standard.remaining }} / 高级剩余 {{ team.seat_balance.balance.premium.remaining }}</span>
+      {% elif team.seat_balance %}<span class="text-muted">{{ team.seat_balance.error }}</span>{% endif %}
+    </div>
+    <div class="form-actions rotation-controls">
+      <button type="button" class="btn btn-secondary rotation-refresh" title="刷新当前 Team 成员与额度"><i data-lucide="refresh-cw"></i> 刷新</button>
+      <button type="button" class="btn btn-secondary rotation-preview"><i data-lucide="scan-eye"></i> 预览</button>
+      <button type="button" class="btn btn-primary rotation-run" {% if team.rotation_mode == 'off' %}disabled{% endif %}><i data-lucide="play"></i> 执行一次</button>
+    </div>
+  </div>
+  <div class="rotation-result" aria-live="polite"></div>
+  <div class="table-container mobile-card-table-container"><table class="data-table mobile-card-table rotation-table">
+    <thead><tr><th>邮箱</th><th>角色</th><th>成员状态</th><th>实际席位</th><th>轮转阶段</th><th>登录状态</th><th>额度</th><th>数据更新时间</th><th>阻塞原因</th></tr></thead>
+    <tbody>{% for member in team.members %}{% set usage=member.usage %}
+      <tr data-email="{{ member.email }}">
+        <td data-label="邮箱">{{ member.email }}</td>
+        <td data-label="角色">{{ {'account-owner':'所有者','account-admin':'管理员','admin':'管理员','standard-user':'普通成员','member':'普通成员'}.get(member.role, member.role or '未知') }}</td>
+        <td data-label="成员状态">{{ {'joined':'已加入','invited':'待接受邀请'}.get(member.status, member.status or '未知') }}</td>
+        <td data-label="实际席位">{{ {'standard':'标准','premium':'高级'}.get(member.seat_type, member.seat_type or '未知') }}</td>
+        <td data-label="轮转阶段">{{ {'standard':'标准阶段','wait_premium':'等待高级席位','premium':'高级阶段','wait_reset':'等待额度重置','removed':'已移出','unknown':'未知'}.get(member.phase, member.phase or '未知') }}</td>
+        <td data-label="登录状态">{{ '有登录状态' if member.has_login else '无登录状态' }}</td>
+        <td data-label="额度"><div class="rotation-quota-content">{% include "admin/rotation/_quota.html" %}</div><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary rotation-quota-refresh" title="刷新此账号额度" aria-label="刷新 {{ member.email }} 的额度"><i data-lucide="refresh-cw"></i></button></td>
+        <td data-label="数据更新时间" class="rotation-observed-at">{{ usage.get('observed_at', '未同步') }}</td>
+        <td data-label="阻塞原因" class="rotation-blocked-reason">{{ member.blocked_reason or ('额度数据过期或不可用' if not member.quota_fresh else '-') }}</td>
+      </tr>
+    {% else %}<tr><td colspan="9">暂无成员</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <details><summary>动作历史</summary><div class="rotation-actions" data-team-id="{{ team.team_id }}"></div></details>
+</section>

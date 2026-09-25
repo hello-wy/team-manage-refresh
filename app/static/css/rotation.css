@@ -1,0 +1,17 @@
+.rotation-toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.75rem; }
+.rotation-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.rotation-switch { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+.rotation-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.rotation-switch-track { width: 2.4rem; height: 1.3rem; border-radius: 1rem; background: #9ca3af; position: relative; transition: background .15s; }
+.rotation-switch-track::after { content: ''; position: absolute; width: 0.95rem; height: 0.95rem; top: 0.175rem; left: 0.175rem; border-radius: 50%; background: white; transition: transform .15s; }
+.rotation-switch input:checked + .rotation-switch-track { background: #168266; }
+.rotation-switch input:checked + .rotation-switch-track::after { transform: translateX(1.1rem); }
+.rotation-switch input:focus-visible + .rotation-switch-track { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+.rotation-quota-refresh { margin-left: 0.35rem; vertical-align: top; }
+.rotation-quota-content { display: inline-block; vertical-align: top; }
+.rotation-result:not(:empty) { margin: 0.5rem 0; }
+@media (max-width: 640px) {
+    .rotation-table td[data-label="额度"] { flex-wrap: wrap; }
+    .rotation-quota-content { flex: 1 1 170px; min-width: 0; }
+    .rotation-quota-refresh { margin-left: auto; }
+}

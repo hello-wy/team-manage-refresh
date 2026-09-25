@@ -7,13 +7,13 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.dependencies.auth import require_admin
-from app.models import RotationAction, Team, TeamReplacementQueue
+from app.models import RotationAction, Team, TeamEmailMapping, TeamReplacementQueue
 from app.routes.admin import build_admin_base_context, team_service
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
-from app.services.quota_sync import refresh_team
-from app.services.rotation_read_model import load_team_rotation
+from app.services.quota_sync import refresh_team, store_quota
+from app.services.rotation_read_model import load_team_rotation, snapshot_usage
 from app.services.rotation_candidates import find_rotation_candidate
 
 router = APIRouter(prefix="/admin", tags=["rotation"])
@@ -88,8 +88,43 @@ async def rotation_preview(team_id: int, db=Depends(get_db), user=Depends(requir
 @router.post("/teams/{team_id}/rotation/refresh")
 async def rotation_refresh(team_id: int, db=Depends(get_db), user=Depends(require_admin)):
     team = await _team(db, team_id)
-    count = await refresh_team(db, team, team_service, usage_service=account_pool_usage_service)
-    return {"refreshed": count}
+    try:
+        await refresh_team(db, team, team_service, usage_service=account_pool_usage_service)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    from app.main import templates
+    view = await load_team_rotation(db, team)
+    html = templates.env.get_template("admin/rotation/_team.html").render(team=view)
+    return {"html": html}
+
+
+@router.post("/teams/{team_id}/rotation/members/{email}/quota")
+async def rotation_member_quota(team_id: int, email: str, db=Depends(get_db),
+                                user=Depends(require_admin)):
+    team = await _team(db, team_id)
+    normalized = email.strip().lower()
+    mapping = (await db.execute(select(TeamEmailMapping).where(
+        TeamEmailMapping.team_id == team_id,
+        TeamEmailMapping.email == normalized,
+        TeamEmailMapping.status.in_(("joined", "invited")),
+    ))).scalar_one_or_none()
+    if mapping is None:
+        raise HTTPException(404, "成员不存在")
+    usage = await account_pool_usage_service.check_email(db, normalized, team.account_id)
+    if usage["status"] != "ok":
+        raise HTTPException(502, usage.get("error") or "额度查询失败")
+    snapshot = await store_quota(db, email=normalized, space_id=team.account_id,
+                                 seat_type=mapping.seat_type, usage=usage)
+    await db.commit()
+    from app.main import templates
+    html = templates.env.get_template("admin/rotation/_quota.html").render(
+        usage=snapshot_usage(snapshot))
+    view = await load_team_rotation(db, team)
+    member = next(row for row in view["members"] if row["email"] == normalized)
+    blocked_reason = member["blocked_reason"] or (
+        "额度数据过期或不可用" if not member["quota_fresh"] else "-")
+    return {"html": html, "observed_at": snapshot.observed_at.isoformat(),
+            "blocked_reason": blocked_reason}
 
 
 @router.post("/teams/{team_id}/rotation/run")

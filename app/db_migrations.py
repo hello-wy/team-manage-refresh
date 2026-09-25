@@ -426,6 +426,37 @@ def run_auto_migration():
             ON account_pool_histories (team_id, joined_at)
         """)
 
+        if not table_exists(cursor, "account_pool_team_usage"):
+            logger.info("创建 account_pool_team_usage 表")
+            cursor.execute("""
+                CREATE TABLE account_pool_team_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_pool_id INTEGER NOT NULL,
+                    team_id INTEGER NOT NULL,
+                    team_space_id VARCHAR(100) NOT NULL,
+                    seat_type VARCHAR(20),
+                    seat_switch_count INTEGER NOT NULL DEFAULT 0,
+                    seat_switched_at DATETIME,
+                    premium_used BOOLEAN,
+                    premium_used_at DATETIME,
+                    quota_checked_at DATETIME,
+                    short_reset_at VARCHAR(50),
+                    weekly_reset_at VARCHAR(50),
+                    FOREIGN KEY(account_pool_id) REFERENCES account_pool_entries(id) ON DELETE CASCADE,
+                    FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
+                )
+            """)
+            migrations_applied.append("account_pool_team_usage")
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_account_pool_team_usage_unique
+            ON account_pool_team_usage (account_pool_id, team_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_account_pool_team_usage_space
+            ON account_pool_team_usage (team_space_id)
+        """)
+
         if not table_exists(cursor, "renewal_requests"):
             logger.info("创建 renewal_requests 表")
             cursor.execute("""

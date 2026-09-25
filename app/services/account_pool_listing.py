@@ -6,7 +6,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolHistory, AccountPoolWorkspace, Team, TeamEmailMapping
+from app.models import (
+    AccountPoolEntry,
+    AccountPoolExportJob,
+    AccountPoolHistory,
+    AccountPoolTeamUsage,
+    AccountPoolWorkspace,
+    Team,
+    TeamEmailMapping,
+)
 
 ACTIVE_MAPPING_STATUSES = ("invited", "joined")
 
@@ -56,6 +64,16 @@ async def _latest_export_jobs(db: AsyncSession, entries: list[AccountPoolEntry])
     for job in result.scalars().all():
         jobs.setdefault(job.account_pool_id, job)
     return jobs
+
+
+async def _team_usages(db: AsyncSession, entries: list[AccountPoolEntry]):
+    result = await db.execute(select(AccountPoolTeamUsage).where(
+        AccountPoolTeamUsage.account_pool_id.in_([entry.id for entry in entries])
+    ))
+    by_entry = defaultdict(dict)
+    for usage in result.scalars().all():
+        by_entry[usage.account_pool_id][usage.team_id] = usage
+    return by_entry
 
 
 async def _workspace_teams(db: AsyncSession, entries: list[AccountPoolEntry], saved):
@@ -133,7 +151,22 @@ def _workspace_data(entry: AccountPoolEntry, team: Team | None, saved, teams) ->
     }
 
 
-def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, teams, job) -> dict[str, Any]:
+def _team_usage_view(usage: AccountPoolTeamUsage | None) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    return {
+        "seat_type": usage.seat_type,
+        "seat_switch_count": usage.seat_switch_count,
+        "seat_switched_at": usage.seat_switched_at,
+        "premium_used": usage.premium_used,
+        "premium_used_at": usage.premium_used_at,
+        "quota_checked_at": usage.quota_checked_at,
+        "short_reset_at": usage.short_reset_at,
+        "weekly_reset_at": usage.weekly_reset_at,
+    }
+
+
+def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, teams, job, usages) -> dict[str, Any]:
     joined = [item for item in mappings if item[0].status == "joined"]
     invited = [item for item in mappings if item[0].status == "invited"]
     active = joined + invited
@@ -147,6 +180,8 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         status = "invited"
     current = active[0] if len(team_options) == 1 else (None, None)
     seat_type = next((mapping.seat_type for mapping, _ in joined if mapping.seat_type), None)
+    current_team = workspace_team or current[1]
+    current_usage = usages.get(current_team.id) if current_team else None
     row = {
         "id": entry.id,
         "email": entry.email,
@@ -156,6 +191,10 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         "team_name": current[1].team_name if current[1] else None,
         "team_email": current[1].email if current[1] else None,
         "team_options": team_options,
+        "team_usage": _team_usage_view(current_usage),
+        "team_usages": {
+            team_id: _team_usage_view(usage) for team_id, usage in usages.items()
+        },
         "joined_at": max((history.joined_at for history in histories), default=None),
         "history_count": len(histories),
         "liveness_status": entry.liveness_status,
@@ -179,6 +218,7 @@ async def build_pool_entry_data(
     histories = await _entry_histories(db, entries)
     saved = await _saved_workspaces(db, entries)
     jobs = await _latest_export_jobs(db, entries)
+    usages = await _team_usages(db, entries)
     workspace_teams = await _workspace_teams(db, entries, saved)
     return [
         _row(
@@ -187,6 +227,7 @@ async def build_pool_entry_data(
             histories.get(entry.id, []),
             workspace_teams.get(entry.workspace_id),
             saved[entry.id], workspace_teams, jobs.get(entry.id),
+            usages.get(entry.id, {}),
         )
         for entry in entries
     ]
