@@ -1,6 +1,6 @@
 import unittest
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace
 from app.services.encryption import encryption_service
@@ -59,6 +59,39 @@ class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["1week"]["state"], "exhausted")
         self.assertEqual(result["1week"]["used"], 500)
 
+    def test_parse_real_wham_windows_by_duration(self):
+        usage = parse_usage({"rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 18000, "used_percent": 25.5,
+                "reset_at": 1790400000,
+            },
+            "secondary_window": {
+                "limit_window_seconds": 604800, "used_percent": 100,
+                "reset_at": 1791000000,
+            },
+        }})
+        self.assertEqual(usage["5h"]["remaining"], 74.5)
+        self.assertEqual(usage["5h"]["reset_at"], "1790400000")
+        self.assertEqual(usage["1week"]["state"], "exhausted")
+        self.assertEqual(usage["1week"]["reset_at"], "1791000000")
+
+    def test_weekly_only_response_does_not_invent_five_hour_quota(self):
+        usage = parse_usage({"rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 604800, "used_percent": 0,
+                "reset_at": 1791000000,
+            },
+            "secondary_window": None,
+        }})
+        self.assertIsNone(usage["5h"])
+        self.assertEqual(usage["1week"]["remaining"], 100)
+
+    def test_unrelated_or_empty_windows_are_not_valid_quota(self):
+        self.assertIsNone(parse_usage({"rate_limit": {"primary_window": {
+            "limit_window_seconds": 2592000, "used_percent": 10,
+        }}}))
+        self.assertIsNone(parse_usage({"rate_limits": {"7d": {"reset_at": 1791000000}}}))
+
     async def test_only_401_is_invalid(self):
         invalid = AccountPoolUsageService(
             client_factory=lambda **_: _Client(_Response(401)),
@@ -68,6 +101,24 @@ class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((await invalid._check_token(("token", "account")))["status"], "invalid")
         self.assertEqual((await forbidden._check_token(("token", "account")))["status"], "unknown")
+
+    async def test_request_uses_browser_fingerprint_account_and_proxy(self):
+        client = _Client(_Response(200, {"rate_limit": {"primary_window": {
+            "limit_window_seconds": 604800, "used_percent": 10,
+            "reset_at": 1791000000,
+        }}}))
+        factory = unittest.mock.MagicMock(return_value=client)
+        service = AccountPoolUsageService(client_factory=factory)
+        result = await service._check_token(
+            ("token", "account"), {"all": "http://proxy.example:8080"},
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["1week"]["remaining"], 90)
+        self.assertEqual(client.headers["Chatgpt-Account-Id"], "account")
+        self.assertEqual(client.headers["Authorization"], "Bearer token")
+        self.assertEqual(factory.call_args.kwargs["impersonate"], "chrome110")
+        self.assertEqual(factory.call_args.kwargs["proxies"]["all"],
+                         "http://proxy.example:8080")
 
     async def test_check_many_reads_member_authorizations_for_missing_pool_tokens(self):
         service = AccountPoolUsageService()
@@ -79,10 +130,11 @@ class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
         db = unittest.mock.MagicMock()
         db.execute = AsyncMock(return_value=result)
 
-        values = await service.check_many(
-            db,
-            [("one@example.com", "space-a"), ("two@example.com", "space-b")],
-        )
+        with patch.object(service, "_proxies", new=AsyncMock(return_value=None)):
+            values = await service.check_many(
+                db,
+                [("one@example.com", "space-a"), ("two@example.com", "space-b")],
+            )
 
         self.assertEqual(db.execute.await_count, 2)
         self.assertEqual(len(values), 2)

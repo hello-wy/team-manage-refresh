@@ -11,7 +11,7 @@ from app.utils.time_utils import get_now
 
 
 def _reset_at(usage: dict[str, Any] | None, key: str) -> str | None:
-    return (usage or {}).get(key, {}).get("reset_at")
+    return ((usage or {}).get(key) or {}).get("reset_at")
 
 
 async def _load_row(

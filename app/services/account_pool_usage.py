@@ -6,85 +6,25 @@ import json
 import logging
 from typing import Any
 
-import httpx
+from curl_cffi.requests import AsyncSession as CurlAsyncSession, RequestsError
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization
 from app.services.encryption import encryption_service
+from app.services.settings import settings_service
+from app.services.wham_usage import parse_usage
+from app.utils.proxy import build_curl_cffi_proxies
 
 logger = logging.getLogger(__name__)
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
-USAGE_HEADERS = {
-    "Content-Type": "application/json",
-    "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
-}
-
-
-def _number(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _window(body: dict[str, Any], aliases: tuple[str, ...]) -> dict[str, Any] | None:
-    containers = [body]
-    containers.extend(
-        value for key in ("usage", "rate_limits", "limits", "rate_limits_info")
-        if isinstance((value := body.get(key)), dict)
-    )
-    for container in containers:
-        for alias in aliases:
-            value = container.get(alias)
-            if isinstance(value, dict):
-                return value
-    return None
-
-
-def _parse_window(window: dict[str, Any]) -> dict[str, Any]:
-    used = next((_number(window.get(key)) for key in ("used", "num_tokens_used", "tokens_used", "consumed") if _number(window.get(key)) is not None), None)
-    limit = next((_number(window.get(key)) for key in ("limit", "num_tokens_limit", "tokens_limit", "max", "cap") if _number(window.get(key)) is not None), None)
-    remaining = next((_number(window.get(key)) for key in ("remaining", "num_tokens_remaining", "tokens_remaining", "available") if _number(window.get(key)) is not None), None)
-    if remaining is None and used is not None and limit is not None:
-        remaining = max(0, limit - used)
-    if used is None and remaining is not None and limit is not None:
-        used = max(0, limit - remaining)
-    if limit is None and used is not None and remaining is not None:
-        limit = used + remaining
-    reset_at = next((str(window[key]) for key in ("resets_at", "reset_at", "reset_time", "expires_at") if window.get(key) is not None), None)
-    state = "unknown" if remaining is None else ("exhausted" if remaining <= 0 else "available")
-    return {
-        "used": used or 0,
-        "limit": limit or 0,
-        "remaining": remaining,
-        "reset_at": reset_at,
-        "state": state,
-    }
-
-
-def parse_usage(body: Any) -> dict[str, Any] | None:
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except (TypeError, ValueError):
-            return None
-    if not isinstance(body, dict):
-        return None
-    short = _window(body, ("5h", "300min", "five_hours", "short"))
-    weekly = _window(body, ("7d", "10080min", "seven_days", "weekly", "long", "1week"))
-    if not short and not weekly:
-        return None
-    return {
-        "5h": _parse_window(short) if short else None,
-        "1week": _parse_window(weekly) if weekly else None,
-    }
+USAGE_HEADERS = {"Accept": "application/json", "Referer": "https://chatgpt.com/"}
 
 
 class AccountPoolUsageService:
-    def __init__(self, client_factory=httpx.AsyncClient, timeout: float = 12.0, concurrency: int = 8):
+    def __init__(self, client_factory=CurlAsyncSession, timeout: float = 30.0, concurrency: int = 8):
         self.client_factory = client_factory
         self.timeout = timeout
         self.concurrency = concurrency
@@ -139,7 +79,13 @@ class AccountPoolUsageService:
             return None
         return token, account_id
 
-    async def _check_token(self, token_data: tuple[str, str] | None) -> dict[str, Any]:
+    @staticmethod
+    async def _proxies(db: AsyncSession) -> dict[str, str] | None:
+        config = await settings_service.get_proxy_config(db)
+        return build_curl_cffi_proxies(config["proxy"]) if config["enabled"] else None
+
+    async def _check_token(self, token_data: tuple[str, str] | None,
+                           proxies: dict[str, str] | None = None) -> dict[str, Any]:
         if not token_data:
             return {"status": "unavailable", "error": "账号池没有可用 JSON"}
         token, account_id = token_data
@@ -147,7 +93,9 @@ class AccountPoolUsageService:
         if account_id:
             headers["Chatgpt-Account-Id"] = account_id
         try:
-            async with self.client_factory(timeout=self.timeout) as client:
+            async with self.client_factory(
+                timeout=self.timeout, impersonate="chrome110", proxies=proxies,
+            ) as client:
                 response = await client.get(USAGE_URL, headers=headers)
             if response.status_code == 401:
                 return {"status": "invalid", "error": "Token 无效"}
@@ -161,7 +109,7 @@ class AccountPoolUsageService:
             if usage is None:
                 return {"status": "unknown", "error": "未找到额度窗口"}
             return {"status": "ok", "error": None, **usage}
-        except (httpx.HTTPError, TimeoutError) as exc:
+        except (RequestsError, TimeoutError) as exc:
             return {"status": "error", "error": type(exc).__name__}
 
     async def check_email(self, db: AsyncSession, email: str, team_space_id: str = "") -> dict[str, Any]:
@@ -186,13 +134,10 @@ class AccountPoolUsageService:
                 MemberAuthorization.account_id == team_space_id,
             ))).scalar_one_or_none()
             token = self._authorization_token(record, team_space_id)
-        return await self._check_token(token)
+        return await self._check_token(token, await self._proxies(db))
 
-    async def check_many(
-        self,
-        db: AsyncSession,
-        accounts: list[str | tuple[str, str]],
-    ) -> dict[Any, dict[str, Any]]:
+    @staticmethod
+    def _normalize_accounts(accounts: list[str | tuple[str, str]]) -> list[tuple[Any, str, str]]:
         normalized: list[tuple[Any, str, str]] = []
         for item in accounts:
             if isinstance(item, tuple):
@@ -205,9 +150,11 @@ class AccountPoolUsageService:
                 key = email
             if email and key not in [value[0] for value in normalized]:
                 normalized.append((key, email, team_space_id))
-        if not normalized:
-            return {}
+        return normalized
 
+    async def _tokens_for_accounts(
+        self, db: AsyncSession, normalized: list[tuple[Any, str, str]],
+    ) -> list[tuple[Any, tuple[str, str] | None]]:
         emails = list(dict.fromkeys(value[1] for value in normalized))
         rows = await db.execute(
             select(AccountPoolEntry).where(
@@ -245,18 +192,26 @@ class AccountPoolUsageService:
                 (key, token or self._authorization_token(auth_by_key.get((email, space)), space))
                 for (key, email, space), (_, token) in zip(normalized, token_data)
             ]
+        return token_data
+
+    async def check_many(
+        self,
+        db: AsyncSession,
+        accounts: list[str | tuple[str, str]],
+    ) -> dict[Any, dict[str, Any]]:
+        normalized = self._normalize_accounts(accounts)
+        if not normalized:
+            return {}
+        token_data = await self._tokens_for_accounts(db, normalized)
+        proxies = await self._proxies(db)
         semaphore = asyncio.Semaphore(self.concurrency)
 
         async def check(key: Any, credentials: tuple[str, str] | None):
             async with semaphore:
-                return key, await self._check_token(credentials)
+                return key, await self._check_token(credentials, proxies)
 
-        values = await asyncio.gather(*(check(key, credentials) for key, credentials in token_data), return_exceptions=True)
-        result: dict[Any, dict[str, Any]] = {}
-        for value in values:
-            if isinstance(value, tuple):
-                result[value[0]] = value[1]
-        return result
+        values = await asyncio.gather(*(check(key, credentials) for key, credentials in token_data))
+        return dict(values)
 
 
 account_pool_usage_service = AccountPoolUsageService()

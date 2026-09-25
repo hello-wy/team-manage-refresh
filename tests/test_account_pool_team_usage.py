@@ -4,9 +4,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolEntry, AccountPoolTeamUsage, Team
+from app.models import AccountPoolEntry, AccountPoolTeamUsage, QuotaSnapshot, Team
 from app.services.account_pool_team_usage import record_seat_switch
 from app.services.quota_sync import store_quota
+from app.services.wham_usage import parse_usage
 
 
 class AccountPoolTeamUsageTests(unittest.IsolatedAsyncioTestCase):
@@ -103,6 +104,31 @@ class AccountPoolTeamUsageTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(second.premium_used)
             self.assertEqual(first.weekly_reset_at, "reset-1")
             self.assertIsNone(second.weekly_reset_at)
+
+    async def test_fractional_wham_usage_is_saved_and_marks_premium_used(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner@example.com", account_id="space-1",
+                     access_token_encrypted="token"),
+                AccountPoolEntry(id=1, email="member@example.com"),
+            ])
+            await session.commit()
+            usage = parse_usage({"rate_limit": {"primary_window": {
+                "limit_window_seconds": 604800, "used_percent": 0.5,
+                "reset_at": 1791000000,
+            }}})
+            await store_quota(
+                session, email="member@example.com", space_id="space-1",
+                seat_type="premium", usage={"status": "ok", **usage},
+            )
+            await session.commit()
+
+        async with self.sessions() as session:
+            snapshot = (await session.execute(select(QuotaSnapshot))).scalar_one()
+            tracked = (await session.execute(select(AccountPoolTeamUsage))).scalar_one()
+            self.assertEqual(snapshot.weekly_remaining, 99.5)
+            self.assertTrue(tracked.premium_used)
+            self.assertEqual(tracked.weekly_reset_at, "1791000000")
 
 
 if __name__ == "__main__":
