@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 import inspect
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Sub2apiExportRecord, Team, TeamEmailMapping
@@ -15,6 +15,20 @@ from app.utils.time_utils import get_now
 
 class Sub2apiExportRecordService:
     """Upsert one row per normalized email and Team workspace."""
+
+    async def delete_for_emails(self, db: AsyncSession, emails: list[str]) -> int:
+        """Remove every export record owned by the deleted account emails."""
+        normalized_emails = {
+            str(email or "").strip().lower() for email in emails if str(email or "").strip()
+        }
+        if not normalized_emails:
+            return 0
+        result = await db.execute(
+            delete(Sub2apiExportRecord).where(
+                Sub2apiExportRecord.email.in_(normalized_emails)
+            )
+        )
+        return int(result.rowcount or 0)
 
     async def record_success(
         self,

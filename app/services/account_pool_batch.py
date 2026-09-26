@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolTotpJob, AccountPoolWorkspace
 from app.services.account_pool_export import selected_workspace
 from app.services.encryption import encryption_service
+from app.services.sub2api_export_records import sub2api_export_record_service
 from app.utils.time_utils import get_now
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,9 @@ class AccountPoolBatchService:
         ))).first()
         if active_rotations or active_exports:
             raise ValueError("所选账号存在后台任务，请等待任务结束后删除")
+        await sub2api_export_record_service.delete_for_emails(
+            session, [entry.email for entry in entries]
+        )
         for entry in entries:
             await session.delete(entry)
         await session.commit()

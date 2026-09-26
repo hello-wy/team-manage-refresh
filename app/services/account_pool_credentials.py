@@ -13,6 +13,7 @@ from app.services.account_pool_credential_input import (
 )
 from app.services.account_pool_history import account_pool_history_service
 from app.services.encryption import encryption_service
+from app.services.sub2api_export_records import sub2api_export_record_service
 from app.utils.totp import TotpError, generate_totp, normalize_totp_secret
 
 class CredentialCipher(Protocol):
@@ -225,6 +226,7 @@ class AccountPoolCredentialService:
         entry = await db_session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             return False
+        await sub2api_export_record_service.delete_for_emails(db_session, [entry.email])
         await db_session.delete(entry)
         await db_session.commit()
         return True

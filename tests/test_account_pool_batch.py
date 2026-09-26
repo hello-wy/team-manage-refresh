@@ -7,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolEntry, AccountPoolTotpJob, AccountPoolWorkspace
+from app.models import AccountPoolEntry, AccountPoolTotpJob, AccountPoolWorkspace, Sub2apiExportRecord
 from app.services.account_pool_batch import AccountPoolBatchService
 from app.services.account_pool_totp import AccountPoolTotpError
+from app.utils.time_utils import get_now
 
 
 class Cipher:
@@ -111,3 +112,24 @@ class AccountPoolBatchTests(unittest.IsolatedAsyncioTestCase):
                 select(AccountPoolTotpJob).where(
                     AccountPoolTotpJob.batch_id == batch_id)
             )).scalar_one_or_none())
+
+    async def test_delete_removes_export_records_for_all_selected_emails(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Sub2apiExportRecord(
+                    email="one@example.com", team_space_id="team-a",
+                    first_exported_at=get_now(), last_exported_at=get_now(),
+                    created_at=get_now(), updated_at=get_now(),
+                ),
+                Sub2apiExportRecord(
+                    email="outside@example.com", team_space_id="team-b",
+                    first_exported_at=get_now(), last_exported_at=get_now(),
+                    created_at=get_now(), updated_at=get_now(),
+                ),
+            ])
+            await session.commit()
+            deleted = await self.service.delete(session, [1])
+            records = (await session.execute(select(Sub2apiExportRecord))).scalars().all()
+
+        self.assertEqual(deleted, ["one@example.com"])
+        self.assertEqual([record.email for record in records], ["outside@example.com"])

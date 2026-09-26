@@ -9,7 +9,7 @@ from app.database import Base
 from app.database import get_db
 from app.dependencies.auth import require_admin
 from app.main import app
-from app.models import AccountPoolEntry, AccountPoolHistory, AccountPoolWorkspace
+from app.models import AccountPoolEntry, AccountPoolHistory, AccountPoolWorkspace, Sub2apiExportRecord
 from app.services.account_pool_credentials import (
     AccountPoolCredentialError,
     AccountPoolCredentialService,
@@ -94,6 +94,14 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
                     joined_at=get_now(),
                 )
             )
+            session.add(Sub2apiExportRecord(
+                email=entry.email,
+                team_space_id="team-a",
+                first_exported_at=get_now(),
+                last_exported_at=get_now(),
+                created_at=get_now(),
+                updated_at=get_now(),
+            ))
             await session.commit()
 
             self.assertTrue(await self.service.delete_entry(session, entry_id))
@@ -104,6 +112,8 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
             )
             histories = (await session.execute(select(AccountPoolHistory))).scalars().all()
             self.assertEqual(histories, [])
+            exports = (await session.execute(select(Sub2apiExportRecord))).scalars().all()
+            self.assertEqual(exports, [])
 
             result = await self.service.add_accounts(
                 session,
