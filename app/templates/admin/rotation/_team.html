@@ -18,21 +18,25 @@
     </div>
   </div>
   <div class="rotation-result" aria-live="polite"></div>
-  <div class="table-container mobile-card-table-container"><table class="data-table mobile-card-table rotation-table">
-    <thead><tr><th>邮箱</th><th>角色</th><th>成员状态</th><th>实际席位</th><th>轮转阶段</th><th>登录状态</th><th>额度</th><th>数据更新时间</th><th>阻塞原因</th></tr></thead>
+  <div class="table-container rotation-table-container"><table class="data-table rotation-table">
+    <thead><tr><th>邮箱</th><th>成员状态</th><th>轮转阶段</th><th>登录状态</th><th>额度</th><th>数据更新时间</th><th>阻塞原因</th></tr></thead>
     <tbody>{% for member in team.members %}{% set usage=member.usage %}
       <tr data-email="{{ member.email }}">
-        <td data-label="邮箱">{{ member.email }}</td>
-        <td data-label="角色">{{ {'account-owner':'所有者','account-admin':'管理员','admin':'管理员','standard-user':'普通成员','member':'普通成员'}.get(member.role, member.role or '未知') }}</td>
+        <td data-label="邮箱">
+          <span class="rotation-member-email">{{ member.email }}<span class="rotation-identity-icons" aria-label="身份与席位">
+            {% if member.role in ['account-owner', 'account-admin', 'admin'] %}<span class="rotation-identity-icon rotation-identity-icon--admin" title="管理员" aria-label="管理员"><i data-lucide="shield-check" aria-hidden="true"></i></span>{% endif %}
+            {% if member.seat_type == 'premium' %}<span class="rotation-identity-icon rotation-identity-icon--premium" title="高级成员" aria-label="高级成员"><i data-lucide="crown" aria-hidden="true"></i></span>
+            {% elif member.seat_type == 'standard' %}<span class="rotation-identity-icon rotation-identity-icon--standard" title="标准成员（普通成员）" aria-label="标准成员，普通成员"><i data-lucide="user-round" aria-hidden="true"></i></span>{% endif %}
+          </span></span>
+        </td>
         <td data-label="成员状态">{{ {'joined':'已加入','invited':'待接受邀请'}.get(member.status, member.status or '未知') }}</td>
-        <td data-label="实际席位">{{ {'standard':'标准','premium':'高级'}.get(member.seat_type, member.seat_type or '未知') }}</td>
         <td data-label="轮转阶段">{{ {'standard':'标准阶段','wait_premium':'等待高级席位','premium':'高级阶段','wait_reset':'等待额度重置','removed':'已移出','unknown':'未知'}.get(member.phase, member.phase or '未知') }}</td>
         <td data-label="登录状态">{{ '有登录状态' if member.has_login else '无登录状态' }}</td>
         <td data-label="额度"><div class="rotation-quota-content">{% include "admin/rotation/_quota.html" %}</div><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary rotation-quota-refresh" title="刷新此账号额度" aria-label="刷新 {{ member.email }} 的额度"><i data-lucide="refresh-cw"></i></button></td>
         <td data-label="数据更新时间" class="rotation-observed-at">{{ usage.get('observed_at', '未同步') }}</td>
         <td data-label="阻塞原因" class="rotation-blocked-reason">{{ member.blocked_reason or ('额度数据过期或不可用' if not member.quota_fresh else '-') }}</td>
       </tr>
-    {% else %}<tr><td colspan="9">暂无成员</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="7">暂无成员</td></tr>{% endfor %}</tbody>
   </table></div>
   <details><summary>动作历史</summary><div class="rotation-actions" data-team-id="{{ team.team_id }}"></div></details>
 </section>

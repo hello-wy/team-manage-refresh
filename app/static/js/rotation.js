@@ -1,6 +1,4 @@
-const rotationColumnKey = 'rotation_columns_v1';
-const rotationHeaders = [...document.querySelectorAll('.rotation-table thead th')]
-    .map((header) => header.textContent.trim());
+const rotationColumnStorageKey = 'rotation_list_columns_v2';
 
 async function rotationRequest(url, options = {}) {
     const response = await fetch(url, options);
@@ -16,40 +14,56 @@ function rotationMessage(section, message) {
     section.querySelector('.rotation-result').textContent = message;
 }
 
-function hiddenRotationColumns() {
-    const saved = localStorage.getItem(rotationColumnKey);
-    if (!saved) return [];
-    const columns = JSON.parse(saved);
-    if (!Array.isArray(columns) || !columns.every(Number.isInteger)) {
-        throw new TypeError('轮转列设置格式错误');
+function loadRotationHiddenColumns() {
+    const saved = localStorage.getItem(rotationColumnStorageKey);
+    if (!saved) return new Set();
+
+    try {
+        const columns = JSON.parse(saved);
+        if (!Array.isArray(columns)) throw new TypeError('列偏好不是数组');
+        return new Set(columns.filter(Number.isInteger));
+    } catch (error) {
+        console.error('额度轮转列设置偏好无效，已重置。', error);
+        localStorage.removeItem(rotationColumnStorageKey);
+        showToast('列设置偏好无效，已重置', 'warning');
+        return new Set();
     }
-    return columns;
 }
 
 function applyRotationColumns(section) {
-    const hidden = hiddenRotationColumns();
+    const hidden = loadRotationHiddenColumns();
     section.querySelectorAll('.rotation-table tr').forEach((row) => {
         [...row.children].forEach((cell, index) => {
-            cell.style.display = hidden.includes(index) ? 'none' : '';
+            cell.hidden = hidden.has(index);
         });
     });
 }
 
-function initRotationColumns() {
+function initRotationColumnToggler() {
+    const table = document.querySelector('.rotation-table');
     const menu = document.getElementById('rotation-columns-menu');
-    const button = document.getElementById('rotation-columns-button');
+    if (!table || !menu) return;
+
+    const hiddenColumns = loadRotationHiddenColumns();
     menu.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
-    rotationHeaders.forEach((label, index) => {
+    table.querySelectorAll('thead th').forEach((header, index) => {
+        const label = header.innerText.trim();
+        if (!label) return;
+
+        const visible = !hiddenColumns.has(index);
+        document.querySelectorAll('.rotation-table').forEach((rotationTable) => {
+            setRotationColumnVisibility(rotationTable, index, visible);
+        });
         const item = document.createElement('label');
         item.className = 'dropdown-item';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.checked = !hiddenRotationColumns().includes(index);
+        checkbox.checked = visible;
         checkbox.addEventListener('change', () => {
-            const hidden = new Set(hiddenRotationColumns());
+            const hidden = loadRotationHiddenColumns();
             if (checkbox.checked) hidden.delete(index);
             else hidden.add(index);
-            localStorage.setItem(rotationColumnKey, JSON.stringify([...hidden]));
+            localStorage.setItem(rotationColumnStorageKey, JSON.stringify([...hidden].sort((a, b) => a - b)));
             document.querySelectorAll('.rotation-team').forEach(applyRotationColumns);
         });
         const text = document.createElement('span');
@@ -57,10 +71,42 @@ function initRotationColumns() {
         item.append(checkbox, text);
         menu.append(item);
     });
-    button.addEventListener('click', () => {
-        const open = menu.classList.toggle('show');
-        button.setAttribute('aria-expanded', String(open));
+}
+
+function setRotationColumnVisibility(table, index, visible) {
+    table.querySelectorAll(
+        `thead th:nth-child(${index + 1}), tbody tr td:nth-child(${index + 1})`
+    ).forEach((cell) => {
+        cell.hidden = !visible;
     });
+}
+
+function initRotationColumnDropdown() {
+    const menu = document.getElementById('rotation-columns-menu');
+    const button = document.getElementById('rotation-columns-button');
+    if (!menu || !button) return;
+
+    button.addEventListener('click', () => {
+        const shouldShow = !menu.classList.contains('show');
+        closeFloatingDropdowns();
+        button.setAttribute('aria-expanded', 'false');
+        if (!shouldShow) return;
+        menu.classList.add('show');
+        button.setAttribute('aria-expanded', 'true');
+        positionFloatingDropdown(menu, button);
+        requestAnimationFrame(() => positionFloatingDropdown(menu, button));
+    });
+    document.addEventListener('click', (event) => {
+        if (!menu.classList.contains('show')) return;
+        if (button.contains(event.target) || menu.contains(event.target)) return;
+        menu.classList.remove('show');
+        button.setAttribute('aria-expanded', 'false');
+    });
+    const reposition = () => {
+        if (menu.classList.contains('show')) positionFloatingDropdown(menu, button);
+    };
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
 }
 
 async function loadRotationActions(section) {
@@ -190,7 +236,8 @@ document.querySelector('.rotation-page')?.addEventListener('change', (event) => 
     }
 });
 
-initRotationColumns();
+initRotationColumnToggler();
+initRotationColumnDropdown();
 document.querySelectorAll('.rotation-team').forEach(applyRotationColumns);
 formatQuotaResetTimes();
 async function syncRotationOnEntry() {

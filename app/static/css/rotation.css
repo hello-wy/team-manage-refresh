@@ -10,8 +10,41 @@
 .rotation-quota-refresh { margin-left: 0.35rem; vertical-align: top; }
 .rotation-quota-content { display: inline-block; vertical-align: top; }
 .rotation-result:not(:empty) { margin: 0.5rem 0; }
+.rotation-table-container {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+.rotation-table {
+    min-width: 980px;
+}
+.rotation-member-email {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.rotation-identity-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+.rotation-identity-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+}
+.rotation-identity-icon svg {
+    width: 0.85rem;
+    height: 0.85rem;
+    stroke-width: 2.4;
+}
+.rotation-identity-icon--admin { color: var(--danger); background: var(--danger-soft); }
+.rotation-identity-icon--premium { color: var(--warning); background: var(--warning-soft); }
+.rotation-identity-icon--standard { color: var(--success); background: var(--success-soft); }
 @media (max-width: 640px) {
-    .rotation-table td[data-label="额度"] { flex-wrap: wrap; }
-    .rotation-quota-content { flex: 1 1 170px; min-width: 0; }
-    .rotation-quota-refresh { margin-left: auto; }
+    .rotation-quota-content { min-width: 170px; }
+    .rotation-quota-refresh { margin-left: 0.5rem; }
 }
