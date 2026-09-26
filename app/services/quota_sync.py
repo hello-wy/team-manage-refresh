@@ -1,10 +1,13 @@
 """Refresh workspace-scoped quota observations independently of page views."""
 
+import json
+
 from sqlalchemy import select
 
-from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
+from app.models import (AccountPoolEntry, AccountPoolHistory, AccountPoolWorkspace, QuotaSnapshot,
                         RotationSeatSnapshot, Sub2apiExportRecord, Team, TeamEmailMapping)
 from app.services.account_pool_team_usage import record_quota_observation
+from app.services.encryption import encryption_service
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -15,7 +18,56 @@ def _window_values(window):
     return window.get("remaining"), window.get("limit"), window.get("reset_at")
 
 
+def _quota_json(usage, observed_at):
+    return {"status": usage["status"], "error": usage.get("error"),
+            "observed_at": observed_at.isoformat(),
+            "5h": usage.get("5h"), "1week": usage.get("1week")}
+
+
+def _updated_json(encrypted, space_id, quota):
+    payload = json.loads(encryption_service.decrypt_token(encrypted))
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, list):
+        raise ValueError("账号池 JSON 缺少 accounts 数组")
+    matched = False
+    for account in accounts:
+        if not isinstance(account, dict):
+            raise ValueError("账号池 JSON 的账户格式错误")
+        credentials = account.get("credentials")
+        if not isinstance(credentials, dict):
+            raise ValueError("账号池 JSON 缺少账户凭据")
+        account_id = str(credentials.get("chatgpt_account_id")
+                         or credentials.get("account_id") or "").strip()
+        if account_id == space_id:
+            account["quota"] = quota
+            matched = True
+    if not matched:
+        raise ValueError("账号池 JSON 与额度工作区不匹配")
+    return encryption_service.encrypt_token(json.dumps(payload, ensure_ascii=False))
+
+
+async def _save_account_json_quota(db, email, space_id, quota, observed_at):
+    entry = (await db.execute(select(AccountPoolEntry).where(
+        AccountPoolEntry.email == email, AccountPoolEntry.deleted_at.is_(None),
+    ))).scalar_one_or_none()
+    if entry is None:
+        return
+    workspace = (await db.execute(select(AccountPoolWorkspace).where(
+        AccountPoolWorkspace.account_pool_id == entry.id,
+        AccountPoolWorkspace.workspace_id == space_id,
+    ))).scalar_one_or_none()
+    if workspace and workspace.export_json_encrypted:
+        workspace.export_json_encrypted = _updated_json(
+            workspace.export_json_encrypted, space_id, quota)
+        workspace.json_updated_at = observed_at
+    if entry.workspace_id == space_id and entry.export_json_encrypted:
+        entry.export_json_encrypted = _updated_json(
+            entry.export_json_encrypted, space_id, quota)
+        entry.export_json_updated_at = observed_at
+
+
 async def store_quota(db, *, email, space_id, seat_type, usage):
+    observed_at = get_now()
     snapshot = (await db.execute(select(QuotaSnapshot).where(
         QuotaSnapshot.email == email, QuotaSnapshot.team_space_id == space_id,
     ))).scalar_one_or_none()
@@ -29,8 +81,10 @@ async def store_quota(db, *, email, space_id, seat_type, usage):
     snapshot.weekly_remaining, snapshot.weekly_limit, snapshot.weekly_reset_at = weekly
     snapshot.status = usage["status"]
     snapshot.error = usage.get("error")
-    snapshot.observed_at = get_now()
+    snapshot.observed_at = observed_at
     snapshot.version = (snapshot.version or 0) + 1
+    await _save_account_json_quota(
+        db, email, space_id, _quota_json(usage, observed_at), observed_at)
     await record_quota_observation(
         db,
         email=email,
@@ -53,6 +107,11 @@ async def refresh_team(db, team: Team, team_service, *, usage_service):
         TeamEmailMapping.team_id == team.id,
         TeamEmailMapping.status == "joined",
     ))).scalars().all()
+    owner_email = team.email.strip().lower()
+    owner_entry = (await db.execute(select(AccountPoolEntry.id).where(
+        AccountPoolEntry.email == owner_email,
+        AccountPoolEntry.deleted_at.is_(None),
+    ))).scalar_one_or_none() if owner_email else None
     seat_snapshot = await db.get(RotationSeatSnapshot, team.id)
     if seat_snapshot is None:
         seat_snapshot = RotationSeatSnapshot(team_id=team.id)
@@ -65,11 +124,16 @@ async def refresh_team(db, team: Team, team_service, *, usage_service):
     seat_snapshot.premium_remaining = premium["remaining"]
     seat_snapshot.observed_at = get_now()
     keys = [(row.email, team.account_id) for row in mappings]
+    if owner_entry and owner_email not in {row.email for row in mappings}:
+        keys.append((owner_email, team.account_id))
     usage_by_key = await usage_service.check_many(db, keys)
     for mapping in mappings:
         usage = usage_by_key[(mapping.email, team.account_id)]
         await store_quota(db, email=mapping.email, space_id=team.account_id,
                           seat_type=normalize_seat_type(mapping.seat_type), usage=usage)
+    if (owner_email, team.account_id) in keys and owner_email not in {row.email for row in mappings}:
+        await store_quota(db, email=owner_email, space_id=team.account_id,
+                          seat_type="unknown", usage=usage_by_key[(owner_email, team.account_id)])
     await db.commit()
     return len(mappings)
 

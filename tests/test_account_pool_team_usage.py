@@ -1,11 +1,14 @@
+import json
 import unittest
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolEntry, AccountPoolTeamUsage, QuotaSnapshot, Team
+from app.models import (AccountPoolEntry, AccountPoolTeamUsage, AccountPoolWorkspace,
+                        QuotaSnapshot, Team)
 from app.services.account_pool_team_usage import record_seat_switch
+from app.services.encryption import encryption_service
 from app.services.quota_sync import store_quota
 from app.services.wham_usage import parse_usage
 
@@ -129,6 +132,30 @@ class AccountPoolTeamUsageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(snapshot.weekly_remaining, 99.5)
             self.assertTrue(tracked.premium_used)
             self.assertEqual(tracked.weekly_reset_at, "1791000000")
+
+    async def test_quota_is_written_to_matching_account_pool_json(self):
+        payload = {"type": "sub2api-data", "accounts": [{
+            "credentials": {"chatgpt_account_id": "space-1", "access_token": "token"},
+        }]}
+        async with self.sessions() as session:
+            session.add(AccountPoolEntry(id=1, email="owner@example.com"))
+            session.add(AccountPoolWorkspace(
+                account_pool_id=1, workspace_id="space-1", status="workspace_ok",
+                export_json_encrypted=encryption_service.encrypt_token(json.dumps(payload)),
+            ))
+            await session.commit()
+            await store_quota(
+                session, email="owner@example.com", space_id="space-1",
+                seat_type="unknown", usage={"status": "ok", "5h": {
+                    "remaining": 4, "limit": 10, "reset_at": "short",
+                }},
+            )
+            await session.commit()
+            saved = (await session.execute(select(AccountPoolWorkspace))).scalar_one()
+            saved_payload = json.loads(
+                encryption_service.decrypt_token(saved.export_json_encrypted)
+            )
+            self.assertEqual(saved_payload["accounts"][0]["quota"]["5h"]["remaining"], 4)
 
 
 if __name__ == "__main__":

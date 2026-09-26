@@ -11,7 +11,7 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization
+from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization, Team
 from app.services.encryption import encryption_service
 from app.services.settings import settings_service
 from app.services.wham_usage import parse_usage
@@ -45,14 +45,16 @@ class AccountPoolUsageService:
             selected = None
             for account in accounts:
                 credentials = account.get("credentials") if isinstance(account, dict) else None
-                account_id = str((credentials or {}).get("chatgpt_account_id") or "").strip()
+                account_id = str((credentials or {}).get("chatgpt_account_id")
+                                 or (credentials or {}).get("account_id") or "").strip()
                 if team_space_id and account_id == team_space_id:
                     selected = credentials
                     break
                 if not team_space_id and selected is None and isinstance(credentials, dict):
                     selected = credentials
             token = str((selected or {}).get("access_token") or "").strip()
-            account_id = str((selected or {}).get("chatgpt_account_id") or "").strip()
+            account_id = str((selected or {}).get("chatgpt_account_id")
+                             or (selected or {}).get("account_id") or "").strip()
             return (token, account_id) if token else None
         except Exception:
             return None
@@ -78,6 +80,15 @@ class AccountPoolUsageService:
         if account_id != team_space_id or not token:
             return None
         return token, account_id
+
+    @staticmethod
+    def _team_token(team: Team | None, email: str, team_space_id: str):
+        if not team or team.email.strip().lower() != email or team.account_id != team_space_id:
+            return None
+        if not team.access_token_encrypted:
+            return None
+        token = encryption_service.decrypt_token(team.access_token_encrypted)
+        return (token, team_space_id) if token else None
 
     @staticmethod
     async def _proxies(db: AsyncSession) -> dict[str, str] | None:
@@ -134,6 +145,12 @@ class AccountPoolUsageService:
                 MemberAuthorization.account_id == team_space_id,
             ))).scalar_one_or_none()
             token = self._authorization_token(record, team_space_id)
+        if not token and team_space_id:
+            team = (await db.execute(select(Team).where(
+                Team.email == normalized_email,
+                Team.account_id == team_space_id,
+            ))).scalars().first()
+            token = self._team_token(team, normalized_email, team_space_id)
         return await self._check_token(token, await self._proxies(db))
 
     @staticmethod

@@ -1,5 +1,7 @@
 """Shared quota and rotation views for admin pages and APIs."""
 
+from types import SimpleNamespace
+
 from sqlalchemy import select
 
 from app.models import (AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization,
@@ -99,6 +101,14 @@ async def load_team_rotation(db, team: Team, seat_balance=None):
         TeamEmailMapping.team_id == team.id,
         TeamEmailMapping.status.in_(("joined", "invited")),
     ))).scalars().all()
+    owner_email = team.email.strip().lower()
+    if owner_email and not any(row.email == owner_email for row in mappings):
+        mappings.append(SimpleNamespace(
+            id=0, email=owner_email, status="joined",
+            member_role=team.account_role or "account-owner", seat_type="unknown",
+            joined_at=None, created_at=team.created_at or get_now(),
+            auto_kick_exempt=True,
+        ))
     snapshots = (await db.execute(select(QuotaSnapshot).where(
         QuotaSnapshot.team_space_id == team.account_id,
         QuotaSnapshot.email.in_([row.email for row in mappings]),
