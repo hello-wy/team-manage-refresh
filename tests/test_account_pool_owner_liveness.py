@@ -70,10 +70,14 @@ class OwnerLivenessTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone((await db.get(Team, 1)).owner_liveness_checked_at)
 
     async def test_all_checks_deduplicate_owner_email_and_include_real_owner_without_password(self):
+        from unittest.mock import patch
+        from app import main
+        from app.routes import admin
         async with self.sessions() as db:
             db.add(Team(id=2, email='owner@example.com', account_id='space-2', access_token_encrypted='stored-token'))
             await db.commit()
-        self.assertEqual((await self.service.check_all(self.sessions))['alive'], 1)
+        with patch.object(admin, 'account_pool_liveness_service', self.service), patch.object(main, 'AsyncSessionLocal', self.sessions):
+            self.assertEqual((await main.scheduled_account_pool_liveness())['alive'], 1)
         self.remote.assert_awaited_once()
         async with self.sessions() as db:
             db.add(AccountPoolEntry(id=10, email='owner@example.com'))

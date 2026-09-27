@@ -31,7 +31,6 @@ from app.services.auth import auth_service
 from app.services.team import team_service
 from app.services.member_auto_kick import member_auto_kick_service
 from app.services.account_pool import account_pool_service
-from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.replacement_export import ReplacementExportService
 from app.models import Team
 from app.services.account_pool_usage import account_pool_usage_service
@@ -328,14 +327,9 @@ async def configure_account_pool_liveness_job_from_settings() -> str:
 
 
 async def scheduled_account_pool_liveness() -> dict[str, int]:
-    from app.routes.admin import account_pool_authorization_service
-    from app.services.account_pool_credentials import account_pool_credential_service
+    from app.routes.admin import account_pool_liveness_service
 
-    service = AccountPoolLivenessService(
-        account_pool_credential_service,
-        account_pool_authorization_service,
-    )
-    counts = await service.check_all(AsyncSessionLocal)
+    counts = await account_pool_liveness_service.check_all(AsyncSessionLocal)
     logger.info("账号号池验活完成: %s", counts)
     return counts
 
