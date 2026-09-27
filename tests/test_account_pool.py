@@ -203,7 +203,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
 
             mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
             self.assertEqual(mapping.seat_type, "premium")
-            listing = await self.service.list_entries(session)
+            listing = await self.service.list_entries(session, search="member@example.com")
             self.assertEqual(listing["entries"][0]["seat_type"], "premium")
             mapping.missing_sync_count = 3
             await team_service._reconcile_team_email_mappings(1, set(), set(), session)
@@ -231,7 +231,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
                 TeamEmailMapping(team_id=2, email="member@example.com", status="invited"),
             ])
             await session.commit()
-            listing = await self.service.list_entries(session)
+            listing = await self.service.list_entries(session, search="member@example.com")
             self.assertEqual(listing["entries"][0]["status"], "conflict")
             self.assertIsNone(listing["entries"][0]["team_id"])
             self.assertEqual(
@@ -255,7 +255,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             entry.workspace_status = "workspace_ok"
             await session.commit()
 
-            listing = await self.service.list_entries(session)
+            listing = await self.service.list_entries(session, search="member@example.com")
 
         row = listing["entries"][0]
         self.assertTrue(row["workspace_in_pool"])
@@ -271,7 +271,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             entry.workspace_status = "workspace_ok"
             await session.commit()
 
-            listing = await self.service.list_entries(session)
+            listing = await self.service.list_entries(session, search="member@example.com")
 
         row = listing["entries"][0]
         self.assertFalse(row["workspace_in_pool"])
@@ -287,14 +287,14 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             entry.workspace_status = "personal_account"
             await session.commit()
 
-            listing = await self.service.list_entries(session)
+            listing = await self.service.list_entries(session, search="member@example.com")
 
         row = listing["entries"][0]
         self.assertTrue(row["workspace_is_personal"])
         self.assertFalse(row["workspace_in_pool"])
         self.assertEqual(row["workspace_id"], "personal-account")
 
-    async def test_team_status_filter_uses_personal_workspace_state(self):
+    async def test_team_status_filter_does_not_treat_saved_workspace_as_membership(self):
         async with self.sessions() as session:
             session.add_all([
                 AccountPoolEntry(
@@ -319,11 +319,11 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             {entry["email"] for entry in joined["entries"]},
-            {"team@example.com", "unchecked@example.com"},
+            set(),
         )
         self.assertEqual(
-            [entry["email"] for entry in not_joined["entries"]],
-            ["personal@example.com"],
+            {entry["email"] for entry in not_joined["entries"]},
+            {"personal@example.com", "team@example.com", "unchecked@example.com"},
         )
 
     async def test_login_targets_include_all_active_teams_without_defaulting(self):

@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-quota-right">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-filters">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -12,86 +12,83 @@
 <div class="account-pool-page">
     <div class="page-header account-pool-page-header">
         <div class="page-header-copy">
-            <div class="page-header-kicker">
-                <i data-lucide="mail-plus"></i>
-                <span>Account Pool</span>
-            </div>
+            <div class="page-header-kicker"><i data-lucide="mail-plus"></i><span>Account Pool</span></div>
             <h2>账号号池</h2>
-            <div class="page-header-meta">
-                <span class="page-meta-pill"><i data-lucide="database"></i> 共 {{ total }} 个邮箱</span>
-            </div>
+            <div class="page-header-meta"><span class="page-meta-pill"><i data-lucide="database"></i> 当前 {{ total }} 个账号</span></div>
         </div>
+        <button type="button" class="btn btn-primary" id="accountPoolImportToggle" aria-expanded="false" aria-controls="accountPoolImportPanel">
+            <i data-lucide="plus"></i> 导入账号
+        </button>
+    </div>
+    <section id="accountPoolImportPanel" class="content-section account-pool-import-panel" hidden>
         <form id="accountPoolForm" class="account-pool-form">
             <div class="form-group">
-                <label for="accountPoolEmails">账号列表</label>
-                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET\nbob@example.com"></textarea>
+                <label for="accountPoolEmails">批量加入账号</label>
+                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET&#10;bob@example.com"></textarea>
                 <label class="account-pool-auto-rotate" for="accountPoolAutoRotate">
                     <input id="accountPoolAutoRotate" type="checkbox" checked aria-describedby="accountPoolAutoRotateHint">
                     <span>加入后立即更换 2FA</span>
                 </label>
                 <small id="accountPoolAutoRotateHint" class="account-pool-hint">新增或恢复且凭据齐全的账号会立即更换，成功后旧密钥失效、新密钥自动保存。已有账号跳过；如需更新已有凭据，请取消勾选。</small>
             </div>
+            <div class="account-pool-import-actions">
+                <button type="button" class="btn btn-secondary" id="accountPoolImportClose">收起</button>
+                <button type="submit" class="btn btn-primary" id="accountPoolSubmitBtn"><i data-lucide="plus-circle"></i> 加入号池</button>
+            </div>
         </form>
-        <div class="page-header-actions account-pool-page-actions">
-            <button type="submit" form="accountPoolForm" class="btn btn-primary" id="accountPoolSubmitBtn">
-                <i data-lucide="plus-circle" style="width: 16px; height: 16px;"></i>
-                加入号池
-            </button>
-        </div>
-    </div>
+    </section>
 
-    <section class="content-section">
-        <div class="workbench-toolbar-row">
-            <div class="workbench-toolbar-copy">
-                <div class="account-pool-status-heading">
-                    <h3>账号状态</h3>
-                    <button type="button" class="btn btn-primary btn-sm" id="accountPoolLivenessBtn">
-                        <i data-lucide="activity" style="width: 16px; height: 16px;"></i>
-                        <span>立即验活</span>
-                    </button>
+    <section class="content-section account-pool-list-section">
+        <div id="accountPoolFilters" class="account-pool-filters">
+            <div class="account-pool-filter-row" role="group" aria-label="按 Team 筛选">
+                <span class="account-pool-filter-label">Team</span>
+                <div class="account-pool-filter-options">
+                    <a data-filter-kind="team" href="{{ filter_url(team_filter='', status_filter='') }}" class="account-pool-filter-chip {{ 'is-active' if not team_filter }}" {% if not team_filter %}aria-current="true"{% endif %}>全部 Team</a>
+                    <a data-filter-kind="team" href="{{ filter_url(team_filter='personal', status_filter='') }}" class="account-pool-filter-chip {{ 'is-active' if team_filter == 'personal' }}" {% if team_filter == 'personal' %}aria-current="true"{% endif %}>个人账户</a>
+                    {% for team in filter_teams %}
+                    <a data-filter-kind="team" href="{{ filter_url(team_filter=team.id, status_filter='') }}" class="account-pool-filter-chip {{ 'is-active' if team_filter == team.id|string }}" {% if team_filter == team.id|string %}aria-current="true"{% endif %} title="{{ team.name }} · Team #{{ team.id }}"><span>{{ team.name }}</span><small>#{{ team.id }}</small></a>
+                    {% endfor %}
                 </div>
             </div>
+            <div class="account-pool-filter-row" role="group" aria-label="按席位筛选">
+                <span class="account-pool-filter-label">席位</span>
+                <div class="account-pool-filter-options">
+                    {% for value, label in [('', '全部席位'), ('premium', '高级'), ('standard', '标准'), ('unknown', '未分配 / 未知')] %}
+                    <a data-filter-kind="seat" href="{{ filter_url(seat_filter=value) }}" class="account-pool-filter-chip {{ 'is-active' if seat_filter == value }}" {% if seat_filter == value %}aria-current="true"{% endif %}>{{ label }}</a>
+                    {% endfor %}
+                    {% if team_filter or seat_filter or search or status_filter %}<a data-filter-kind="reset" class="account-pool-filter-reset" href="{{ filter_url(team_filter='', seat_filter='', search='', status_filter='') }}"><i data-lucide="rotate-ccw"></i> 重置筛选</a>{% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="account-pool-toolbar">
+            <form method="get" class="search-form" id="accountPoolSearchForm">
+                <input type="hidden" name="team_filter" value="{{ team_filter }}">
+                <input type="hidden" name="seat_filter" value="{{ seat_filter }}">
+                <input type="hidden" name="status_filter" value="{{ status_filter }}">
+                <input type="hidden" name="sort_by" value="{{ sort_by }}">
+                <input type="hidden" name="per_page" value="{{ per_page }}">
+                <div class="input-group-clean"><i data-lucide="search"></i><input type="search" name="search" value="{{ search or '' }}" placeholder="搜索邮箱…" aria-label="搜索账号邮箱"><button type="submit" aria-label="搜索"><i data-lucide="arrow-right"></i></button></div>
+            </form>
+            <label class="account-pool-sort"><i data-lucide="arrow-down-wide-narrow"></i><select id="accountPoolSort" aria-label="账号排序" title="默认按 Team 分组；同组内所有者、高级、标准席位依次排列">
+                {% for value, label in sort_options.items() %}<option value="{{ value }}" {% if sort_by == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></label>
             <div class="account-pool-toolbar-actions">
-                <select id="accountPoolStatusFilter" class="form-control account-pool-status-filter" aria-label="筛选是否加入 Team">
-                    <option value="" {% if not status_filter %}selected{% endif %}>全部 Team 状态</option>
-                    <option value="joined" {% if status_filter == 'joined' %}selected{% endif %}>已加入 Team</option>
-                    <option value="not_joined" {% if status_filter == 'not_joined' %}selected{% endif %}>未加入 Team</option>
-                </select>
-                <form method="get" class="search-form">
-                    <div class="input-group-clean">
-                        <i data-lucide="search" style="width: 14px; height: 14px;"></i>
-                        <input type="text" name="search" value="{{ search or '' }}" placeholder="搜索邮箱...">
-                    </div>
-                </form>
+                <button type="button" class="btn btn-secondary btn-sm" id="accountPoolLivenessBtn"><i data-lucide="activity"></i> 立即验活</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="accountPoolBatchHistory"><i data-lucide="history"></i> 2FA 记录</button>
                 <div class="dropdown-wrapper">
-                    <button
-                        id="accountPoolColumnToggleBtn"
-                        type="button"
-                        class="btn btn-secondary btn-sm dropdown-toggle"
-                        aria-haspopup="menu"
-                        aria-expanded="false"
-                        aria-controls="accountPoolColumnToggleDropdown"
-                    >
-                        <i data-lucide="columns" style="width: 16px; height: 16px;"></i>
-                        列设置
-                    </button>
-                    <div
-                        id="accountPoolColumnToggleDropdown"
-                        class="dropdown-menu dropdown-menu-floating"
-                        role="menu"
-                    ></div>
+                    <button id="accountPoolColumnToggleBtn" type="button" class="btn btn-secondary btn-sm dropdown-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="accountPoolColumnToggleDropdown"><i data-lucide="columns"></i> 列设置</button>
+                    <div id="accountPoolColumnToggleDropdown" class="dropdown-menu dropdown-menu-floating" role="menu"></div>
                 </div>
             </div>
         </div>
 
-        <div class="account-pool-batch-bar" id="accountPoolBatchBar">
+        <div class="account-pool-batch-bar" id="accountPoolBatchBar" hidden>
             <span id="accountPoolSelectedCount">已选择 0 个账号</span>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchJson" disabled><i data-lucide="download"></i> 合并 JSON</button>
             <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchSub2api" disabled><i data-lucide="upload"></i> 导出到 Sub2API</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchRotate" disabled><i data-lucide="key-round"></i> 更换 2FA</button>
             <button type="button" class="btn btn-sm btn-danger" id="accountPoolBatchDelete" disabled><i data-lucide="trash-2"></i> 删除</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchClear" disabled>清除选择</button>
-            <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchHistory"><i data-lucide="history"></i> 2FA 记录</button>
         </div>
         <div id="accountPoolBatchProgress" class="account-pool-batch-progress" role="status" aria-live="polite" hidden></div>
         <div id="accountPoolTableRegion" class="account-pool-table-region" data-current-page="{{ current_page }}" data-total-pages="{{ total_pages }}">
@@ -265,14 +262,14 @@
             </table>
         </div>
         {% else %}
-        <div class="account-pool-empty">暂无账号邮箱，请先在上方添加。</div>
+        <div class="account-pool-empty">{{ '没有符合条件的账号，请调整筛选或搜索。' if team_filter or seat_filter or search or status_filter else '暂无账号，点击「导入账号」开始添加。' }}</div>
         {% endif %}
 
         {% if total > 0 %}
         <div class="pagination" style="margin-top: 1rem;">
             <div class="pagination-controls">
                 {% if current_page > 1 %}
-                <a class="btn btn-sm btn-secondary" href="?page={{ current_page - 1 }}&per_page={{ per_page }}&search={{ search|urlencode }}&status_filter={{ status_filter|urlencode }}" title="上一页"><i data-lucide="chevron-left"></i></a>
+                <a class="btn btn-sm btn-secondary" href="{{ filter_url(page=current_page - 1) }}" title="上一页"><i data-lucide="chevron-left"></i></a>
                 {% endif %}
                 <span class="pagination-summary">第 {{ current_page }} / {{ total_pages }} 页，共 {{ total }} 条</span>
                 <label class="account-pool-page-size">
@@ -284,7 +281,7 @@
                     </select>
                 </label>
                 {% if current_page < total_pages %}
-                <a class="btn btn-sm btn-secondary" href="?page={{ current_page + 1 }}&per_page={{ per_page }}&search={{ search|urlencode }}&status_filter={{ status_filter|urlencode }}" title="下一页"><i data-lucide="chevron-right"></i></a>
+                <a class="btn btn-sm btn-secondary" href="{{ filter_url(page=current_page + 1) }}" title="下一页"><i data-lucide="chevron-right"></i></a>
                 {% endif %}
             </div>
         </div>
@@ -393,8 +390,8 @@
 {% block extra_js %}
 <script src="/static/js/account-pool-confirm.js?v=20260927-1"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/account-pool.js?v=20260927-quota-right"></script>
+<script src="/static/js/account-pool.js?v=filters-20260927-filters"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>
-<script src="/static/js/account-pool-batch.js?v=20260927-owner-actions"></script>
+<script src="/static/js/account-pool-batch.js?v=filters-20260927-owner-actions"></script>
 {% endblock %}
