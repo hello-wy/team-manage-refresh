@@ -497,6 +497,7 @@ async def scheduled_member_auto_kick():
             stats = await member_auto_kick_service.run_due_members(
                 session,
                 team_service.delete_team_member,
+                seat_balance_provider=team_service.get_team_seat_balance,
                 invite_replacement=lambda team_id, db_session, seat_type: (
                     account_pool_service.invite_replacement(
                         team_id,

@@ -186,10 +186,6 @@ async def attach_rotation_status(db, rows):
                 if not slots:
                     waiting.add("等待补位队列确认")
                     continue
-                if not balance["success"]:
-                    # A persisted replacement already identifies its Team and
-                    # seat type. Predict only the queue head until capacity is known.
-                    slots = slots[:1]
             else:
                 if not balance["success"]:
                     waiting.add("等待最新席位余额")
@@ -208,7 +204,10 @@ async def attach_rotation_status(db, rows):
                 slots = ["standard"]
             remaining = {kind: balance["balance"][kind]["remaining"] if balance["success"] and not scheduled else None
                          for kind in ("standard", "premium")}
+            blocked_seats = set()
             for slot_index, seat_type in enumerate(slots):
+                if seat_type in blocked_seats:
+                    continue
                 if seat_type not in remaining or (not legacy and remaining[seat_type] is not None and remaining[seat_type] <= 0):
                     waiting.add("等待可用席位")
                     break
@@ -246,7 +245,7 @@ async def attach_rotation_status(db, rows):
                 planned[chosen.email] = _view(
                     "候选补位" if scheduled or blocked or not balance["success"] else (
                         "仅预览" if team.rotation_mode == "dry_run" else "预计加入"),
-                    f"{seat_label}席位 · {'定时补位' if legacy else '额度轮转'}，" + (
+                    f"{seat_label}席位 · {'定时补位' if scheduled else '等待补位' if legacy else '额度轮转'}，" + (
                         "等待当前成员下线后释放席位" if scheduled else waiting_reason or
                         "执行前会重新确认"),
                     team, kind="ready" if balance["success"] and not scheduled and not blocked else "candidate",
@@ -261,8 +260,8 @@ async def attach_rotation_status(db, rows):
                     else:
                         view["replacement_at"] = None
                 if blocked:
-                    # 队首未完成时不为后续任务分配候选，与实际 FIFO 执行一致。
-                    break
+                    # 同席位保持 FIFO，标准席位受阻不影响高级席位。
+                    blocked_seats.add(seat_type)
 
     for row in rows:
         email = row["email"]

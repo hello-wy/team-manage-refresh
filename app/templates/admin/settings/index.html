@@ -388,7 +388,7 @@
                 <input type="checkbox" id="sub2apiExcelBpsEnabled" {% if sub2api_excel_bps_enabled == 'true' %}checked{% endif %}>
                 <span>导入账号时自动启用 Excel / BPS 协议</span>
             </label>
-            <p class="form-help">默认关闭。开启后，后续导入的 OpenAI OAuth 账号将同时启用 Excel / BPS、遇到 BPS 403 错误时自动关闭协议，以及创建缓存按普通输入计费；已导入账号保持原设置。</p>
+            <p class="form-help">默认关闭。开启后，后续导入的 OpenAI OAuth 账号将同时启用 Excel / BPS、遇到 BPS 403 错误时自动关闭协议，以及创建缓存按普通输入计费；已导入账号保持原设置。遇到 BPS 403 后，Sub2API 会自动关闭该账号的协议，系统不会反复重新开启。</p>
         </div>
         <div class="form-group">
             <label>导出分组</label>

@@ -498,6 +498,85 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stats["replacement_pending"], 0)
             invite_replacement.assert_not_awaited()
 
+    async def test_blocked_standard_does_not_block_premium_and_preserves_seat_fifo(self):
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            team.pending_replacements = 4
+            for kind in ("standard", "standard", "premium", "premium"):
+                session.add(TeamReplacementQueue(team_id=team.id, seat_type=kind))
+            await session.commit()
+            async def invite(tid, db, kind):
+                if kind == "standard":
+                    await db.rollback()
+                    return {"status": "failed", "error_code": "seat_limit_exceeded"}
+                return {"status": "invited"}
+            inviter = AsyncMock(side_effect=invite)
+            stats = await self.service.run_due_members(session, AsyncMock(), invite_replacement=inviter)
+            self.assertEqual([c.args[2] for c in inviter.await_args_list],
+                             ["standard", "premium", "premium"])
+            self.assertEqual(stats["replacement_invited"], 2)
+            self.assertEqual(stats["replacement_pending"], 2)
+            self.assertEqual(team.pending_replacements, 2)
+
+    async def test_live_occupancy_prunes_only_obsolete_old_queue(self):
+        cases = [
+            # Full Team, one vacancy, invitation already occupies vacancy.
+            ({"paid": 2, "joined": 2}, 0),
+            ({"paid": 2, "joined": 1}, 1),
+            ({"paid": 2, "joined": 1, "invited": 1}, 0),
+            # Official available=0 can lag after departure; do not erase the vacancy.
+            ({"paid": 2, "joined": 1, "available": 0}, 1),
+            ({"known": False}, 3),
+            ({"reserved": 1}, 3),
+            ({"pending": 1}, 3),
+            ({"paid": None}, 3),
+        ]
+        for overrides, expected in cases:
+            with self.subTest(overrides=overrides):
+                async with self.session_factory() as session:
+                    team = await self._seed_team(session)
+                    team.pending_replacements = 3
+                    old = get_now() - timedelta(days=1)
+                    items = [TeamReplacementQueue(team_id=team.id, seat_type="standard", created_at=old)
+                             for _ in range(3)]
+                    session.add_all(items)
+                    await session.commit()
+                    first_id = items[0].id
+                    seat = {"known": True, "paid": 2, "joined": 2, "invited": 0,
+                            "pending": 0, "reserved": 0, "available": 0, "remaining": 0, **overrides}
+                    stats = await self.service.run_due_members(
+                        session, AsyncMock(),
+                        invite_replacement=AsyncMock(return_value={"status": "no_candidate"}),
+                        seat_balance_provider=AsyncMock(return_value={"success": True,
+                                                                      "balance": {"standard": seat}}),
+                    )
+                    self.assertEqual(stats["replacement_pending"], expected)
+                    self.assertEqual(team.pending_replacements, expected)
+                    remaining = (await session.execute(select(TeamReplacementQueue).order_by(
+                        TeamReplacementQueue.id))).scalars().all()
+                    if expected:
+                        self.assertEqual(remaining[0].id, first_id)
+                    for item in remaining:
+                        await session.delete(item)
+                    await session.delete(team)
+                    await session.commit()
+
+    async def test_recent_departure_and_unavailable_balance_preserve_queue(self):
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            session.add(TeamReplacementQueue(team_id=team.id, seat_type="standard"))
+            team.pending_replacements = 1
+            await session.commit()
+            for balance in ({"success": False}, {"success": True, "balance": {"standard": {
+                "known": True, "paid": 2, "joined": 2, "invited": 0, "pending": 0, "reserved": 0,
+            }}}):
+                stats = await self.service.run_due_members(
+                    session, AsyncMock(),
+                    invite_replacement=AsyncMock(return_value={"status": "no_candidate"}),
+                    seat_balance_provider=AsyncMock(return_value=balance),
+                )
+                self.assertEqual(stats["replacement_pending"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
