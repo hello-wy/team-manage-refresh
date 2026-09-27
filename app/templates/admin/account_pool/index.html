@@ -125,7 +125,7 @@
                             </div>
                         </td>
                         <td data-label="验活状态">
-                            <div class="account-pool-liveness">
+                            <div class="account-pool-liveness" title="{{ entry.liveness_message or '尚未验活' }}">
                                 <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status == 'invalid' %}status-error{% elif entry.liveness_status == 'error' %}status-pending{% else %}status-banned{% endif %}">{% if entry.liveness_status == 'alive' %}正常{% elif entry.liveness_status == 'invalid' %}凭据无效{% elif entry.liveness_status == 'error' %}检测异常{% elif entry.liveness_status == 'missing' %}缺少密码{% else %}未检测{% endif %}</span>
                             </div>
                         </td>
@@ -176,7 +176,8 @@
                                     {% else %}<span class="account-pool-team-name">{{ current_team_label }}</span>{% endif %}
                                 </div>
                                 <div class="account-pool-detail-actions">
-                                {% if entry.is_virtual_owner %}<p class="text-muted">所有者由 Team 自动展示。可查看详情和刷新额度；凭据与授权请在工作台管理。</p>{% else %}
+                                <button type="button" class="btn btn-sm btn-secondary account-pool-entry-liveness" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}"><i data-lucide="activity" aria-hidden="true"></i> 单独验活</button>
+                                {% if entry.is_virtual_owner %}<p class="text-muted">所有者使用 Team Token 验活。密码重新登录需先通过「导入账号」保存该邮箱的密码和 2FA 密钥；仅刷新或导出已有 Token 不属于重新登录。</p>{% else %}
                                 {% if entry.is_owner %}<p class="text-muted">所有者不参与跨 Team 补位，禁止加入其他 Team、删除或更换 2FA。</p>{% endif %}
                                 <button
                                     type="button"
@@ -230,11 +231,11 @@
                                     <i data-lucide="user-plus" aria-hidden="true"></i>
                                 </button>
                                 </span>
-                                <span class="account-pool-action" data-pool-tooltip="{{ '请在工作台导出所有者账号' if entry.is_virtual_owner else '重新登录并导出到 Sub2API' }}" tabindex="0">
+                                <span class="account-pool-action" data-pool-tooltip="{{ '请先保存所有者的登录密码和 2FA 密钥' if entry.is_owner and not entry.has_login_credentials else '重新登录并导出到 Sub2API' }}" tabindex="0">
                                     <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
-                                    aria-label="重新登录并导出到 Sub2API" {% if entry.is_virtual_owner %}disabled{% endif %}
+                                    aria-label="重新登录并导出到 Sub2API" {% if entry.is_owner and not entry.has_login_credentials %}disabled{% endif %}
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
                                     data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
@@ -389,9 +390,9 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/account-pool-confirm.js?v=20260927-1"></script>
+<script src="/static/js/account-pool-confirm.js?v=20260927-shared"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/account-pool.js?v=20260927-compact-status"></script>
+<script src="/static/js/account-pool.js?v=20260927-entry-liveness"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-batch.js?v=filters-20260927-owner-actions"></script>

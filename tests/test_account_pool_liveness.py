@@ -274,6 +274,33 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
         counts = await self.service.check_all(self.sessions)
         self.assertEqual(counts, {"alive": 1, "invalid": 0, "error": 0, "missing": 1})
 
+    async def test_owner_password_login_exports_and_updates_liveness(self):
+        from types import SimpleNamespace
+        from app.models import Team, AccountPoolExportJob
+        from app.services.account_pool_export import AccountPoolExportService
+        entry_id = await self.add_account("owner@example.com----password----JBSWY3DPEHPK3PXP")
+        sub2api = SimpleNamespace(import_member=AsyncMock(return_value={"account_id": 42}))
+        records = SimpleNamespace(record_success=AsyncMock())
+        exporter = AccountPoolExportService(self.sessions, self.authorization, sub2api, records)
+        async with self.sessions() as db:
+            db.add(Team(email="owner@example.com", account_id="workspace-1", access_token_encrypted="unused"))
+            entry = await db.get(AccountPoolEntry, entry_id)
+            entry.workspace_id = "workspace-1"
+            await db.commit()
+            job = await exporter.enqueue(db, entry_id, "workspace-1")
+        await exporter.run(job.id)
+        async with self.sessions() as db:
+            self.assertEqual((await db.get(AccountPoolExportJob, job.id)).status, "completed")
+            row = (await AccountPoolService(self.credentials).rows_by_ids(db, [entry_id]))[0]
+            self.assertTrue(row["is_owner"])
+            self.assertTrue(row["has_login_credentials"])
+            self.assertEqual(row["liveness_status"], "alive")
+        request = self.login.login.await_args.args[0]
+        self.assertEqual((request.email, request.account_id), ("owner@example.com", "workspace-1"))
+        self.assertEqual(request.password, "password")
+        sub2api.import_member.assert_awaited_once()
+        self.assertEqual(records.record_success.await_args.kwargs["email"], "owner@example.com")
+
     async def test_manual_liveness_route_returns_counts(self):
         from app.routes.admin import run_account_pool_liveness
 

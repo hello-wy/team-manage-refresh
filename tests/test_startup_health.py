@@ -124,6 +124,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             connection.close()
 
             self.assertIn("pending_replacements", team_columns)
+            self.assertTrue({"owner_liveness_status", "owner_liveness_message", "owner_liveness_checked_at"} <= team_columns)
             self.assertIn("last_error_code", queue_columns)
             self.assertIn("last_attempt_at", queue_columns)
             self.assertIn("replacement_export_pending", mapping_columns)

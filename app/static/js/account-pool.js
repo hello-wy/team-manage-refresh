@@ -107,6 +107,25 @@ async function runAccountPoolLiveness() {
     }
 }
 
+async function checkAccountPoolEntryLiveness(button) {
+    if (button.disabled) return;
+    button.disabled = true;
+    showToast(`正在验活 ${button.dataset.email}…`, 'info');
+    try {
+        const response = await fetch(`/admin/account-pool/${button.dataset.entryId}/liveness`, {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || result.detail || '验活失败');
+        showToast(result.message, result.status === 'alive' ? 'success' : 'warning');
+        await refreshAccountPoolTable();
+    } catch (error) {
+        showToast(error.message || '验活失败，请重试', 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
 function accountPoolTeamLabel(team) {
     return `${team.team_name || team.name || `Team #${team.id}`} · ID ${team.id}`;
 }
@@ -652,6 +671,11 @@ function initAccountPoolActionTooltips() {
 }
 
 function initAccountPoolRowActions() {
+    document.querySelectorAll('.account-pool-entry-liveness').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => checkAccountPoolEntryLiveness(button));
+    });
     updateAccountPoolCountdowns();
     document.querySelectorAll('.account-pool-quota-refresh').forEach(button => {
         if (button.dataset.bound === 'true') return;

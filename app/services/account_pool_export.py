@@ -65,6 +65,7 @@ class AccountPoolExportService:
         await self._authorization.save_result(
             session, job.account_pool_id, result,
             update_current=current.workspace_id == job.workspace_id,
+            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
         )
         imported = await self._sub2api.import_member(result.payload, session)
         entry = await session.get(AccountPoolEntry, job.account_pool_id)

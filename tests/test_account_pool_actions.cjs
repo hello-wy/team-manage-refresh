@@ -27,7 +27,7 @@ function runtime() {
         window: {}, Date, console,
         confirm() { throw new Error('Native confirm must never be called'); },
     });
-    for (const name of ['account-pool-confirm.js', 'account-pool.js']) {
+    for (const name of ['page-confirm.js', 'account-pool-confirm.js', 'account-pool.js']) {
         vm.runInContext(fs.readFileSync(`${__dirname}/../app/static/js/${name}`, 'utf8'), context);
     }
     return {context, dialog: () => dialog, focused: () => focused};
@@ -104,4 +104,43 @@ test('quota refresh updates only its cell and re-enables retry after an error', 
     await context.refreshAccountPoolQuota(button);
     assert.equal(button.removed, true);
     assert.equal(feedback.textContent, '缺少授权');
+});
+
+test('single account liveness posts only the chosen owner and restores retry after failure', async () => {
+    const {context} = runtime();
+    const calls = [], toasts = [];
+    context.showToast = (...args) => toasts.push(args);
+    context.refreshAccountPoolTable = async () => calls.push('refresh');
+    context.fetch = async (url, options) => {
+        calls.push([url, options.method]);
+        return {ok: true, json: async () => ({success: true, status: 'alive', message: 'Token verified'})};
+    };
+    const button = {disabled: false, dataset: {entryId: '-2', email: 'owner@example.com'}};
+    await context.checkAccountPoolEntryLiveness(button);
+    assert.deepEqual(calls, [['/admin/account-pool/-2/liveness', 'POST'], 'refresh']);
+    assert.equal(button.disabled, false);
+    context.fetch = async () => {throw new Error('network unavailable');};
+    await context.checkAccountPoolEntryLiveness(button);
+    assert.equal(button.disabled, false);
+    assert.equal(toasts.at(-1)[0], 'network unavailable');
+});
+
+test('workbench member removal waits for the page dialog and cancellation sends no request', async () => {
+    const env = runtime();
+    const main = fs.readFileSync(`${__dirname}/../app/static/js/main.js`, 'utf8');
+    vm.runInContext(main.slice(main.indexOf('async function deleteMember('), main.indexOf('async function rotateMember(')), env.context);
+    let calls = 0;
+    env.context.apiCall = async () => {calls++; return {success: true};};
+    env.context.showToast = () => {};
+    env.context.loadModalMemberList = async () => {};
+    env.context.window.currentTeamId = 1;
+    let removal = env.context.deleteMember(1, 'user', 'member@example.com', true);
+    assert.equal(calls, 0);
+    env.dialog().controls['[data-cancel]'].click();
+    await removal;
+    assert.equal(calls, 0);
+    removal = env.context.deleteMember(1, 'user', 'member@example.com', true);
+    env.dialog().controls['[data-confirm]'].click();
+    await removal;
+    assert.equal(calls, 1);
 });

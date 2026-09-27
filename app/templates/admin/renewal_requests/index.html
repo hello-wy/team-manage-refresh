@@ -223,7 +223,7 @@
     }
 
     async function ignoreRenewalRequest(requestId, btn) {
-        if (!confirm('确定忽略这条续期请求吗？')) {
+        if (!await confirmPageAction('确定忽略这条续期请求吗？')) {
             return;
         }
 

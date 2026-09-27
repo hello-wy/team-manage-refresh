@@ -2,10 +2,11 @@
 import json
 import logging
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import AccountPoolEntry
+from app.models import AccountPoolEntry, Team
+from app.services.account_pool_owner_liveness import AccountPoolOwnerLivenessService
 from app.services.account_pool_authorization import (
     AccountPoolAuthorizationError,
     AccountPoolAuthorizationService,
@@ -17,17 +18,26 @@ INVALID_ACCOUNT_CODES = frozenset({"invalid_username_or_password", "account_deac
 
 
 class AccountPoolLivenessService:
-    def __init__(self, credential_service, authorization_service: AccountPoolAuthorizationService):
+    def __init__(self, credential_service, authorization_service: AccountPoolAuthorizationService, team_service=None):
         self._credentials = credential_service
         self._authorization = authorization_service
+        self._owners = AccountPoolOwnerLivenessService(team_service) if team_service else None
 
     async def check_entry(self, session: AsyncSession, entry_id: int) -> str | None:
+        if entry_id < 0:
+            return await self._owners.check(session, -entry_id) if self._owners else None
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             return None
         version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
         credentials = await self._credentials.get_credentials(session, entry.email)
         if not credentials or not credentials["password"]:
+            if self._owners:
+                owner_team_id = (await session.execute(select(Team.id).where(
+                    func.lower(func.trim(Team.email)) == entry.email.strip().lower(),
+                ).order_by(Team.id))).scalars().first()
+                if owner_team_id:
+                    return await self._owners.check(session, owner_team_id)
             return await self._save_failure(session, entry_id, version, "missing", "未保存登录密码")
         try:
             return await self._refresh_workspaces(session, entry, version)
@@ -105,6 +115,14 @@ class AccountPoolLivenessService:
                 .where(AccountPoolEntry.deleted_at.is_(None))
                 .order_by(AccountPoolEntry.id)
             )).all())
+            if self._owners:
+                owner_ids = (await session.execute(select(func.min(Team.id)).where(
+                    ~select(AccountPoolEntry.id).where(
+                        AccountPoolEntry.deleted_at.is_(None),
+                        func.lower(func.trim(AccountPoolEntry.email)) == func.lower(func.trim(Team.email)),
+                    ).exists(),
+                ).group_by(func.lower(func.trim(Team.email))))).scalars()
+                entry_ids.extend(-team_id for team_id in owner_ids)
         counts = {"alive": 0, "invalid": 0, "error": 0, "missing": 0}
         for entry_id in entry_ids:
             async with sessions() as session:

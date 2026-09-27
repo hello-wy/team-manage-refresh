@@ -886,7 +886,7 @@
             return;
         }
 
-        const confirmed = confirm(`确认批量删除已选 ${codes.length} 个兑换码吗？\n\n注意：系统仅会删除没有关联记录的兑换码，其余会自动跳过。`);
+        const confirmed = await confirmPageAction(`确认批量删除已选 ${codes.length} 个兑换码吗？\n\n注意：系统仅会删除没有关联记录的兑换码，其余会自动跳过。`);
         if (!confirmed) {
             return;
         }

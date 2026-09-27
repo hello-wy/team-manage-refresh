@@ -80,6 +80,14 @@ def run_auto_migration():
             if not column_exists(cursor, "teams", column):
                 cursor.execute(f"ALTER TABLE teams ADD COLUMN {column} INTEGER")
                 migrations_applied.append(f"teams.{column}")
+        for column, column_type in (
+            ("owner_liveness_status", "VARCHAR(20)"),
+            ("owner_liveness_message", "TEXT"),
+            ("owner_liveness_checked_at", "DATETIME"),
+        ):
+            if not column_exists(cursor, "teams", column):
+                cursor.execute(f"ALTER TABLE teams ADD COLUMN {column} {column_type}")
+                migrations_applied.append(f"teams.{column}")
         if not column_exists(cursor, "teams", "rotation_mode"):
             cursor.execute("ALTER TABLE teams ADD COLUMN rotation_mode VARCHAR(20) NOT NULL DEFAULT 'off'")
             migrations_applied.append("teams.rotation_mode")
