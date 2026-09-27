@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-rotation-status">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-quota-right">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -113,22 +113,13 @@
                     {% for entry in entries %}
                     {% set usage = entry.usage or {} %}
                     {% set team_usage = entry.team_usage or {} %}
-                    {% if entry.workspace_is_personal %}
-                    {% set current_team_label = '个人账户' %}
-                    {% elif entry.workspace_id and entry.workspace_in_pool %}
-                    {% set current_team_label = entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) %}
-                    {% elif entry.workspace_id %}
-                    {% set current_team_label = entry.workspace_name or entry.workspace_id %}
-                    {% elif entry.workspace_status == 'no_workspace' %}
-                    {% set current_team_label = '未加入 Team' %}
-                    {% elif entry.workspace_status == 'workspace_error' %}
-                    {% set current_team_label = '获取失败' %}
-                    {% else %}{% set current_team_label = '-' %}{% endif %}
+                    {% set current_team_label = entry.display_team_name %}
                     {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
                     <tr data-account-pool-row="{{ entry.id }}" data-email="{{ entry.email }}">
-                        <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}"></td>
+                        <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
                         <td data-label="账号">
                             <strong>{{ entry.email }}</strong>
+                            {% if entry.is_owner %}<span class="status-badge account-pool-owner-badge">所有者</span>{% endif %}
                         </td>
                         <td data-label="Team / 席位">
                             <div class="account-pool-team-cell">
@@ -147,20 +138,30 @@
                                 <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status == 'invalid' %}status-error{% elif entry.liveness_status == 'error' %}status-pending{% else %}status-banned{% endif %}">{% if entry.liveness_status == 'alive' %}正常{% elif entry.liveness_status == 'invalid' %}凭据无效{% elif entry.liveness_status == 'error' %}检测异常{% elif entry.liveness_status == 'missing' %}缺少密码{% else %}未检测{% endif %}</span>
                             </div>
                         </td>
-                        {% set quota_unavailable = {'unavailable': '待授权', 'invalid': '登录已失效', 'unknown': '未获取', 'error': '读取失败'}.get(usage.get('status'), '暂无额度') %}
-                        <td data-label="额度">{{ quota_cell(usage.get('5h'), usage.get('1week'), team_usage.short_reset_at, team_usage.weekly_reset_at, quota_unavailable) }}</td>
+                        <td data-label="额度">
+                            {% set short_quota = usage.get('5h') or {} %}
+                            {% set weekly_quota = usage.get('1week') or {} %}
+                            {% set can_refresh_quota = (short_quota.get('remaining') is not none and short_quota.get('limit', 0) > 0) or (weekly_quota.get('remaining') is not none and weekly_quota.get('limit', 0) > 0) %}
+                            <div class="account-pool-quota-layout">
+                            <div class="account-pool-quota-content">{% include "admin/account_pool/_quota.html" %}</div>
+                            {% if can_refresh_quota %}<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-quota-refresh" title="刷新额度" data-entry-id="{{ entry.id }}" aria-label="刷新 {{ entry.email }} 的额度"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>{% endif %}
+                            </div>
+                            <small class="account-pool-quota-feedback" role="status" aria-live="polite"></small>
+                        </td>
                         {% set rotation = entry.rotation or {} %}
                         <td data-label="轮转状态">
                             <div class="account-pool-rotation" title="{{ rotation.reason or '等待轮转扫描' }}">
-                                <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
+                                <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'candidate' %}account-pool-candidate-badge{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
                                 {% if rotation.team_id %}<strong>{{ rotation.team_name }} <small>#{{ rotation.team_id }}</small></strong>{% endif %}
-                                <small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>
+                                {% if rotation.scheduled_replacement %}<small class="account-pool-replacement-countdown" data-replacement-at="{{ rotation.replacement_at or '' }}">{{ '等待释放席位' if rotation.replacement_at else '等待执行' }}</small>{% endif %}
+                                {% if rotation.label != '等待排队' %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
                             </div>
                         </td>
                         <td data-label="操作">
                             <template id="accountPoolDetails-{{ entry.id }}">
                                 <dl class="account-pool-detail-grid">
-                                    <div><dt>当前 2FA 验证码</dt><dd><totp-code data-email="{{ entry.email }}" display-only></totp-code></dd></div>
+                                    {% if entry.is_owner %}<div><dt>所有者 Team</dt><dd>{% for team in entry.owner_teams %}{{ team.name }}{% if not loop.last %}、{% endif %}{% endfor %}</dd></div>{% endif %}
+                                    <div><dt>当前 2FA 验证码</dt><dd>{% if entry.is_virtual_owner %}未保存{% else %}<totp-code data-email="{{ entry.email }}" display-only></totp-code>{% endif %}</dd></div>
                                     <div><dt>最近加入时间</dt><dd>{{ entry.joined_at|format_datetime }}</dd></div>
                                     <div><dt>验活检查时间</dt><dd>{{ entry.liveness_checked_at|format_datetime }}</dd></div>
                                     <div><dt>验活详情</dt><dd>{{ entry.liveness_message or '暂无详情' }}</dd></div>
@@ -171,7 +172,7 @@
                                     <div><dt>席位切换</dt><dd>{{ team_usage.seat_switch_count or 0 }} 次 · 最近 {{ team_usage.seat_switched_at|default(none)|format_datetime }}</dd></div>
                                 </dl>
                                 <div class="account-pool-detail-workspace"><span>切换 Team</span>
-                                    {% if selectable_teams %}
+                                    {% if selectable_teams and not entry.is_virtual_owner %}
                                     <select class="form-control account-pool-workspace-selector" data-entry-id="{{ entry.id }}" data-selected-id="{{ entry.workspace_id or '' }}" aria-label="选择 {{ entry.email }} 的 Team" title="选择 {{ entry.email }} 的 Team">
                                         {% for workspace in selectable_teams %}
                                         <option value="{{ workspace.id }}" {% if workspace.id == entry.workspace_id %}selected{% endif %}>{{ workspace.name }}</option>
@@ -180,6 +181,8 @@
                                     {% else %}<span class="account-pool-team-name">{{ current_team_label }}</span>{% endif %}
                                 </div>
                                 <div class="account-pool-detail-actions">
+                                {% if entry.is_virtual_owner %}<p class="text-muted">所有者由 Team 自动展示。可查看详情和刷新额度；凭据与授权请在工作台管理。</p>{% else %}
+                                {% if entry.is_owner %}<p class="text-muted">所有者不参与跨 Team 补位，禁止加入其他 Team、删除或更换 2FA。</p>{% endif %}
                                 <button
                                     type="button"
                                     class="btn btn-sm btn-secondary account-pool-json-export-button"
@@ -194,32 +197,32 @@
                                 <button type="button" class="btn btn-sm btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
                                     <i data-lucide="pencil" aria-hidden="true"></i>
                                 编辑密码 / 2FA</button>
-                                <button type="button" class="btn btn-sm btn-secondary account-pool-rotate-2fa-button" title="更换 2FA 密钥" aria-label="更换 2FA 密钥" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
+                                <button type="button" class="btn btn-sm btn-secondary account-pool-rotate-2fa-button" title="更换 2FA 密钥" aria-label="更换 2FA 密钥" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" {% if entry.is_owner %}disabled{% endif %}>
                                     <i data-lucide="key-round" aria-hidden="true"></i>
                                 更换 2FA</button>
-                                <button type="button" class="btn btn-sm btn-danger account-pool-delete-button" title="永久删除账号" aria-label="永久删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
+                                <button type="button" class="btn btn-sm btn-danger account-pool-delete-button" title="永久删除账号" aria-label="永久删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})' {% if entry.is_owner %}disabled{% endif %}>
                                     <i data-lucide="trash-2" aria-hidden="true"></i>
                                 永久删除账号</button>
-                                </div>
+                                {% endif %}</div>
                                 {% if entry.export_job_error %}<p class="account-pool-detail-error">Sub2API 导出失败：{{ entry.export_job_error }}</p>{% endif %}
                                 <h4>加入记录 · {{ entry.history_count }} 次</h4>
                             </template>
                             <div class="account-pool-row-actions">
-                                <span class="account-pool-action" data-pool-tooltip="复制邮箱----密码----2FA 密钥">
-                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" onclick='copyAccountPoolCredential({{ entry.email|tojson }})' aria-label="复制 {{ entry.email }} 的邮箱、密码和 2FA 密钥"><i data-lucide="copy" aria-hidden="true"></i></button>
+                                <span class="account-pool-action" data-pool-tooltip="{{ '所有者未保存号池凭据' if entry.is_virtual_owner else '复制邮箱----密码----2FA 密钥' }}" tabindex="0">
+                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" onclick='copyAccountPoolCredential({{ entry.email|tojson }})' aria-label="复制 {{ entry.email }} 的邮箱、密码和 2FA 密钥" {% if entry.is_virtual_owner %}disabled{% endif %}><i data-lucide="copy" aria-hidden="true"></i></button>
                                 </span>
-                                <span class="account-pool-action" data-pool-tooltip="刷新已加入的 Team">
+                                <span class="account-pool-action" data-pool-tooltip="{{ '请在工作台刷新所有者 Team' if entry.is_virtual_owner else '刷新已加入的 Team' }}" tabindex="0">
                                     <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
-                                    aria-label="刷新已加入的 Team"
+                                    aria-label="刷新已加入的 Team" {% if entry.is_virtual_owner %}disabled{% endif %}
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
                                 >
                                     <i data-lucide="refresh-cw" aria-hidden="true"></i>
                                 </button>
                                 </span>
-                                <span class="account-pool-action" data-pool-tooltip="{% if entry.status == 'unassigned' %}加入 Team{% elif entry.status == 'joined' %}已加入 Team，无需重复加入{% elif entry.status == 'invited' %}等待接受邀请，暂不可再次加入{% else %}当前状态不可加入 Team{% endif %}"{% if entry.status != 'unassigned' %} tabindex="0"{% endif %}>
+                                <span class="account-pool-action" data-pool-tooltip="{% if entry.is_owner %}所有者不可加入其他 Team{% elif entry.status == 'unassigned' %}加入 Team{% elif entry.status == 'joined' %}已加入 Team，无需重复加入{% elif entry.status == 'invited' %}等待接受邀请，暂不可再次加入{% else %}当前状态不可加入 Team{% endif %}"{% if entry.status != 'unassigned' %} tabindex="0"{% endif %}>
                                     <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-invite-button"
@@ -232,11 +235,11 @@
                                     <i data-lucide="user-plus" aria-hidden="true"></i>
                                 </button>
                                 </span>
-                                <span class="account-pool-action" data-pool-tooltip="重新登录并导出到 Sub2API">
+                                <span class="account-pool-action" data-pool-tooltip="{{ '请在工作台导出所有者账号' if entry.is_virtual_owner else '重新登录并导出到 Sub2API' }}" tabindex="0">
                                     <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
-                                    aria-label="重新登录并导出到 Sub2API"
+                                    aria-label="重新登录并导出到 Sub2API" {% if entry.is_virtual_owner %}disabled{% endif %}
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
                                     data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
@@ -391,9 +394,10 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/account-pool-confirm.js?v=20260927-1"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/account-pool.js?v=20260927-rotation-status"></script>
-<script src="/static/js/account-pool-workspace.js?v=20260927-auto-rotate"></script>
-<script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
-<script src="/static/js/account-pool-batch.js?v=20260927-auto-rotate"></script>
+<script src="/static/js/account-pool.js?v=20260927-quota-right"></script>
+<script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
+<script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>
+<script src="/static/js/account-pool-batch.js?v=20260927-owner-actions"></script>
 {% endblock %}

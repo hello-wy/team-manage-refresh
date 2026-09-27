@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
@@ -12,8 +12,10 @@ from app.services.account_pool_credentials import (
 )
 from app.services.account_pool_history import account_pool_history_service
 from app.services.account_pool_listing import ACTIVE_MAPPING_STATUSES, build_pool_entry_data
+from app.services.account_pool_owners import owner_email_exists
 from app.services.account_pool_replacement import mark_replacement_pending
 from app.utils.time_utils import get_now
+from app.utils.team_names import team_display_name
 
 TEAM_REINVITE_COOLDOWN_DAYS = 7
 TEAM_REJOIN_COOLDOWN_DAYS = 7
@@ -88,6 +90,7 @@ class AccountPoolService:
             .where(
                 AccountPoolEntry.deleted_at.is_(None),
                 ~active_mapping.exists(),
+                ~owner_email_exists(),
                 ~recent_team_invite.exists(),
                 ~AccountPoolEntry.id.in_(excluded_ids),
             )
@@ -113,6 +116,7 @@ class AccountPoolService:
         conditions = [
             AccountPoolEntry.deleted_at.is_(None),
             ~active_mapping.exists(),
+            ~owner_email_exists(),
             or_(
                 AccountPoolEntry.workspace_id.is_(None),
                 func.trim(AccountPoolEntry.workspace_id) == "",
@@ -211,32 +215,35 @@ class AccountPoolService:
     ) -> dict[str, Any]:
         page = max(page, 1)
         per_page = min(max(per_page, 1), 100)
-        conditions = [AccountPoolEntry.deleted_at.is_(None)]
+        # Union identities before pagination so owners participate in search,
+        # counts and filters, without inserting them into the replacement pool.
+        pool = select(AccountPoolEntry.id, AccountPoolEntry.email, AccountPoolEntry.created_at).where(
+            AccountPoolEntry.deleted_at.is_(None))
+        owner_email = func.lower(func.trim(Team.email))
+        in_pool = select(AccountPoolEntry.id).where(
+            AccountPoolEntry.deleted_at.is_(None),
+            func.lower(func.trim(AccountPoolEntry.email)) == owner_email,
+        ).exists()
+        owners = select((-func.min(Team.id)).label("id"), owner_email.label("email"),
+                        func.min(Team.created_at).label("created_at")).where(
+            ~in_pool, owner_email != "",
+        ).group_by(owner_email)
+        identities = union_all(pool, owners).subquery()
+        query = select(identities.c.id).order_by(identities.c.created_at.desc(), identities.c.id.desc())
         normalized_search = self.normalize_email(search)
         if normalized_search:
-            conditions.append(AccountPoolEntry.email.ilike(f"%{normalized_search}%"))
-
-        base_query = select(AccountPoolEntry).where(*conditions).order_by(
-            AccountPoolEntry.created_at.desc(), AccountPoolEntry.id.desc()
-        )
+            query = query.where(identities.c.email.ilike(f"%{normalized_search}%"))
         if status_filter:
-            all_entries = list((await db_session.execute(base_query)).scalars().all())
-            data = [
-                item for item in await self._build_entry_data(db_session, all_entries)
-                if _matches_status_filter(item, status_filter)
-            ]
+            ids = list((await db_session.execute(query)).scalars())
+            data = [row for row in await self.rows_by_ids(db_session, ids)
+                    if _matches_status_filter(row, status_filter)]
             total = len(data)
-            start = (page - 1) * per_page
-            data = data[start:start + per_page]
+            data = data[(page - 1) * per_page:page * per_page]
         else:
-            total_result = await db_session.execute(
-                select(func.count(AccountPoolEntry.id)).where(*conditions)
-            )
-            total = int(total_result.scalar() or 0)
-            entries_result = await db_session.execute(
-                base_query.offset((page - 1) * per_page).limit(per_page)
-            )
-            data = await self._build_entry_data(db_session, list(entries_result.scalars().all()))
+            total = (await db_session.execute(select(func.count()).select_from(
+                query.order_by(None).subquery()))).scalar_one()
+            ids = list((await db_session.execute(query.offset((page - 1) * per_page).limit(per_page))).scalars())
+            data = await self.rows_by_ids(db_session, ids)
         total_pages = max((total + per_page - 1) // per_page, 1)
         return {
             "entries": data,
@@ -245,6 +252,25 @@ class AccountPoolService:
             "current_page": page,
             "per_page": per_page,
         }
+    async def rows_by_ids(self, db_session, ids):
+        if not ids:
+            return []
+        entries = list((await db_session.execute(select(AccountPoolEntry).where(
+            AccountPoolEntry.id.in_([item for item in ids if item > 0]),
+            AccountPoolEntry.deleted_at.is_(None),
+        ))).scalars())
+        if any(item < 0 for item in ids):
+            teams = (await db_session.execute(select(Team).where(
+                Team.id.in_([-item for item in ids if item < 0])
+            ))).scalars()
+            entries.extend(AccountPoolEntry(
+                id=-team.id, email=team.email.strip().lower(), created_at=team.created_at,
+                workspace_id=team.account_id, workspace_name=team.team_name,
+                workspace_status="team", liveness_status=None,
+            ) for team in teams)
+        rows = {row["id"]: row for row in await self._build_entry_data(db_session, entries)}
+        return [rows[item] for item in ids if item in rows]
+
     async def _build_entry_data(
         self,
         db_session: AsyncSession,
@@ -279,7 +305,7 @@ class AccountPoolService:
             seen_team_ids.add(team.id)
             targets.append({
                 "id": team.id,
-                "name": team.team_name,
+                "name": team_display_name(team),
                 "email": team.email,
                 "status": mapping.status,
             })

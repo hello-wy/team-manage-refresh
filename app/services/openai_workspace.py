@@ -193,7 +193,7 @@ def _record_workspace(
     current = found.get(workspace_id, {})
     found[workspace_id] = {
         "id": workspace_id,
-        "name": str(node.get("name") or node.get("title") or current.get("name") or ""),
+        "name": str(node.get("name") or node.get("account_name") or node.get("title") or current.get("name") or ""),
         "is_personal": bool(
             node.get("is_personal") or node.get("isPersonal") or node.get("personal")
             or str(node.get("kind") or "").strip().lower() == "personal"

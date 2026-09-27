@@ -1,0 +1,5 @@
+{% from "admin/_quota_cell.html" import quota_cell %}
+{% set usage = entry.usage or {} %}
+{% set team_usage = entry.team_usage or {} %}
+{% set unavailable = {'unavailable': '待授权', 'invalid': '登录已失效', 'unknown': '未获取', 'error': '读取失败'}.get(usage.get('status'), '暂无额度') %}
+{{ quota_cell(usage.get('5h'), usage.get('1week'), team_usage.short_reset_at, team_usage.weekly_reset_at, unavailable) }}

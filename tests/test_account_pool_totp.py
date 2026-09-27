@@ -122,7 +122,12 @@ class AccountPoolTotpRouteTests(unittest.TestCase):
         self.client = TestClient(app)
 
         async def database():
-            yield AsyncMock()
+            db = AsyncMock()
+            db.get.return_value = SimpleNamespace(email="member@example.com", deleted_at=None)
+            result = Mock()
+            result.scalars.return_value = []
+            db.execute.return_value = result
+            yield db
 
         app.dependency_overrides[get_db] = database
 

@@ -2,6 +2,9 @@
 from collections import defaultdict
 from datetime import timedelta
 
+import pytz
+
+from app.config import settings
 from sqlalchemy import select
 from sqlalchemy.orm import load_only
 
@@ -14,6 +17,7 @@ from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS
 from app.services.quota_rotation_policy import ADMIN_ROLES, MAX_SNAPSHOT_AGE, next_action, quota_ready
 from app.services.rotation_candidates import rotation_candidate_block_reason
 from app.utils.time_utils import get_now
+from app.utils.team_names import team_display_name
 
 OPEN_STATUSES = ("pending", "executing", "reconciling")
 REASONS = {
@@ -30,7 +34,7 @@ REASONS = {
 def _view(label, reason, team=None, *, kind="waiting", mode=None):
     return {"label": label, "reason": reason, "kind": kind,
             "team_id": team.id if team else None,
-            "team_name": (team.team_name or f"Team #{team.id}") if team else None,
+            "team_name": team_display_name(team) if team else None,
             "mode": mode or (team.rotation_mode if team else None)}
 
 
@@ -79,7 +83,7 @@ async def attach_rotation_status(db, rows):
     now = get_now()
     # Fixed batched reads: no network requests, credential reads, or mutations.
     teams = {team.id: team for team in (await db.execute(select(Team).options(load_only(
-        Team.id, Team.team_name, Team.account_id, Team.rotation_mode, Team.status, Team.pending_replacements,
+        Team.id, Team.email, Team.team_name, Team.account_id, Team.rotation_mode, Team.status, Team.pending_replacements,
     )).order_by(Team.id))).scalars()}
     candidates = (await db.execute(select(
         AccountPoolEntry.id, AccountPoolEntry.email, AccountPoolEntry.updated_at,
@@ -118,18 +122,36 @@ async def attach_rotation_status(db, rows):
     for item in (await db.execute(select(TeamReplacementQueue).order_by(TeamReplacementQueue.id))).scalars():
         queues[item.team_id].append(item.seat_type)
 
-    available = [entry for entry in candidates if not by_email[entry.email]]
+    owners = {team.email.strip().lower() for team in teams.values()}
+    available = [entry for entry in candidates if not by_email[entry.email] and entry.email not in owners]
     planned, rejected = {}, defaultdict(set)
     waiting = set()
     # Auto predictions take precedence over dry-run previews. Each pass reserves
     # a candidate once, so different Teams do not claim the same account.
-    for mode_group in (("off", "auto"), ("dry_run",)):
+    deadlines = defaultdict(list)
+    for mapping in mappings:
+        team = teams.get(mapping.team_id)
+        if (team and team.rotation_mode == "off" and mapping.status == "joined"
+                and mapping.auto_kick_at and mapping.upstream_user_id
+                and not mapping.auto_kick_exempt and mapping.member_role is not None
+                and mapping.member_role != "account-owner"
+                and mapping.email.strip().lower() not in owners):
+            deadlines[team.id].append(mapping)
+    for members in deadlines.values():
+        members.sort(key=lambda m: (m.auto_kick_at, m.id))
+    for mode_group in (("off", "auto"), ("scheduled",), ("dry_run",)):
         reserved = set(planned) | in_flight
-        for team in teams.values():
-            if team.rotation_mode not in mode_group:
+        scheduled = mode_group == ("scheduled",)
+        ordered_teams = sorted(teams.values(), key=lambda team: (
+            deadlines[team.id][0].auto_kick_at if deadlines[team.id] else now + timedelta(days=36500), team.id
+        )) if scheduled else teams.values()
+        for team in ordered_teams:
+            if (team.rotation_mode != "off" if scheduled else team.rotation_mode not in mode_group):
                 continue
             legacy = team.rotation_mode == "off"
-            if legacy and not (queues[team.id] or team.pending_replacements):
+            if scheduled and (not deadlines[team.id] or queues[team.id] or team.pending_replacements):
+                continue
+            if legacy and not scheduled and not (queues[team.id] or team.pending_replacements):
                 continue
             if team.status not in ("active", "full"):
                 waiting.add("目标 Team 当前不可用")
@@ -139,7 +161,9 @@ async def attach_rotation_status(db, rows):
                 continue
             balance = _balance(seats.get(team.id), now)
             members = by_team[team.id]
-            if legacy:
+            if scheduled:
+                slots = [m.seat_type or "standard" for m in deadlines[team.id]]
+            elif legacy:
                 slots = queues[team.id]
                 if not slots:
                     waiting.add("等待补位队列确认")
@@ -164,9 +188,9 @@ async def attach_rotation_status(db, rows):
                     waiting.add("等待已有邀请被接受")
                     continue
                 slots = ["standard"]
-            remaining = {kind: balance["balance"][kind]["remaining"] if balance["success"] else None
+            remaining = {kind: balance["balance"][kind]["remaining"] if balance["success"] and not scheduled else None
                          for kind in ("standard", "premium")}
-            for seat_type in slots:
+            for slot_index, seat_type in enumerate(slots):
                 if seat_type not in remaining or (remaining[seat_type] is not None and remaining[seat_type] <= 0):
                     waiting.add("等待可用席位")
                     break
@@ -197,18 +221,30 @@ async def attach_rotation_status(db, rows):
                     remaining[seat_type] -= 1
                 seat_label = "高级" if seat_type == "premium" else "标准"
                 planned[chosen.email] = _view(
-                    "候选补位" if not balance["success"] else (
+                    "候选补位" if scheduled or not balance["success"] else (
                         "仅预览" if team.rotation_mode == "dry_run" else "预计加入"),
                     f"{seat_label}席位 · {'定时补位' if legacy else '额度轮转'}，" + (
+                        "等待当前成员下线后释放席位" if scheduled else
                         "执行前会重新确认" if balance["success"] else "等待席位余额确认"),
-                    team, kind="ready" if balance["success"] else "waiting",
+                    team, kind="ready" if balance["success"] and not scheduled else "candidate",
                 )
+
+                if legacy:
+                    view = planned[chosen.email]
+                    view["scheduled_replacement"] = True
+                    if scheduled:
+                        deadline = deadlines[team.id][slot_index].auto_kick_at
+                        view["replacement_at"] = pytz.timezone(settings.timezone).localize(deadline).isoformat()
+                    else:
+                        view["replacement_at"] = None
 
     for row in rows:
         email = row["email"]
         active = by_email[email]
         action = by_action_email.get(email)
-        if action:
+        if row.get("is_owner"):
+            view = _view("所有者保留", "Team 所有者不参与跨 Team 补位", kind="idle")
+        elif action:
             labels = {"invite": "邀请确认中", "remove": "退出确认中",
                       "upgrade": "升级确认中", "return_standard": "降级确认中"}
             view = _view(labels.get(action.action_type, "轮转处理中"),

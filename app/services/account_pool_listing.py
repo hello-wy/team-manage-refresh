@@ -3,7 +3,7 @@ from collections import defaultdict
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -13,8 +13,11 @@ from app.models import (
     AccountPoolTeamUsage,
     AccountPoolWorkspace,
     Team,
+    TeamAccount,
     TeamEmailMapping,
 )
+
+from app.utils.team_names import readable_name, team_display_name
 
 ACTIVE_MAPPING_STATUSES = ("invited", "joined")
 
@@ -81,6 +84,9 @@ async def _workspace_teams(db: AsyncSession, entries: list[AccountPoolEntry], sa
         workspace_id for entry in entries
         for workspace_id in (entry.workspace_id, *saved[entry.id].keys()) if workspace_id
     }
+    for entry in entries:
+        scan = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
+        workspace_ids.update(item.get("id") for item in scan.get("available_workspaces", []) if item.get("id"))
     if not workspace_ids:
         return {}
     result = await db.execute(
@@ -102,7 +108,7 @@ def _team_options(mappings) -> list[dict[str, Any]]:
         options.append({
             "id": team.id,
             "workspace_id": team.account_id,
-            "name": team.team_name,
+            "name": team_display_name(team),
             "email": team.email,
             "status": mapping.status,
         })
@@ -124,7 +130,11 @@ def _workspace_options(entry, saved, teams) -> list[dict[str, Any]]:
         team = teams.get(workspace_id)
         options.append({
             "id": workspace_id,
-            "name": (team.team_name if team else None) or item.get("name") or workspace_id,
+            "name": (team_display_name(team, readable_name(item.get("name"), workspace_id)
+                                       or (record.name if record else None)) if team else
+                     readable_name(item.get("name"), workspace_id)
+                     or readable_name(record.name if record else None, workspace_id)
+                     or "Team 名称待同步"),
             "is_personal": bool(item.get("is_personal")),
             "status": record.status if record else "未获取 JSON",
             "json_saved": bool(record and record.export_json_encrypted),
@@ -136,11 +146,11 @@ def _workspace_options(entry, saved, teams) -> list[dict[str, Any]]:
 def _workspace_data(entry: AccountPoolEntry, team: Team | None, saved, teams) -> dict[str, Any]:
     return {
         "workspace_id": entry.workspace_id,
-        "workspace_name": entry.workspace_name,
+        "workspace_name": readable_name(entry.workspace_name, entry.workspace_id),
         "workspace_status": entry.workspace_status,
         "workspace_checked_at": entry.workspace_checked_at,
         "workspace_team_id": team.id if team else None,
-        "workspace_team_name": team.team_name if team else None,
+        "workspace_team_name": team_display_name(team, entry.workspace_name) if team else None,
         "workspace_team_email": team.email if team else None,
         "workspace_in_pool": team is not None,
         "workspace_is_personal": entry.workspace_status == "personal_account",
@@ -188,7 +198,7 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         "seat_type": seat_type,
         "status": status,
         "team_id": current[1].id if current[1] else None,
-        "team_name": current[1].team_name if current[1] else None,
+        "team_name": team_display_name(current[1]) if current[1] else None,
         "team_email": current[1].email if current[1] else None,
         "team_options": team_options,
         "team_usage": _team_usage_view(current_usage),
@@ -227,7 +237,34 @@ async def build_pool_entry_data(
     jobs = await _latest_export_jobs(db, entries)
     usages = await _team_usages(db, entries)
     workspace_teams = await _workspace_teams(db, entries, saved)
-    return [
+    workspace_ids = {entry.workspace_id for entry in entries if entry.workspace_id}
+    for entry in entries:
+        scan = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
+        workspace_ids.update(item.get("id") for item in scan.get("available_workspaces", []) if item.get("id"))
+    workspace_names = {}
+    if workspace_ids:
+        names = await db.execute(select(TeamAccount.account_id, TeamAccount.account_name).where(
+            TeamAccount.account_id.in_(workspace_ids)
+        ).order_by(TeamAccount.id))
+        for workspace_id, name in names:
+            if readable_name(name, workspace_id):
+                workspace_names.setdefault(workspace_id, name)
+    owned = defaultdict(list)
+    for team in (await db.execute(select(Team).where(
+        func.lower(func.trim(Team.email)).in_([entry.email for entry in entries])
+    ).order_by(Team.id))).scalars():
+        owned[team.email.strip().lower()].append(team)
+        workspace_teams.setdefault(team.account_id, team)
+    for entry in entries:
+        seen = {team.id for _, team in mappings[entry.email]}
+        for team in owned[entry.email]:
+            if team.id not in seen:
+                mappings[entry.email].append((TeamEmailMapping(
+                    email=entry.email, team_id=team.id, status="joined", member_role="account-owner"
+                ), team))
+        for _, team in mappings[entry.email]:
+            workspace_teams.setdefault(team.account_id, team)
+    rows = [
         _row(
             entry,
             mappings.get(entry.email, []),
@@ -238,3 +275,33 @@ async def build_pool_entry_data(
         )
         for entry in entries
     ]
+
+    for row in rows:
+        for option in row["workspace_options"]:
+            if option["name"] == "Team 名称待同步" and option["id"] in workspace_names:
+                option["name"] = workspace_names[option["id"]]
+        row["is_owner"] = bool(owned[row["email"]])
+        row["is_virtual_owner"] = row["id"] < 0
+        row["owner_teams"] = [{"id": t.id, "name": team_display_name(t), "workspace_id": t.account_id}
+                              for t in owned[row["email"]]]
+        if row["is_owner"]:
+            row["status"] = "joined"
+            row["workspace_is_personal"] = False
+        if not row["quota_workspace_id"] and owned[row["email"]]:
+            team = owned[row["email"]][0]
+            row["quota_workspace_id"], row["quota_team_id"] = team.account_id, team.id
+        matched = workspace_teams.get(row["workspace_id"])
+        discovered_name = next((option["name"] for option in row["workspace_options"]
+                                if option["id"] == row["workspace_id"]), None)
+        if row["workspace_is_personal"]:
+            label = "个人账户"
+        elif matched:
+            label = team_display_name(matched, row["workspace_name"] or workspace_names.get(row["workspace_id"]) or discovered_name)
+        elif row["workspace_id"]:
+            label = row["workspace_name"] or workspace_names.get(row["workspace_id"]) or discovered_name or "Team 名称待同步"
+        else:
+            label = row["team_name"] or (" / ".join(t["name"] for t in row["owner_teams"]))
+        row["display_team_name"] = label or ("个人账户" if row["workspace_is_personal"] else
+            "未加入 Team" if row["workspace_status"] == "no_workspace" else
+            "获取失败" if row["workspace_status"] == "workspace_error" else "待同步 Team")
+    return rows

@@ -92,7 +92,10 @@ async def delete_account_pool_entry(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    deleted = await account_pool_credential_service.delete_entry(db, entry_id)
+    try:
+        deleted = await account_pool_credential_service.delete_entry(db, entry_id)
+    except AccountPoolCredentialError as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
     if not deleted:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,

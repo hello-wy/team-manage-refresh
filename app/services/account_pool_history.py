@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
 from app.utils.time_utils import get_now
+from app.utils.team_names import readable_name
 
 
 class AccountPoolHistoryService:
@@ -161,7 +162,7 @@ class AccountPoolHistoryService:
         return {
             "id": history.id,
             "team_id": history.team_id,
-            "team_name": history.team_name,
+            "team_name": readable_name(history.team_name) or f"Team #{history.team_id}",
             "team_email": history.team_email,
             "joined_at": history.joined_at.isoformat() if history.joined_at else None,
             "left_at": history.left_at.isoformat() if history.left_at else None,

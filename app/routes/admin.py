@@ -490,17 +490,43 @@ async def account_pool_page(
     return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
 
 
+@router.post("/account-pool/{entry_id}/usage")
+async def refresh_account_pool_usage(
+    entry_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Refresh only the selected account, resolving credentials on the server."""
+    from app.main import templates
+
+    rows = await account_pool_service.rows_by_ids(db, [entry_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    row = (await _attach_account_pool_usage(db, rows))[0]
+    return JSONResponse(content={
+        "success": True, "status": row["usage"]["status"],
+        "error": row["usage"].get("error"),
+        "html": templates.get_template("admin/account_pool/_quota.html").render(entry=row),
+    }, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/account-pool/teams")
 async def account_pool_team_options(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
     result = await db.execute(
-        select(Team.id, Team.team_name, Team.email, Team.status,
+        select(Team.id, Team.team_name, Team.account_id, Team.email, Team.status,
                Team.current_members, Team.max_members)
         .order_by(Team.created_at.desc())
     )
-    return {"teams": [dict(row._mapping) for row in result.all()]}
+    from app.utils.team_names import readable_name
+    teams = []
+    for row in result.all():
+        item = dict(row._mapping)
+        item["team_name"] = readable_name(row.team_name, row.account_id) or f"Team #{row.id}"
+        teams.append(item)
+    return {"teams": teams}
 
 
 @router.post("/account-pool")
@@ -747,6 +773,11 @@ async def invite_account_pool_entry(
     entry = await db.get(AccountPoolEntry, entry_id)
     if entry is None or entry.deleted_at is not None:
         return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"})
+    from app.services.account_pool_owners import require_non_owner
+    try:
+        await require_non_owner(db, [entry])
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
     result = await team_service.add_team_members(
         team_id=payload.team_id,
         emails=[entry.email],
@@ -765,6 +796,11 @@ async def account_pool_history(
     current_user: dict = Depends(require_admin),
 ):
     """返回账号邮箱加入过的 Team 历史。"""
+    if entry_id < 0:
+        rows = await account_pool_service.rows_by_ids(db, [entry_id])
+        if not rows:
+            raise HTTPException(status_code=404, detail="账号不存在")
+        return {"success": True, "data": {"histories": []}}
     result = await account_pool_service.get_history(db, entry_id)
     if not result:
         return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"})

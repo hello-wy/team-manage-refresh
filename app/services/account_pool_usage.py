@@ -8,7 +8,7 @@ from typing import Any
 
 from curl_cffi.requests import AsyncSession as CurlAsyncSession, RequestsError
 from cryptography.fernet import InvalidToken
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization, Team
@@ -202,7 +202,7 @@ class AccountPoolUsageService:
                    in zip(normalized, token_data) if space and not token]
         if missing:
             teams = (await db.execute(select(Team).where(
-                Team.email.in_({email for email, _ in missing}),
+                func.lower(func.trim(Team.email)).in_({email for email, _ in missing}),
                 Team.account_id.in_({space for _, space in missing}),
             ).order_by(Team.id))).scalars().all()
             owner_tokens = {}

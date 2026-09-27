@@ -220,3 +220,40 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(statement.lstrip().upper().startswith("SELECT") for statement in statements))
             self.assertFalse(db.new or db.dirty or db.deleted)
             self.assertEqual((await db.execute(select(RotationAction))).scalars().all(), [])
+
+    async def test_scheduled_replacement_counts_down_to_member_exit_without_inviting(self):
+        async with self.sessions() as db:
+            await self.team(db, mode="off", standard=0, fresh=False)
+            candidate = await self.entry(db, "candidate")
+            deadline = self.now + timedelta(minutes=25)
+            db.add_all([
+                TeamEmailMapping(team_id=1, email="leaving@example.com", status="joined",
+                                 seat_type="standard", upstream_user_id="user-1", member_role="standard-user", auto_kick_at=deadline),
+                TeamEmailMapping(team_id=1, email="owner-1@example.com", status="joined",
+                                 seat_type="premium", upstream_user_id="owner", auto_kick_at=self.now,
+                                 member_role="account-owner"),
+            ])
+            await db.commit()
+            view = (await self.view(db, candidate))[candidate.email]
+            self.assertEqual(view["label"], "候选补位")
+            self.assertEqual(view["kind"], "candidate")
+            self.assertTrue(view["scheduled_replacement"])
+            self.assertTrue(view["replacement_at"].startswith(deadline.isoformat()))
+            self.assertEqual((await db.execute(select(RotationAction))).scalars().all(), [])
+            self.assertFalse(db.new or db.dirty)
+
+    async def test_live_vacancy_has_priority_over_future_scheduled_replacement(self):
+        async with self.sessions() as db:
+            await self.team(db, 1, mode="off")
+            await self.team(db, 2)
+            first = await self.entry(db, "first")
+            second = await self.entry(db, "second", 1)
+            db.add(TeamEmailMapping(team_id=1, email="leaving@example.com", status="joined",
+                                   upstream_user_id="user-1", seat_type="premium", member_role="standard-user",
+                                   auto_kick_at=self.now + timedelta(hours=1)))
+            await db.commit()
+            views = await self.view(db, first, second)
+            self.assertEqual(views[first.email]["team_id"], 2)
+            self.assertEqual(views[second.email]["team_id"], 1)
+            self.assertIn("高级席位", views[second.email]["reason"])
+            self.assertIn("replacement_at", views[second.email])

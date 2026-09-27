@@ -238,6 +238,11 @@ class AccountPoolCredentialService:
         entry = await db_session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             return False
+        from app.services.account_pool_owners import require_non_owner
+        try:
+            await require_non_owner(db_session, [entry])
+        except ValueError as exc:
+            raise AccountPoolCredentialError(str(exc)) from exc
         await sub2api_export_record_service.delete_for_emails(db_session, [entry.email])
         await db_session.delete(entry)
         await db_session.commit()

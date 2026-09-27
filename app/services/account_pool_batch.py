@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolTotpJob, AccountPoolWorkspace
+from app.services.account_pool_owners import require_non_owner, owner_emails
 from app.services.account_pool_export import selected_workspace
 from app.services.encryption import encryption_service
 from app.services.sub2api_export_records import sub2api_export_record_service
@@ -77,6 +78,7 @@ class AccountPoolBatchService:
 
     async def enqueue_rotations(self, session, ids):
         entries = await self.entries(session, ids)
+        await require_non_owner(session, entries)
         batch_id = str(uuid4())
         jobs = [AccountPoolTotpJob(batch_id=batch_id, account_pool_id=entry.id,
                                    email=entry.email, status="pending") for entry in entries]
@@ -97,11 +99,14 @@ class AccountPoolBatchService:
             AccountPoolTotpJob.account_pool_id.in_([entry.id for entry in entries]),
             AccountPoolTotpJob.status.in_(("pending", "running")),
         ))).scalars().all())
+        owners = await owner_emails(session, emails)
         ids, skipped = [], []
         for email in emails:
             entry = by_email.get(email)
             if entry is None:
                 reason = "账号不存在或已删除"
+            elif email in owners:
+                reason = "Team 所有者不自动更换 2FA"
             elif entry.id in busy:
                 reason = "已有 2FA 更换任务进行中"
             elif not entry.password_encrypted or not entry.two_factor_secret_encrypted:
@@ -127,6 +132,8 @@ class AccountPoolBatchService:
             job.status = "running"
             await session.commit()
             try:
+                entries = await self.entries(session, [job.account_pool_id])
+                await require_non_owner(session, entries)
                 secret = await self._totp.rotate(session, job.account_pool_id)
             except Exception as exc:
                 await session.rollback()
@@ -170,6 +177,7 @@ class AccountPoolBatchService:
 
     async def delete(self, session, ids):
         entries = await self.entries(session, ids)
+        await require_non_owner(session, entries)
         active_rotations = (await session.execute(select(AccountPoolTotpJob.id).where(
             AccountPoolTotpJob.account_pool_id.in_(ids),
             AccountPoolTotpJob.status.in_(("pending", "running"))
