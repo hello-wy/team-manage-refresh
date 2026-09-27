@@ -68,11 +68,18 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["concurrency"], 7)
         self.assertEqual(sent["extra"]["codex_fingerprint_mode"], "session")
         self.assertIs(sent["extra"]["openai_excel_bps"], True)
+        self.assertIs(sent["extra"]["openai_excel_bps_auto_disable_on_403"], True)
+        self.assertIs(sent["extra"]["openai_excel_bps_cache_creation_as_input"], True)
 
     async def test_export_switch_overrides_saved_bps_without_mutating_credentials_or_input(self):
         payload = {"accounts": [{"type": "oauth", "credentials": {"access_token": "test-token"},
-                                 "extra": {"openai_excel_bps": True, "other_option": "keep"}},
-                                {"type": "oauth", "credentials": {"access_token": "second-token"}}]}
+                                 "extra": {"openai_excel_bps": True,
+                                           "openai_excel_bps_auto_disable_on_403": True,
+                                           "openai_excel_bps_cache_creation_as_input": True,
+                                           "other_option": "keep"}},
+                                {"type": "oauth", "credentials": {"access_token": "second-token"},
+                                 "extra": {"openai_excel_bps_auto_disable_on_403": False,
+                                           "openai_excel_bps_cache_creation_as_input": False}}]}
         original = json.dumps(payload)
         for enabled in (False, True):
             with self.subTest(enabled=enabled), patch(
@@ -81,7 +88,12 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
             ):
                 result = await apply_export_settings(payload, object())
                 for account in result["accounts"]:
-                    self.assertEqual(account.get("extra", {}).get("openai_excel_bps", False), enabled)
+                    for key in ("openai_excel_bps", "openai_excel_bps_auto_disable_on_403",
+                                "openai_excel_bps_cache_creation_as_input"):
+                        if enabled:
+                            self.assertIs(account["extra"][key], True)
+                        else:
+                            self.assertNotIn(key, account.get("extra", {}))
                 self.assertEqual(result["accounts"][0]["extra"]["other_option"], "keep")
                 self.assertEqual(result["accounts"][0]["credentials"], payload["accounts"][0]["credentials"])
                 self.assertEqual(json.dumps(payload), original)
