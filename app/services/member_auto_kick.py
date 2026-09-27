@@ -206,6 +206,8 @@ class MemberAutoKickService:
             .order_by(Team.id.asc())
         )
         for team in result.scalars().all():
+            # 前一个 Team 的邀请失败可能 rollback，需重新读取已过期的 ORM 状态。
+            await db_session.refresh(team)
             await self._reconcile_replacement_queue(team, db_session)
             if not team.pending_replacements:
                 continue
@@ -234,6 +236,8 @@ class MemberAutoKickService:
                 db_session,
                 invite_replacement,
             )
+            await db_session.refresh(team)
+            await db_session.refresh(queue_item)
             status = replacement.get("status")
             if status == "no_candidate":
                 stats["replacement_unavailable"] += int(team.pending_replacements or 0)
@@ -312,12 +316,20 @@ class MemberAutoKickService:
         pending_ids = list(result.scalars().all())
         stats: Dict[str, int | bool] = {
             "success": True, "scanned": len(pending_ids),
-            "exported": 0, "waiting": 0, "failed": 0,
+            "exported": 0, "waiting": 0, "cancelled": 0, "failed": 0,
         }
         for mapping_id in pending_ids:
             mapping = await db_session.get(TeamEmailMapping, mapping_id)
             team_id, email = mapping.team_id, mapping.email
             try:
+                # removed 由明确退组或多次完整同步确认；单次上游缺失和读取失败
+                # 不足以取消任务，invited/joined 仍按原流程等待或重试。
+                if mapping.status == "removed":
+                    mapping.replacement_export_pending = False
+                    await db_session.commit()
+                    stats["cancelled"] += 1
+                    logger.info("取消已离组账号的补位导入: team=%s email=%s", team_id, email)
+                    continue
                 state = await complete(team_id, email, db_session)
                 if state == "waiting":
                     stats["waiting"] += 1

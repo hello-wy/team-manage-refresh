@@ -518,9 +518,9 @@ async def scheduled_member_auto_kick():
         )
         export_log = logger.info if export_stats["success"] else logger.warning
         export_log(
-            "轮转账号自动授权与 sub2api 导入: scanned=%s exported=%s waiting=%s failed=%s",
+            "轮转账号自动授权与 sub2api 导入: scanned=%s exported=%s waiting=%s cancelled=%s failed=%s",
             export_stats["scanned"], export_stats["exported"],
-            export_stats["waiting"], export_stats["failed"],
+            export_stats["waiting"], export_stats["cancelled"], export_stats["failed"],
         )
     except Exception:
         logger.exception("成员自动踢人任务执行失败")

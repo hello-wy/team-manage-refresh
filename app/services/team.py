@@ -2760,8 +2760,10 @@ class TeamService:
         Returns:
             结果字典,包含 success, message, error
         """
-        seat_type = seat_type or "default"
-        if seat_type not in {"default", "premium"}:
+        seat_type = {"standard": "default", "premium": "premium"}.get(
+            normalize_seat_type(seat_type or "default")
+        )
+        if seat_type is None:
             return self._admin_error("invalid_seat_type", "不支持的席位类型")
         normalized_email = self._normalize_member_email(email)
         if not normalized_email:
@@ -3051,8 +3053,10 @@ class TeamService:
 
     async def _add_team_members_locked(self, team_id, emails, db_session, seat_type=None):
         """批量添加 Team 成员。"""
-        seat_type = seat_type or "default"
-        if seat_type is not None and seat_type not in {"default", "premium"}:
+        seat_type = {"standard": "default", "premium": "premium"}.get(
+            normalize_seat_type(seat_type or "default")
+        )
+        if seat_type is None:
             return self._admin_error("invalid_seat_type", "不支持的席位类型")
         submitted = list(emails or [])
         results: List[Dict[str, Any]] = []

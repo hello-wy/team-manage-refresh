@@ -6,7 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Team, TeamEmailMapping, TeamReplacementQueue
+from app.models import AccountPoolEntry, Team, TeamEmailMapping, TeamReplacementQueue
+from app.services.account_pool import account_pool_service
+from app.services.chatgpt import ChatGPTService
 from app.services.member_auto_kick import MemberAutoKickService
 from app.services.team import TeamService
 from app.utils.time_utils import get_now
@@ -285,6 +287,68 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             queue = (await session.execute(select(TeamReplacementQueue))).scalars().all()
             self.assertEqual(queue, [])
 
+    async def test_due_replacement_reaches_upstream_with_original_seat_type(self):
+        # 使用真实的扫描、候选选择、邀请、席位预留和 HTTP payload 构造链路。
+        # 只替换外部读取、删除和实际 HTTP 请求，避免邀请 mock 掩盖类型不兼容。
+        for team_id, (seat_type, upstream_type) in enumerate(
+            [("standard", "default"), ("premium", "prolite")], start=1
+        ):
+            with self.subTest(seat_type=seat_type):
+                async with self.session_factory() as session:
+                    team = await self._seed_team(session, team_id)
+                    due_email = f"due-{team_id}@example.com"
+                    candidate_email = f"candidate-{team_id}@example.com"
+                    session.add(TeamEmailMapping(
+                        team_id=team_id, email=due_email, status="joined",
+                        upstream_user_id=f"user-{team_id}", member_role="standard-user",
+                        seat_type=seat_type, joined_at=get_now() - timedelta(hours=3),
+                        auto_kick_at=get_now() - timedelta(hours=1),
+                    ))
+                    session.add(AccountPoolEntry(email=candidate_email))
+                    await session.commit()
+                    teams = TeamService()
+                    teams.chatgpt_service = ChatGPTService()
+                    teams.chatgpt_service._make_request = AsyncMock(return_value={
+                        "success": True, "data": {"account_invites": [{"id": "invite"}]},
+                    })
+                    teams.ensure_access_token = AsyncMock(return_value="test-token")
+                    teams.sync_team_info = AsyncMock(return_value={
+                        "success": True, "member_emails": [],
+                    })
+                    teams.get_team_seat_balance = AsyncMock(return_value={
+                        "success": True, "balance": {
+                            seat_type: {"known": True, "remaining": 1},
+                        },
+                    })
+                    teams._background_verify_admin_invite = AsyncMock()
+
+                    async def removed(tid, user_id, db, *, email):
+                        await teams.mark_team_email_mapping_removed(tid, email, db, source="api")
+                        await db.commit()
+                        return {"success": True}
+
+                    stats = await self.service.run_due_members(
+                        session, removed,
+                        invite_replacement=lambda tid, db, kind: account_pool_service.invite_replacement(
+                            tid, db, invite_member=teams.add_team_member, seat_type=kind,
+                        ),
+                    )
+                    self.assertTrue(stats["success"], stats)
+                    self.assertEqual(stats["kicked"], 1)
+                    self.assertEqual(stats["replacement_invited"], 1)
+                    self.assertEqual(stats["replacement_pending"], 0)
+                    request = teams.chatgpt_service._make_request
+                    request.assert_awaited_once()
+                    payload = request.await_args.args[3]
+                    self.assertEqual(payload["seat_type"], upstream_type)
+                    self.assertEqual(payload["email_addresses"], [candidate_email])
+                    mapping = (await session.execute(select(TeamEmailMapping).where(
+                        TeamEmailMapping.team_id == team_id,
+                        TeamEmailMapping.email == candidate_email,
+                    ))).scalar_one()
+                    self.assertEqual(mapping.status, "invited")
+                    self.assertTrue(mapping.replacement_export_pending)
+
     async def test_due_scan_reports_replacement_failure(self):
         now = get_now()
         async with self.session_factory() as session:
@@ -348,6 +412,47 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(invited["replacement_invited"], 1)
             self.assertEqual(invited["replacement_pending"], 0)
+
+    async def test_invite_rollback_does_not_block_other_teams(self):
+        async with self.session_factory() as session:
+            for team_id in (1, 2):
+                team = await self._seed_team(session, team_id)
+                team.pending_replacements = 1
+                session.add(TeamReplacementQueue(team_id=team_id, seat_type="standard"))
+            session.add(AccountPoolEntry(email="candidate@example.com"))
+            await session.commit()
+
+            async def invite(tid, email, db, *, seat_type):
+                if tid == 1:
+                    await db.rollback()
+                    return {"success": False, "error_code": "upstream_failed", "error": "连接失败"}
+                return {"success": True, "status": "invited"}
+
+            with self.assertLogs("app.services.member_auto_kick", "WARNING") as logs:
+                stats = await self.service.run_due_members(
+                    session, AsyncMock(),
+                    invite_replacement=lambda tid, db, kind: account_pool_service.invite_replacement(
+                        tid, db, invite_member=invite, seat_type=kind,
+                    ),
+                )
+            self.assertEqual(stats["replacement_failed"], 1)
+            self.assertEqual(stats["replacement_invited"], 1)
+            self.assertEqual(stats["replacement_pending"], 1)
+            self.assertIn("error_code=upstream_failed", logs.output[0])
+            self.assertIn("email=candidate@example.com", logs.output[0])
+
+    async def test_invite_exception_preserves_queue_for_retry(self):
+        async with self.session_factory() as session:
+            team = await self._seed_team(session)
+            team.pending_replacements = 1
+            session.add(TeamReplacementQueue(team_id=1, seat_type="standard"))
+            await session.commit()
+            with self.assertLogs("app.services.member_auto_kick", "WARNING"):
+                stats = await self.service.run_due_members(
+                    session, AsyncMock(), invite_replacement=AsyncMock(side_effect=RuntimeError("断线")),
+                )
+            self.assertEqual(stats["replacement_failed"], 1)
+            self.assertEqual(stats["replacement_pending"], 1)
 
     async def test_pending_count_is_repaired_from_replacement_queue(self):
         async with self.session_factory() as session:
