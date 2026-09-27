@@ -157,6 +157,10 @@ class MemberAutoKickService:
                 result = {"success": False}
 
             if not result.get("success"):
+                logger.warning(
+                    "成员自动下线失败: team=%s email=%s error=%s",
+                    member.team_id, member.email, result.get("error"),
+                )
                 stats["failed"] = int(stats["failed"]) + 1
                 continue
 
