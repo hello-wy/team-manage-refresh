@@ -480,18 +480,67 @@ function initAccountPoolColumnDropdown() {
 }
 
 let accountPoolTableRequest = null;
+let accountPoolRequestedUrl = null;
 
-function getAccountPoolTableUrl({page, perPage, statusFilter, search} = {}) {
+function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter, seatFilter, sortBy} = {}) {
     const url = new URL('/admin/account-pool', window.location.origin);
-    const currentParams = new URLSearchParams(window.location.search);
-    const currentSearch = document.querySelector('.account-pool-toolbar-actions .search-form input[name="search"]');
-    const currentStatus = document.getElementById('accountPoolStatusFilter');
-    const currentPageSize = document.getElementById('accountPoolPageSize');
-    url.searchParams.set('page', String(page ?? currentParams.get('page') ?? 1));
-    url.searchParams.set('per_page', String(perPage || currentPageSize?.value || currentParams.get('per_page') || 20));
-    url.searchParams.set('search', search ?? currentSearch?.value?.trim() ?? '');
-    url.searchParams.set('status_filter', statusFilter ?? currentStatus?.value ?? '');
+    const current = new URLSearchParams(accountPoolRequestedUrl?.search ?? window.location.search);
+    const searchInput = document.querySelector('#accountPoolSearchForm input[name="search"]');
+    const size = document.getElementById('accountPoolPageSize');
+    const sort = document.getElementById('accountPoolSort');
+    for (const [key, value] of Object.entries({
+        page: page ?? current.get('page') ?? 1,
+        per_page: perPage ?? current.get('per_page') ?? size?.value ?? 20,
+        search: search ?? current.get('search') ?? searchInput?.value?.trim() ?? '',
+        status_filter: statusFilter ?? current.get('status_filter') ?? '',
+        team_filter: teamFilter ?? current.get('team_filter') ?? '',
+        seat_filter: seatFilter ?? current.get('seat_filter') ?? '',
+        sort_by: sortBy ?? current.get('sort_by') ?? sort?.value ?? 'team',
+    })) url.searchParams.set(key, String(value));
     return url;
+}
+
+function syncAccountPoolFilters(fragment, url) {
+    const filters = document.getElementById('accountPoolFilters');
+    const nextFilters = fragment.getElementById('accountPoolFilters');
+    if (filters && nextFilters) filters.replaceChildren(...nextFilters.childNodes);
+    const form = document.getElementById('accountPoolSearchForm');
+    for (const key of ['search', 'team_filter', 'seat_filter', 'status_filter', 'sort_by', 'per_page']) {
+        if (form?.elements[key]) form.elements[key].value = url.searchParams.get(key) || '';
+    }
+    const sort = document.getElementById('accountPoolSort');
+    if (sort) sort.value = url.searchParams.get('sort_by') || 'team';
+}
+
+function initAccountPoolFilters() {
+    document.getElementById('accountPoolFilters')?.addEventListener('click', event => {
+        const link = event.target.closest('a[href]');
+        if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        const params = new URL(link.href).searchParams;
+        const kind = link.dataset.filterKind;
+        const filters = kind === 'reset' ? {teamFilter: '', seatFilter: '', statusFilter: '', search: ''}
+            : kind === 'team' ? {teamFilter: params.get('team_filter') || '', statusFilter: ''}
+            : {seatFilter: params.get('seat_filter') || ''};
+        refreshAccountPoolTable({page: 1, ...filters});
+    });
+    document.getElementById('accountPoolSort')?.addEventListener('change', event => {
+        refreshAccountPoolTable({page: 1, sortBy: event.target.value});
+    });
+    document.getElementById('accountPoolSearchForm')?.addEventListener('submit', event => {
+        event.preventDefault();
+        refreshAccountPoolTable({page: 1, search: event.currentTarget.elements.search.value});
+    });
+    const toggle = document.getElementById('accountPoolImportToggle');
+    const panel = document.getElementById('accountPoolImportPanel');
+    const setImportOpen = open => {
+        panel.hidden = !open;
+        toggle.setAttribute('aria-expanded', String(open));
+        if (open) document.getElementById('accountPoolEmails').focus();
+        else toggle.focus();
+    };
+    toggle?.addEventListener('click', () => setImportOpen(panel.hidden));
+    document.getElementById('accountPoolImportClose')?.addEventListener('click', () => setImportOpen(false));
 }
 
 async function refreshAccountPoolTable(options = {}) {
@@ -501,6 +550,7 @@ async function refreshAccountPoolTable(options = {}) {
     const controller = new AbortController();
     accountPoolTableRequest = controller;
     const url = getAccountPoolTableUrl(options);
+    accountPoolRequestedUrl = url;
     region.classList.add('is-loading');
     try {
         const response = await fetch(url, {
@@ -518,7 +568,18 @@ async function refreshAccountPoolTable(options = {}) {
             await refreshAccountPoolTable({...options, page: Number(nextRegion.dataset.totalPages)});
             return;
         }
+        const nextPage = documentFragment.getElementById('accountPoolSearchForm');
+        for (const key of ['team_filter', 'seat_filter', 'status_filter', 'sort_by', 'per_page']) {
+            if (nextPage?.elements[key]) url.searchParams.set(key, nextPage.elements[key].value);
+        }
+        url.searchParams.set('page', nextRegion.dataset.currentPage);
+        const previous = new URLSearchParams(window.location.search);
+        if (['team_filter', 'seat_filter', 'status_filter', 'search'].some(key =>
+            (previous.get(key) || '') !== (url.searchParams.get(key) || ''))) {
+            window.clearAccountPoolSelection?.();
+        }
         region.replaceWith(nextRegion);
+        syncAccountPoolFilters(documentFragment, url);
         const count = documentFragment.querySelector('.account-pool-page-header .page-meta-pill');
         const currentCount = document.querySelector('.account-pool-page-header .page-meta-pill');
         if (count && currentCount) currentCount.replaceWith(count);
@@ -532,10 +593,12 @@ async function refreshAccountPoolTable(options = {}) {
         window.initAccountPoolBatchSelection?.();
         if (window.lucide) lucide.createIcons();
         formatQuotaResetTimes();
+        if (options.scrollToTable) nextRegion.scrollIntoView({block: 'start'});
     } catch (error) {
         if (error.name !== 'AbortError') showToast(error.message || '账号列表加载失败', 'error');
     } finally {
         if (accountPoolTableRequest === controller) {
+            accountPoolRequestedUrl = null;
             document.getElementById('accountPoolTableRegion')?.classList.remove('is-loading');
         }
     }
@@ -685,11 +748,21 @@ function initAccountPoolExportJobs() {
 }
 
 function initAccountPoolPageSizeControl() {
+    const region = document.getElementById('accountPoolTableRegion');
+    if (region && region.dataset.paginationBound !== 'true') {
+        region.dataset.paginationBound = 'true';
+        region.addEventListener('click', event => {
+            const link = event.target.closest('.pagination a[href]');
+            if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            refreshAccountPoolTable({page: Number(new URL(link.href).searchParams.get('page')) || 1, scrollToTable: true});
+        });
+    }
     const control = document.getElementById('accountPoolPageSize');
     if (!control || control.dataset.bound === 'true') return;
     control.dataset.bound = 'true';
     control.addEventListener('change', event => {
-        refreshAccountPoolTable({page: 1, perPage: event.target.value});
+        refreshAccountPoolTable({page: 1, perPage: event.target.value, scrollToTable: true});
     });
 }
 
@@ -727,13 +800,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initAccountPoolRowActions();
     initAccountPoolExportJobs();
     initAccountPoolPageSizeControl();
-    document.getElementById('accountPoolStatusFilter')?.addEventListener('change', event => {
-        refreshAccountPoolTable({page: 1, statusFilter: event.target.value});
-    });
-    document.querySelector('.account-pool-toolbar-actions .search-form')?.addEventListener('submit', event => {
-        event.preventDefault();
-        refreshAccountPoolTable({page: 1, search: event.currentTarget.elements.search.value});
-    });
+    initAccountPoolFilters();
     initAccountPoolColumnToggler();
     initAccountPoolColumnDropdown();
     formatQuotaResetTimes();

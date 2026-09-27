@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 
-from sqlalchemy import func, or_, select, union_all
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
@@ -20,13 +20,6 @@ from app.utils.team_names import team_display_name
 TEAM_REINVITE_COOLDOWN_DAYS = 7
 TEAM_REJOIN_COOLDOWN_DAYS = 7
 
-
-def _matches_status_filter(row: dict[str, Any], status_filter: str) -> bool:
-    if status_filter == "joined":
-        return not row["workspace_is_personal"]
-    if status_filter == "not_joined":
-        return row["workspace_is_personal"]
-    return row["status"] == status_filter
 
 InviteMember = Callable[..., Awaitable[dict[str, Any]]]
 
@@ -207,52 +200,18 @@ class AccountPoolService:
             seen_at=seen_at,
         )
     async def list_entries(
-        self,
-        db_session: AsyncSession,
-        page: int = 1,
-        per_page: int = 20,
-        search: str = "",
-        status_filter: str = "",
+        self, db_session: AsyncSession, page: int = 1, per_page: int = 20,
+        search: str = "", status_filter: str = "", team_filter: str = "",
+        seat_filter: str = "", sort_by: str = "team",
     ) -> dict[str, Any]:
-        page = max(page, 1)
-        per_page = min(max(per_page, 1), 100)
-        # Union identities before pagination so owners participate in search,
-        # counts and filters, without inserting them into the replacement pool.
-        pool = select(AccountPoolEntry.id, AccountPoolEntry.email, AccountPoolEntry.created_at).where(
-            AccountPoolEntry.deleted_at.is_(None))
-        owner_email = func.lower(func.trim(Team.email))
-        in_pool = select(AccountPoolEntry.id).where(
-            AccountPoolEntry.deleted_at.is_(None),
-            func.lower(func.trim(AccountPoolEntry.email)) == owner_email,
-        ).exists()
-        owners = select((-func.min(Team.id)).label("id"), owner_email.label("email"),
-                        func.min(Team.created_at).label("created_at")).where(
-            ~in_pool, owner_email != "",
-        ).group_by(owner_email)
-        identities = union_all(pool, owners).subquery()
-        query = select(identities.c.id).order_by(identities.c.created_at.desc(), identities.c.id.desc())
-        normalized_search = self.normalize_email(search)
-        if normalized_search:
-            query = query.where(identities.c.email.ilike(f"%{normalized_search}%"))
-        if status_filter:
-            ids = list((await db_session.execute(query)).scalars())
-            data = [row for row in await self.rows_by_ids(db_session, ids)
-                    if _matches_status_filter(row, status_filter)]
-            total = len(data)
-            data = data[(page - 1) * per_page:page * per_page]
-        else:
-            total = (await db_session.execute(select(func.count()).select_from(
-                query.order_by(None).subquery()))).scalar_one()
-            ids = list((await db_session.execute(query.offset((page - 1) * per_page).limit(per_page))).scalars())
-            data = await self.rows_by_ids(db_session, ids)
-        total_pages = max((total + per_page - 1) // per_page, 1)
-        return {
-            "entries": data,
-            "total": total,
-            "total_pages": total_pages,
-            "current_page": page,
-            "per_page": per_page,
-        }
+        from app.services.account_pool_query import query_pool_ids
+        listing = await query_pool_ids(
+            db_session, page=page, per_page=min(max(per_page, 1), 100), search=search,
+            status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,
+        )
+        listing["entries"] = await self.rows_by_ids(db_session, listing.pop("ids"))
+        return listing
+
     async def rows_by_ids(self, db_session, ids):
         if not ids:
             return []

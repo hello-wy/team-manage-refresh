@@ -468,6 +468,9 @@ async def account_pool_page(
     status_filter: str = "",
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
+    team_filter: str = "",
+    seat_filter: str = "",
+    sort_by: str = "team",
 ):
     """账号号池页面。"""
     from app.main import templates
@@ -477,15 +480,22 @@ async def account_pool_page(
         page=page,
         per_page=per_page,
         search=search,
-        status_filter=status_filter,
+        status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,
     )
     listing["entries"] = await _attach_account_pool_usage(db, listing["entries"])
     listing["entries"] = await attach_rotation_status(db, listing["entries"])
     context = await build_admin_base_context(request, db, current_user, "account_pool")
+    from urllib.parse import urlencode
+    def filter_url(**changes):
+        params = {key: listing[key] for key in ("per_page", "status_filter", "team_filter", "seat_filter", "sort_by")}
+        params.update(page=1, search=search)
+        params.update(changes)
+        return "/admin/account-pool?" + urlencode(params)
+
     context.update({
+        "filter_url": filter_url,
         **listing,
         "search": search,
-        "status_filter": status_filter,
     })
     return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
 

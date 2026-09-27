@@ -12,6 +12,8 @@ function selectedAccountPoolIds() {
 
 function updateAccountPoolSelectionUi() {
     const count = accountPoolSelection.size;
+    const bar = document.getElementById('accountPoolBatchBar');
+    if (bar) bar.hidden = count === 0;
     document.getElementById('accountPoolSelectedCount').textContent = `已选择 ${count} 个账号`;
     for (const id of ['accountPoolBatchJson', 'accountPoolBatchSub2api',
         'accountPoolBatchRotate', 'accountPoolBatchDelete', 'accountPoolBatchClear']) {
@@ -25,6 +27,12 @@ function updateAccountPoolSelectionUi() {
         selectPage.indeterminate = checked > 0 && checked < boxes.length;
     }
 }
+
+window.clearAccountPoolSelection = function clearAccountPoolSelection() {
+    accountPoolSelection.clear();
+    document.querySelectorAll('.account-pool-row-select:not(:disabled)').forEach(box => { box.checked = false; });
+    updateAccountPoolSelectionUi();
+};
 
 window.initAccountPoolBatchSelection = function initAccountPoolBatchSelection() {
     document.querySelectorAll('.account-pool-row-select:disabled').forEach(box => accountPoolSelection.delete(Number(box.value)));
@@ -267,9 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAccountPoolRotationHistory(accountPoolHistoryPage + 1);
     });
     document.getElementById('accountPoolBatchClear').addEventListener('click', () => {
-        accountPoolSelection.clear();
-        document.querySelectorAll('.account-pool-row-select:not(:disabled)').forEach(box => { box.checked = false; });
-        updateAccountPoolSelectionUi();
+        window.clearAccountPoolSelection();
     });
     const saved = savedAccountPoolRotationBatches();
     const legacyBatch = sessionStorage.getItem('account_pool_rotation_batch');
