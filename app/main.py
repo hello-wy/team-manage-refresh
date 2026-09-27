@@ -37,6 +37,7 @@ from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
 from app.services.quota_sync import refresh_export_snapshots, refresh_historical_candidates
 from app.services.sub2api_cleanup import process_pending_cleanup
+from app.services.account_pool_team_usage import reset_expired_premium_usage
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -263,9 +264,13 @@ async def scheduled_rotation():
 
 async def scheduled_export_quota_sync():
     async with AsyncSessionLocal() as session:
+        reset_count = await reset_expired_premium_usage(session)
+        await session.commit()
         count = await refresh_export_snapshots(session, account_pool_usage_service)
         candidates = await refresh_historical_candidates(session, account_pool_usage_service)
-        logger.info("后台额度快照同步: exported=%s historical=%s", count, candidates)
+        await session.commit()
+        logger.info("后台额度快照同步: exported=%s historical=%s premium_reset=%s",
+                    count, candidates, reset_count)
 
 
 async def scheduled_sub2api_cleanup():

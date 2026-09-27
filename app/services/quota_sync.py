@@ -66,7 +66,7 @@ async def _save_account_json_quota(db, email, space_id, quota, observed_at):
         entry.export_json_updated_at = observed_at
 
 
-async def store_quota(db, *, email, space_id, seat_type, usage):
+async def store_quota(db, *, email, space_id, seat_type, usage, team_id=None):
     observed_at = get_now()
     snapshot = (await db.execute(select(QuotaSnapshot).where(
         QuotaSnapshot.email == email, QuotaSnapshot.team_space_id == space_id,
@@ -91,6 +91,7 @@ async def store_quota(db, *, email, space_id, seat_type, usage):
         team_space_id=space_id,
         seat_type=seat_type,
         usage=usage,
+        team_id=team_id,
     )
     return snapshot
 
@@ -130,10 +131,12 @@ async def refresh_team(db, team: Team, team_service, *, usage_service):
     for mapping in mappings:
         usage = usage_by_key[(mapping.email, team.account_id)]
         await store_quota(db, email=mapping.email, space_id=team.account_id,
-                          seat_type=normalize_seat_type(mapping.seat_type), usage=usage)
+                          seat_type=normalize_seat_type(mapping.seat_type), usage=usage,
+                          team_id=team.id)
     if (owner_email, team.account_id) in keys and owner_email not in {row.email for row in mappings}:
         await store_quota(db, email=owner_email, space_id=team.account_id,
-                          seat_type="unknown", usage=usage_by_key[(owner_email, team.account_id)])
+                          seat_type="unknown", usage=usage_by_key[(owner_email, team.account_id)],
+                          team_id=team.id)
     await db.commit()
     return len(mappings)
 
@@ -142,18 +145,20 @@ async def refresh_export_snapshots(db, usage_service):
     records = (await db.execute(select(Sub2apiExportRecord))).scalars().all()
     enabled = set((await db.execute(select(Team.id).where(
         Team.rotation_mode != "off"))).scalars().all())
-    by_key = {(row.email, row.team_space_id): row.seat_type or "unknown"
+    by_key = {(row.email, row.team_space_id, row.team_id): row.seat_type or "unknown"
               for row in records if row.team_id not in enabled}
-    keys = list(by_key)
-    if not keys:
+    records_keys = list(by_key)
+    usage_keys = list({(email, space_id) for email, space_id, _ in records_keys})
+    if not records_keys:
         return 0
-    usages = await usage_service.check_many(db, keys)
-    for email, space_id in keys:
+    usages = await usage_service.check_many(db, usage_keys)
+    for email, space_id, team_id in records_keys:
         await store_quota(db, email=email, space_id=space_id,
-                          seat_type=normalize_seat_type(by_key[(email, space_id)]),
+                          seat_type=normalize_seat_type(by_key[(email, space_id, team_id)]),
+                          team_id=team_id,
                           usage=usages[(email, space_id)])
     await db.commit()
-    return len(keys)
+    return len(records_keys)
 
 
 async def refresh_historical_candidates(db, usage_service):
@@ -161,18 +166,20 @@ async def refresh_historical_candidates(db, usage_service):
         TeamEmailMapping.email == AccountPoolEntry.email,
         TeamEmailMapping.status.in_(("joined", "invited")),
     )
-    rows = (await db.execute(select(AccountPoolEntry.email, Team.account_id).join(
+    rows = (await db.execute(select(AccountPoolEntry.email, Team.account_id, Team.id).join(
         AccountPoolHistory, AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
     ).join(Team, Team.id == AccountPoolHistory.team_id).where(
         Team.rotation_mode != "off", AccountPoolHistory.left_at.is_not(None),
         AccountPoolEntry.deleted_at.is_(None), ~active.exists(),
     ).distinct())).all()
-    keys = [(email, space_id) for email, space_id in rows if space_id]
-    if not keys:
+    records_keys = [(email, space_id, team_id) for email, space_id, team_id in rows if space_id]
+    usage_keys = list({(email, space_id) for email, space_id, _ in records_keys})
+    if not records_keys:
         return 0
-    usages = await usage_service.check_many(db, keys)
-    for email, space_id in keys:
+    usages = await usage_service.check_many(db, usage_keys)
+    for email, space_id, team_id in records_keys:
         await store_quota(db, email=email, space_id=space_id,
-                          seat_type="unknown", usage=usages[(email, space_id)])
+                          seat_type="unknown", team_id=team_id,
+                          usage=usages[(email, space_id)])
     await db.commit()
-    return len(keys)
+    return len(records_keys)

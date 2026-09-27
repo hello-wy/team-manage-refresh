@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -7,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database import Base
 from app.models import (AccountPoolEntry, AccountPoolTeamUsage, AccountPoolWorkspace,
                         QuotaSnapshot, Team)
-from app.services.account_pool_team_usage import record_seat_switch
+from app.services.account_pool_team_usage import (record_seat_switch,
+                                                   reset_expired_premium_usage)
 from app.services.encryption import encryption_service
 from app.services.quota_sync import store_quota
 from app.services.wham_usage import parse_usage
@@ -132,6 +134,63 @@ class AccountPoolTeamUsageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(snapshot.weekly_remaining, 99.5)
             self.assertTrue(tracked.premium_used)
             self.assertEqual(tracked.weekly_reset_at, "1791000000")
+
+    async def test_quota_observation_uses_the_explicit_team(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner-1@example.com", account_id="shared-space",
+                     access_token_encrypted="token"),
+                Team(id=2, email="owner-2@example.com", account_id="shared-space",
+                     access_token_encrypted="token"),
+                AccountPoolEntry(id=1, email="member@example.com"),
+            ])
+            await session.commit()
+            await record_seat_switch(
+                session, team_id=2, email="member@example.com", seat_type="premium"
+            )
+            await store_quota(
+                session, email="member@example.com", space_id="shared-space",
+                team_id=2, seat_type="premium", usage={"status": "ok", "1week": {
+                    "used": 1, "remaining": 9, "reset_at": "1791000000",
+                }},
+            )
+            await session.commit()
+            rows = (await session.execute(select(AccountPoolTeamUsage))).scalars().all()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].team_id, 2)
+            self.assertTrue(rows[0].premium_used)
+
+    async def test_expired_weekly_quota_clears_premium_usage(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner@example.com", account_id="space-1",
+                     access_token_encrypted="token"),
+                AccountPoolEntry(id=1, email="member@example.com"),
+            ])
+            await session.commit()
+            await store_quota(
+                session, email="member@example.com", space_id="space-1",
+                team_id=1, seat_type="premium", usage={"status": "ok", "1week": {
+                    "used": 1, "remaining": 9, "reset_at": "100",
+                }},
+            )
+            await session.commit()
+            reset_count = await reset_expired_premium_usage(
+                session, now=datetime.fromtimestamp(101, timezone.utc)
+            )
+            await session.commit()
+            tracked = (await session.execute(select(AccountPoolTeamUsage))).scalar_one()
+            self.assertEqual(reset_count, 1)
+            self.assertIsNone(tracked.premium_used)
+            self.assertIsNotNone(tracked.premium_used_at)
+            await store_quota(
+                session, email="member@example.com", space_id="space-1",
+                team_id=1, seat_type="premium", usage={"status": "ok", "1week": {
+                    "used": 0, "remaining": 10, "reset_at": "2000000000",
+                }},
+            )
+            await session.commit()
+            self.assertIsNone(tracked.premium_used)
 
     async def test_quota_is_written_to_matching_account_pool_json(self):
         payload = {"type": "sub2api-data", "accounts": [{

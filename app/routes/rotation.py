@@ -115,7 +115,8 @@ async def rotation_member_quota(team_id: int, email: str, db=Depends(get_db),
     if usage["status"] != "ok":
         raise HTTPException(502, usage.get("error") or "额度查询失败")
     snapshot = await store_quota(db, email=normalized, space_id=team.account_id,
-                                 seat_type=mapping.seat_type if mapping else "unknown", usage=usage)
+                                 seat_type=mapping.seat_type if mapping else "unknown",
+                                 usage=usage, team_id=team.id)
     await db.commit()
     from app.main import templates
     html = templates.env.get_template("admin/rotation/_quota.html").render(

@@ -1,6 +1,7 @@
 """Persist seat switches and quota refresh state for account-pool Teams."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -12,6 +13,26 @@ from app.utils.time_utils import get_now
 
 def _reset_at(usage: dict[str, Any] | None, key: str) -> str | None:
     return ((usage or {}).get(key) or {}).get("reset_at")
+
+
+def _reset_timestamp(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+
+def _reset_is_due(value: str | None, now: datetime) -> bool:
+    reset_timestamp = _reset_timestamp(value)
+    return reset_timestamp is not None and reset_timestamp <= now.timestamp()
 
 
 async def _load_row(
@@ -38,6 +59,8 @@ async def _load_row(
         )
         db.add(row)
         await db.flush()
+    else:
+        row.team_space_id = team.account_id
     return row
 
 
@@ -71,13 +94,18 @@ async def record_quota_observation(
     team_space_id: str,
     seat_type: str | None,
     usage: dict[str, Any],
+    team_id: int | None = None,
 ) -> AccountPoolTeamUsage | None:
     """Record the latest quota check and preserve premium consumption history."""
-    team = (await db.execute(select(Team).where(
-        Team.account_id == team_space_id,
-    ).order_by(Team.id.asc()))).scalars().first()
+    team = await db.get(Team, team_id) if team_id is not None else None
+    if team_id is None:
+        team = (await db.execute(select(Team).where(
+            Team.account_id == team_space_id,
+        ).order_by(Team.id.asc()))).scalars().first()
     if team is None:
         return None
+    if team.account_id != team_space_id:
+        raise ValueError("额度工作区与 Team 不匹配")
     row = await _load_row(db, email=email.strip().lower(), team=team)
     if row is None:
         return None
@@ -85,9 +113,19 @@ async def record_quota_observation(
     if usage["status"] != "ok":
         return row
     now = get_now()
+    previous_weekly_reset_at = row.weekly_reset_at
+    next_weekly_reset_at = _reset_at(usage, "1week")
+    period_rolled = (
+        previous_weekly_reset_at is not None
+        and previous_weekly_reset_at != next_weekly_reset_at
+        and _reset_is_due(previous_weekly_reset_at, datetime.now(timezone.utc))
+    )
     row.quota_checked_at = now
     row.short_reset_at = _reset_at(usage, "5h")
-    row.weekly_reset_at = _reset_at(usage, "1week")
+    row.weekly_reset_at = next_weekly_reset_at
+    if period_rolled:
+        row.premium_used = None
+        return row
     weekly = (usage.get("1week") or {})
     weekly_used = weekly.get("used")
     weekly_remaining = weekly.get("remaining")
@@ -99,3 +137,27 @@ async def record_quota_observation(
         elif row.premium_used is None:
             row.premium_used = False
     return row
+
+
+async def reset_expired_premium_usage(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Clear premium usage flags whose weekly quota window has elapsed."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current_timestamp = current.timestamp()
+    rows = (await db.execute(select(AccountPoolTeamUsage).where(
+        AccountPoolTeamUsage.premium_used.is_not(None),
+        AccountPoolTeamUsage.weekly_reset_at.is_not(None),
+    ))).scalars().all()
+    reset_count = 0
+    for row in rows:
+        reset_timestamp = _reset_timestamp(row.weekly_reset_at)
+        if reset_timestamp is None or reset_timestamp > current_timestamp:
+            continue
+        row.premium_used = None
+        reset_count += 1
+    return reset_count

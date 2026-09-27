@@ -441,6 +441,7 @@ async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, A
                 team_space_id=team_space_id,
                 seat_type=entry.get("seat_type"),
                 usage=usage,
+                team_id=entry.get("workspace_team_id"),
             )
             if tracked:
                 entry["team_usage"] = {
