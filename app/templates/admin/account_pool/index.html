@@ -118,13 +118,10 @@
                             <strong>{{ entry.email }}</strong>
                         </td>
                         <td data-label="Team / 席位">
-                            <div class="account-pool-team-cell">
-                                <div class="account-pool-team">
-                                    <strong class="account-pool-team-name">{{ current_team_label }}</strong>
-                                </div>
-                            </div>
                             <div class="account-pool-team-badges">
-                                {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>{% endif %}
+                                {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>
+                                {% elif entry.is_owner or entry.status in ['joined', 'conflict'] %}<small class="text-muted">席位待确认</small>
+                                {% else %}<small class="text-muted">个人账户</small>{% endif %}
                             </div>
                         </td>
                         <td data-label="验活状态">
@@ -144,11 +141,15 @@
                         </td>
                         {% set rotation = entry.rotation or {} %}
                         <td data-label="轮转状态">
-                            <div class="account-pool-rotation" title="{{ rotation.reason or '等待轮转扫描' }}">
+                            <div class="account-pool-rotation"{% if rotation.reason %} title="{{ rotation.reason }}"{% endif %}>
                                 <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'candidate' %}account-pool-candidate-badge{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
-                                {% if rotation.team_id %}<strong>{{ rotation.team_name }} <small>#{{ rotation.team_id }}</small></strong>{% endif %}
-                                {% if rotation.replacement_at %}<small class="account-pool-replacement-countdown" data-replacement-at="{{ rotation.replacement_at or '' }}">等待释放席位</small>{% endif %}
-                                {% if rotation.label != '等待排队' %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
+                                {% if rotation.exit_at %}
+                                <small class="account-pool-replacement-countdown" data-exit-at="{{ rotation.exit_at }}">下线时间 {{ rotation.exit_at|format_datetime }}</small>
+                                {% else %}
+                                {% if rotation.team_id %}<small>{{ rotation.team_name }} #{{ rotation.team_id }}</small>{% endif %}
+                                {% if rotation.replacement_at %}<small class="account-pool-replacement-countdown" data-replacement-at="{{ rotation.replacement_at }}">预计上线 {{ rotation.replacement_at|format_datetime }}</small>
+                                {% elif rotation.label not in ['等待排队', '所有者'] %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
+                                {% endif %}
                             </div>
                         </td>
                         <td data-label="操作">
@@ -161,7 +162,7 @@
                                     <div><dt>验活详情</dt><dd>{{ entry.liveness_message or '暂无详情' }}</dd></div>
                                     <div><dt>额度检查时间</dt><dd>{{ team_usage.quota_checked_at|default(none)|format_datetime }}</dd></div>
                                     <div><dt>额度读取结果</dt><dd>{{ usage.get('error') or ('读取成功' if usage.get('status') == 'ok' else '尚未获取额度') }}</dd></div>
-                                    <div><dt>轮转状态</dt><dd>{{ rotation.label or '待分配' }}{% if rotation.team_id %} · {{ rotation.team_name }} #{{ rotation.team_id }}{% endif %} · {{ rotation.reason or '等待轮转扫描' }}</dd></div>
+                                    <div><dt>轮转状态</dt><dd>{{ rotation.label or '待分配' }}{% if rotation.team_id %} · {{ rotation.team_name }} #{{ rotation.team_id }}{% endif %}{% if rotation.reason %} · {{ rotation.reason }}{% endif %}</dd></div>
                                     <div><dt>首次高级使用</dt><dd>{{ team_usage.premium_used_at|default(none)|format_datetime }}</dd></div>
                                     <div><dt>席位切换</dt><dd>{{ team_usage.seat_switch_count or 0 }} 次 · 最近 {{ team_usage.seat_switched_at|default(none)|format_datetime }}</dd></div>
                                 </dl>
@@ -390,7 +391,7 @@
 {% block extra_js %}
 <script src="/static/js/account-pool-confirm.js?v=20260927-1"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/account-pool.js?v=filters-20260927-filters"></script>
+<script src="/static/js/account-pool.js?v=20260927-compact-status"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-batch.js?v=filters-20260927-owner-actions"></script>

@@ -284,7 +284,7 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("account-pool-status status-badge", response.body.decode())
                 response = await admin.account_pool_page(request, 1, 20, "owner@", "", db, {"username": "admin"})
                 self.assertNotIn("account-pool-owner-badge", response.body.decode())
-                self.assertIn("所有者保留", response.body.decode())
+                self.assertIn(">所有者</span>", response.body.decode())
 
                 from app.models import TeamReplacementQueue
                 from app.utils.time_utils import get_now

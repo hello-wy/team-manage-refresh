@@ -80,7 +80,7 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
             options = await account_pool_service.list_invite_options(1, db)
             self.assertEqual([item["id"] for item in options], [member.id])
             rows = await account_pool_service.rows_by_ids(db, [owner.id])
-            self.assertEqual((await attach_rotation_status(db, rows))[0]["rotation"]["label"], "所有者保留")
+            self.assertEqual((await attach_rotation_status(db, rows))[0]["rotation"]["label"], "所有者")
             self.assertIsNotNone(await db.get(AccountPoolEntry, owner.id))
 
     async def test_team_name_uses_membership_and_saved_account_names_not_uuid(self):
