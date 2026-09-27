@@ -106,8 +106,12 @@ async def apply_export_settings(payload, db):
             extra["codex_fingerprint_mode"] = settings.codex_fingerprint_mode
         if settings.excel_bps_enabled:
             extra["openai_excel_bps"] = True
+            extra["openai_excel_bps_auto_disable_on_403"] = True
+            extra["openai_excel_bps_cache_creation_as_input"] = True
         else:
             extra.pop("openai_excel_bps", None)
+            extra.pop("openai_excel_bps_auto_disable_on_403", None)
+            extra.pop("openai_excel_bps_cache_creation_as_input", None)
         if extra:
             account["extra"] = extra
         else:
