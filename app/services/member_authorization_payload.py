@@ -1,6 +1,8 @@
 """Build sub2api payloads for authorized OpenAI accounts."""
 from datetime import datetime, timezone
 
+from app.services.openai_workspace import token_plan_type
+
 
 def build_member_export_payload(team, email, credentials, claims, identity):
     return build_openai_export_payload(
@@ -9,7 +11,8 @@ def build_member_export_payload(team, email, credentials, claims, identity):
         credentials=credentials,
         claims=claims,
         identity=identity,
-        plan_type="team",
+        # Team 空间中也有不同订阅档位；高级席位不能统一写成标准席位。
+        plan_type=token_plan_type(claims, identity) or "team",
     )
 
 

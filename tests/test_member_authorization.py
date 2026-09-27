@@ -28,9 +28,11 @@ EMAIL = "member@example.com"
 ACCOUNT = "team-account"
 
 
-def tokens(email=EMAIL, account=ACCOUNT, expired=False):
+def tokens(email=EMAIL, account=ACCOUNT, expired=False, plan_type=None):
     claims = {"email": email, "exp": int(time.time()) + (-60 if expired else 3600),
               "https://api.openai.com/auth": {"chatgpt_account_id": account, "chatgpt_user_id": "member-user"}}
+    if plan_type is not None:
+        claims["https://api.openai.com/auth"]["chatgpt_plan_type"] = plan_type
     token = jwt.encode(claims, "unit-test-key-with-at-least-32-chars", algorithm="HS256")
     return {"success": True, "access_token": token, "refresh_token": "test-member-refresh", "id_token": token}
 
@@ -161,6 +163,33 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         saved = json.loads(encryption_service.decrypt_token(record.export_json_encrypted))
         self.assertEqual(saved["accounts"][0]["credentials"]["chatgpt_account_id"], ACCOUNT)
 
+    async def test_premium_member_login_and_export_preserve_token_subscription(self):
+        self.automatic_login.login.return_value = tokens(plan_type="self_serve_business_prolite")
+        self.join()
+        await self.service.automatic_login(1, EMAIL, self.db)
+        record = await self.record()
+        saved = json.loads(encryption_service.decrypt_token(record.export_json_encrypted))
+        self.assertEqual(saved["accounts"][0]["credentials"]["plan_type"], "self_serve_business_prolite")
+        # 旧版已保存的 JSON 仍标为 team，再次导出也应按授权信息纠正。
+        saved["accounts"][0]["credentials"]["plan_type"] = "team"
+        record.export_json_encrypted = encryption_service.encrypt_token(json.dumps(saved))
+        await self.db.commit()
+        payload = await self.service.export(1, EMAIL, self.db)
+        self.assertEqual(payload["accounts"][0]["credentials"]["plan_type"], "self_serve_business_prolite")
+        self.assertEqual(payload["accounts"][0]["credentials"]["refresh_token"], "test-member-refresh")
+
+    async def test_member_subscription_falls_back_to_identity_token_then_team(self):
+        for access_plan, identity_plan, expected in (
+            (None, "self_serve_business_prolite", "self_serve_business_prolite"),
+            ("team", "self_serve_business_prolite", "team"),
+            (None, None, "team"),
+        ):
+            with self.subTest(access_plan=access_plan, identity_plan=identity_plan):
+                credentials = tokens(plan_type=access_plan)
+                credentials["id_token"] = tokens(plan_type=identity_plan)["id_token"]
+                payload = await self.service._export_payload(self.team, EMAIL, credentials, self.db)
+                self.assertEqual(payload["accounts"][0]["credentials"]["plan_type"], expected)
+
     async def test_sub2api_export_status_is_persisted_without_exposing_json(self):
         await self.authorize()
         await self.service.mark_sub2api_exported(1, EMAIL, 42, self.db)
@@ -176,7 +205,7 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             await self.service.export(1, EMAIL, self.db)
 
     async def test_team_owner_credentials_sync_into_member_authorization(self):
-        owner_tokens = tokens(email="owner@example.com")
+        owner_tokens = tokens(email="owner@example.com", plan_type="self_serve_business_prolite")
         self.team.access_token_encrypted = encryption_service.encrypt_token(owner_tokens["access_token"])
         self.team.refresh_token_encrypted = encryption_service.encrypt_token(owner_tokens["refresh_token"])
         self.team.id_token_encrypted = encryption_service.encrypt_token(owner_tokens["id_token"])
@@ -195,6 +224,7 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         record = await self.record()
         saved = json.loads(encryption_service.decrypt_token(record.export_json_encrypted))
         self.assertEqual(saved["accounts"][0]["credentials"]["chatgpt_account_id"], ACCOUNT)
+        self.assertEqual(saved["accounts"][0]["credentials"]["plan_type"], "self_serve_business_prolite")
         self.assertNotIn("test-member-refresh", json.dumps(snapshot))
         self.assertEqual(len((await self.db.execute(select(MemberAuthorization))).scalars().all()), 1)
 
