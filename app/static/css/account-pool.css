@@ -564,20 +564,6 @@ body.admin-theme .account-pool-page .account-pool-candidate-badge {
 .account-pool-quota-refresh svg { width: 12px; height: 12px; }
 .account-pool-quota-feedback { display: block; color: var(--text-secondary); max-width: 240px; }
 .account-pool-replacement-countdown { color: #1d4ed8; font-variant-numeric: tabular-nums; }
-.account-pool-confirm {
-    width: min(440px, calc(100vw - 32px));
-    margin: auto;
-    padding: 24px;
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 14px;
-    background: var(--bg-card, #fff);
-    color: var(--text-primary, #0f172a);
-    box-shadow: 0 24px 60px #0f172a33;
-}
-.account-pool-confirm::backdrop { background: #0f172a66; }
-.account-pool-confirm h3 { margin: 0 0 14px; }
-.account-pool-confirm p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
-.account-pool-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 
 /* Separate navigation, routine actions and selection-only operations. */
 .account-pool-page [hidden] { display: none !important; }

@@ -700,7 +700,7 @@ function formatDateTime(dateString) {
 
 // 登出函数
 async function logout() {
-    if (!confirm('确定要登出吗?')) {
+    if (!await confirmPageAction('确定要登出吗?')) {
         return;
     }
 
@@ -750,7 +750,7 @@ async function apiCall(url, options = {}) {
 
 // 确认对话框
 function confirmAction(message) {
-    return confirm(message);
+    return confirmPageAction(message);
 }
 
 
@@ -2241,7 +2241,7 @@ async function toggleMemberAutoKickExemption(button) {
     const email = button.dataset.email;
     const exempt = button.dataset.exempt === 'true';
     const action = exempt ? '设置为不会自动下线' : '恢复自动下线';
-    if (!confirm(`确定要将 ${email} ${action}吗？`)) return;
+    if (!await confirmPageAction(`确定要将 ${email} ${action}吗？`)) return;
 
     button.disabled = true;
     try {
@@ -2468,7 +2468,7 @@ async function saveMemberSeatType(button) {
         return;
     }
     const label = target === 'premium' ? '高级席位' : '标准席位';
-    if (!confirm(`将 ${select.dataset.email} 设置为${label}？\n将调整该成员的使用额度，需有对应可用席位。`)) return;
+    if (!await confirmPageAction(`将 ${select.dataset.email} 设置为${label}？\n将调整该成员的使用额度，需有对应可用席位。`)) return;
     memberSeatUpdateInProgress = true;
     updateMemberInviteAvailability();
     document.querySelectorAll('.member-seat-control select, .member-seat-control button').forEach(el => el.disabled = true);
@@ -2626,7 +2626,7 @@ async function loadModalMemberList(teamId, snapshot = null) {
 }
 
 async function revokeInvite(teamId, email, inModal = false) {
-    if (!confirm(`确定要撤回对 "${email}" 的邀请吗？`)) {
+    if (!await confirmPageAction(`确定要撤回对 "${email}" 的邀请吗？`)) {
         return;
     }
 
@@ -2729,7 +2729,7 @@ async function handleAddMember(event) {
 }
 
 async function deleteMember(teamId, userId, email, inModal = false) {
-    if (!confirm(`确定要删除成员 "${email}" 吗?\n\n此操作不可恢复!`)) {
+    if (!await confirmPageAction(`确定要删除成员 "${email}" 吗?\n\n此操作不可恢复!`)) {
         return;
     }
 
@@ -2756,7 +2756,7 @@ async function deleteMember(teamId, userId, email, inModal = false) {
 }
 
 async function rotateMember(teamId, userId, email) {
-    if (!confirm(`确定轮转成员 "${email}" 吗？\n\n将先踢出当前账号，再从账号池邀请替补，并自动授权、导出到 sub2api。此操作不可撤销。`)) {
+    if (!await confirmPageAction(`确定轮转成员 "${email}" 吗？\n\n将先踢出当前账号，再从账号池邀请替补，并自动授权、导出到 sub2api。此操作不可撤销。`)) {
         return;
     }
 

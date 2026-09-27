@@ -1374,7 +1374,7 @@
             showToast('该 Team 已开启设备代码验证', 'info');
             return;
         }
-        if (!confirm('确定要为该 Team 开启设备代码身份验证吗?')) {
+        if (!await confirmPageAction('确定要为该 Team 开启设备代码身份验证吗?')) {
             return;
         }
 
@@ -1400,7 +1400,7 @@
     async function toggleTeamWarrantySeat(teamId, currentlyEnabled) {
         const nextEnabled = !currentlyEnabled;
         const actionLabel = nextEnabled ? '开启' : '关闭';
-        if (!confirm(`确定要为该 Team ${actionLabel}质保车位吗？\n\n此操作仅影响后续兑换码分流，不会影响现有成员。`)) {
+        if (!await confirmPageAction(`确定要为该 Team ${actionLabel}质保车位吗？\n\n此操作仅影响后续兑换码分流，不会影响现有成员。`)) {
             return;
         }
 
@@ -1429,7 +1429,7 @@
 
     async function pushTeamToSub2api(teamId, email = '') {
         const targetLabel = email ? `"${email}"` : `ID=${teamId}`;
-        if (!confirm(`确定要将 Team ${targetLabel} 的母号推送到 sub2api 吗？`)) {
+        if (!await confirmPageAction(`确定要将 Team ${targetLabel} 的母号推送到 sub2api 吗？`)) {
             return;
         }
 
@@ -1486,7 +1486,7 @@
 
     async function exportTeamJson(teamId, email = '') {
         const targetLabel = email ? `"${email}"` : `ID=${teamId}`;
-        if (!confirm(`确定要导出 Team ${targetLabel} 的 JSON 吗？`)) {
+        if (!await confirmPageAction(`确定要导出 Team ${targetLabel} 的 JSON 吗？`)) {
             return;
         }
 
@@ -1512,7 +1512,7 @@
     }
 
     async function refreshTeam(teamId) {
-        if (!confirm('确定要刷新此 Team 的信息吗?')) {
+        if (!await confirmPageAction('确定要刷新此 Team 的信息吗?')) {
             return;
         }
 
@@ -1541,7 +1541,7 @@
         const teamId = document.getElementById('edit-team-id').value;
         if (!teamId) return;
 
-        if (!confirm('确定要刷新此 Team 的 Access Token 吗?')) {
+        if (!await confirmPageAction('确定要刷新此 Team 的 Access Token 吗?')) {
             return;
         }
 
@@ -1584,7 +1584,7 @@
     }
 
     async function deleteTeam(teamId, email) {
-        if (!confirm(`确定要删除 Team "${email}" 吗?\n\n此操作不可恢复!`)) {
+        if (!await confirmPageAction(`确定要删除 Team "${email}" 吗?\n\n此操作不可恢复!`)) {
             return;
         }
 
@@ -2140,7 +2140,7 @@
             return;
         }
 
-        if (!confirm(`确定要对选中的 ${selectedIds.length} 个 Team 进行 "${actionName}" 操作吗？`)) {
+        if (!await confirmPageAction(`确定要对选中的 ${selectedIds.length} 个 Team 进行 "${actionName}" 操作吗？`)) {
             return;
         }
 
@@ -2205,7 +2205,7 @@
             return;
         }
 
-        if (!confirm(confirmMessage)) {
+        if (!await confirmPageAction(confirmMessage)) {
             return;
         }
 
@@ -2410,7 +2410,7 @@
             return;
         }
 
-        if (!confirm(`确定要批量导出选中的 ${selectedIds.length} 个 Team JSON 吗？`)) {
+        if (!await confirmPageAction(`确定要批量导出选中的 ${selectedIds.length} 个 Team JSON 吗？`)) {
             return;
         }
 

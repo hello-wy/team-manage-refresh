@@ -40,6 +40,9 @@ class Team(Base):
     pending_replacements = Column(Integer, default=0, nullable=False, comment="自动踢人后待补账号数")
     error_count = Column(Integer, default=0, comment="连续报错次数")
     last_sync = Column(DateTime, comment="最后同步时间")
+    owner_liveness_status = Column(String(20), comment="所有者 Token 验活状态")
+    owner_liveness_message = Column(Text)
+    owner_liveness_checked_at = Column(DateTime)
     created_at = Column(DateTime, default=get_now, comment="创建时间")
     pool_type = Column(String(20), default="normal", comment="池类型: normal/welfare")
 

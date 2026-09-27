@@ -72,6 +72,20 @@ class AccountPoolExportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stored.status, "failed")
             self.assertIn("remote unavailable", stored.error)
 
+    async def test_changed_credentials_do_not_mark_alive_or_import_stale_login(self):
+        self.authorization.save_result.return_value = False
+        async with self.sessions() as session:
+            job = await self.service.enqueue(session, 1, "team-b")
+        with self.assertLogs("app.services.account_pool_export", level="ERROR"):
+            await self.service.run(job.id)
+        self.assertIn("credential_version", self.authorization.save_result.await_args.kwargs)
+        self.sub2api.import_member.assert_not_awaited()
+        self.records.record_success.assert_not_awaited()
+        async with self.sessions() as session:
+            stored = await session.get(AccountPoolExportJob, job.id)
+            self.assertEqual(stored.status, "failed")
+            self.assertIn("凭据已变更", stored.error)
+
     async def test_selection_switches_current_workspace_json(self):
         async with self.sessions() as session:
             session.add(AccountPoolWorkspace(

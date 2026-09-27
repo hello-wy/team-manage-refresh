@@ -58,14 +58,21 @@ class AccountPoolExportService:
                 await session.commit()
 
     async def _export(self, session, job) -> None:
+        current = await session.get(AccountPoolEntry, job.account_pool_id)
+        if current is None or current.deleted_at is not None:
+            raise AccountPoolAuthorizationError("账号不存在")
+        version = (current.password_encrypted, current.two_factor_secret_encrypted)
         result = await self._authorization.login_entry(
             session, job.account_pool_id, job.workspace_id
         )
-        current = await session.get(AccountPoolEntry, job.account_pool_id)
-        await self._authorization.save_result(
+        saved = await self._authorization.save_result(
             session, job.account_pool_id, result,
             update_current=current.workspace_id == job.workspace_id,
+            credential_version=version,
+            liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
         )
+        if not saved:
+            raise AccountPoolAuthorizationError("登录期间账号凭据已变更，请重新登录")
         imported = await self._sub2api.import_member(result.payload, session)
         entry = await session.get(AccountPoolEntry, job.account_pool_id)
         actual_id = str(result.workspace.get("workspace_id") or job.workspace_id).strip()

@@ -93,7 +93,7 @@ account_pool_authorization_service = AccountPoolAuthorizationService(
     team_service.chatgpt_service,
 )
 account_pool_liveness_service = AccountPoolLivenessService(
-    account_pool_credential_service, account_pool_authorization_service
+    account_pool_credential_service, account_pool_authorization_service, team_service
 )
 account_pool_export_service = AccountPoolExportService(
     AsyncSessionLocal, account_pool_authorization_service,
@@ -735,6 +735,28 @@ async def select_account_pool_workspace(
     await db.commit()
     return {"success": True, "workspace_id": workspace_id,
             "workspace_name": entry.workspace_name}
+
+
+@router.post("/account-pool/{entry_id}/liveness")
+async def check_account_pool_entry_liveness(
+    entry_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Check just this account, including owners represented by negative Team IDs."""
+    if not await account_pool_service.rows_by_ids(db, [entry_id]):
+        raise HTTPException(status_code=404, detail="账号不存在")
+    result = await account_pool_liveness_service.check_entry(db, entry_id)
+    if result is None:
+        return JSONResponse(status_code=409, content={"success": False, "error": "账号或凭据已变更，请刷新后重试"})
+    rows = await account_pool_service.rows_by_ids(db, [entry_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    row = rows[0]
+    return JSONResponse(content={
+        "success": True, "status": result,
+        "message": row.get("liveness_message") or "检测请求异常，请重试",
+    }, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/account-pool/liveness")

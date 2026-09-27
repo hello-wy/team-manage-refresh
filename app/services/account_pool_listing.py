@@ -210,6 +210,7 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         "liveness_status": entry.liveness_status,
         "liveness_checked_at": entry.liveness_checked_at,
         "liveness_message": entry.liveness_message,
+        "has_login_credentials": bool(entry.password_encrypted and entry.two_factor_secret_encrypted),
         "created_at": entry.created_at,
         "export_job_id": job.id if job else None,
         "export_job_status": job.status if job else None,
@@ -285,6 +286,12 @@ async def build_pool_entry_data(
         if row["is_owner"]:
             row["status"] = "joined"
             row["workspace_is_personal"] = False
+            checked = [t for t in owned[row["email"]] if t.owner_liveness_checked_at]
+            latest = max(checked, key=lambda t: t.owner_liveness_checked_at) if checked else None
+            if latest and (not row["liveness_checked_at"] or latest.owner_liveness_checked_at > row["liveness_checked_at"]):
+                row.update(liveness_status=latest.owner_liveness_status,
+                           liveness_message=latest.owner_liveness_message,
+                           liveness_checked_at=latest.owner_liveness_checked_at)
         if not row["quota_workspace_id"] and owned[row["email"]]:
             team = owned[row["email"]][0]
             row["quota_workspace_id"], row["quota_team_id"] = team.account_id, team.id
