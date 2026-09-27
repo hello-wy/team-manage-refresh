@@ -168,7 +168,7 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(views[entry.email]["label"], case[-1])
                 self.assertEqual(views[entry.email]["team_id"], None if case[0] == "premium" else 1)
 
-    async def test_legacy_queue_without_fresh_capacity_only_predicts_first_candidate(self):
+    async def test_legacy_queue_without_fresh_capacity_predicts_one_per_seat(self):
         async with self.sessions() as db:
             await self.team(db, mode="off", fresh=False)
             db.add_all([TeamReplacementQueue(team_id=1, seat_type="premium"),
@@ -180,7 +180,7 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(views[first.email]["label"], "候选补位")
             self.assertEqual(views[first.email]["team_id"], 1)
             self.assertIn("等待席位余额确认", views[first.email]["reason"])
-            self.assertIsNone(views[second.email]["team_id"])
+            self.assertEqual(views[second.email]["team_id"], 1)
 
     async def test_queue_reports_recent_execution_blocker_without_fake_countdown(self):
         async with self.sessions() as db:
@@ -201,14 +201,14 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(views[first.email]["label"], "候选补位")
                 self.assertIn(expected, views[first.email]["reason"])
                 self.assertIsNone(views[first.email]["replacement_at"])
-                self.assertIsNone(views[second.email]["team_id"])
+                self.assertEqual(views[second.email]["team_id"], 1)
             item.last_attempt_at = self.now - timedelta(minutes=6)
             await db.commit()
             view = (await self.view(db, first))[first.email]
             self.assertIn("等待席位余额确认", view["reason"])
             self.assertNotIn("邀请失败", view["reason"])
 
-    async def test_zero_capacity_preserves_head_candidate_and_blocks_later_queue(self):
+    async def test_zero_standard_capacity_does_not_block_premium_prediction(self):
         async with self.sessions() as db:
             await self.team(db, mode="off", standard=0, premium=2)
             db.add_all([TeamReplacementQueue(team_id=1, seat_type="standard"),
@@ -220,7 +220,7 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(views[first.email]["label"], "候选补位")
             self.assertIn("等待标准席位空位", views[first.email]["reason"])
             self.assertIsNone(views[first.email]["replacement_at"])
-            self.assertIsNone(views[second.email]["team_id"])
+            self.assertEqual(views[second.email]["team_id"], 1)
 
     async def test_invited_conflicted_and_exempt_members(self):
         async with self.sessions() as db:

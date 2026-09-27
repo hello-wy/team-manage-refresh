@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MEMBER_AUTO_KICK_HOURS = 2
 MIN_MEMBER_AUTO_KICK_HOURS = 1
 MAX_MEMBER_AUTO_KICK_HOURS = 8760
+REPLACEMENT_RELEASE_GRACE = timedelta(minutes=5)
 OWNER_ROLE = "account-owner"
 JOINED_STATUS = "joined"
 
@@ -127,6 +128,7 @@ class MemberAutoKickService:
         delete_member: DeleteMember,
         *,
         invite_replacement: InviteReplacement,
+        seat_balance_provider=None,
     ) -> Dict[str, int | bool]:
         due_members = await self._due_members(db_session)
         stats: Dict[str, int | bool] = {
@@ -175,6 +177,7 @@ class MemberAutoKickService:
             db_session=db_session,
             invite_replacement=invite_replacement,
             stats=stats,
+            seat_balance_provider=seat_balance_provider,
         )
         stats["replacement_pending"] = await self._pending_replacement_count(db_session)
 
@@ -197,6 +200,7 @@ class MemberAutoKickService:
         db_session,
         invite_replacement,
         stats,
+        seat_balance_provider=None,
     ) -> None:
         result = await db_session.execute(
             select(Team)
@@ -212,6 +216,15 @@ class MemberAutoKickService:
         for team in result.scalars().all():
             # 前一个 Team 的邀请失败可能 rollback，需重新读取已过期的 ORM 状态。
             await db_session.refresh(team)
+            if seat_balance_provider is not None:
+                try:
+                    balance = await seat_balance_provider(team, db_session)
+                except Exception:
+                    await db_session.rollback()
+                    logger.exception("补位席位核对失败，保留队列")
+                    balance = {"success": False}
+                await db_session.refresh(team)
+                await self._prune_obsolete_replacements(team, db_session, balance)
             await self._reconcile_replacement_queue(team, db_session)
             if not team.pending_replacements:
                 continue
@@ -230,8 +243,9 @@ class MemberAutoKickService:
         invite_replacement,
         stats,
     ) -> None:
+        blocked_seats = set()
         while True:
-            queue_item = await self._next_queue_item(team.id, db_session)
+            queue_item = await self._next_queue_item(team.id, db_session, blocked_seats)
             if not queue_item:
                 return
             replacement = await self._invite_replacement(
@@ -249,16 +263,57 @@ class MemberAutoKickService:
                                               str(replacement.get("error_code") or "invite_failed")[:100])
                 await db_session.commit()
             if status == "no_candidate":
-                stats["replacement_unavailable"] += int(team.pending_replacements or 0)
-                return
+                stats["replacement_unavailable"] += int((await db_session.execute(
+                    select(func.count(TeamReplacementQueue.id)).where(
+                        TeamReplacementQueue.team_id == team.id,
+                        TeamReplacementQueue.seat_type == queue_item.seat_type,
+                    )
+                )).scalar_one())
+                blocked_seats.add(queue_item.seat_type)
+                continue
             if status != "invited":
                 stats["replacement_failed"] += 1
                 self._log_replacement_failure(team, queue_item, replacement)
-                return
+                blocked_seats.add(queue_item.seat_type)
+                continue
             team.pending_replacements -= 1
             await db_session.delete(queue_item)
             stats["replacement_invited"] += 1
             await db_session.commit()
+
+    @staticmethod
+    async def _prune_obsolete_replacements(team, db_session, result) -> None:
+        """旧任务只保留实时成员/邀请尚未填上的缺口，不以可用余额判断补位完成。"""
+        if not result.get("success"):
+            return
+        items = (await db_session.execute(select(TeamReplacementQueue).where(
+            TeamReplacementQueue.team_id == team.id,
+        ).order_by(TeamReplacementQueue.id))).scalars().all()
+        cutoff = get_now() - REPLACEMENT_RELEASE_GRACE
+        removed = 0
+        for kind in ("standard", "premium"):
+            seat = (result.get("balance") or {}).get(kind, {})
+            fields = ("paid", "joined", "pending", "invited", "reserved")
+            if not seat.get("known") or any(
+                type(seat.get(key)) is not int or seat[key] < 0 for key in fields
+            ):
+                continue
+            # 未确认的预留和席位变更不能作为已经补位的证据。
+            if seat["reserved"] or seat["pending"]:
+                continue
+            vacancies = max(0, seat["paid"] - seat["joined"] - seat["invited"])
+            same_seat = [item for item in items if item.seat_type == kind]
+            recent = [item for item in same_seat if item.created_at >= cutoff]
+            retain_old = max(0, vacancies - len(recent))
+            old = [item for item in same_seat if item.created_at < cutoff]
+            for item in old[retain_old:]:
+                logger.info("清理已被填补的补位任务: team=%s queue=%s seat=%s",
+                            team.id, item.id, kind)
+                await db_session.delete(item)
+                removed += 1
+        if removed:
+            team.pending_replacements = len(items) - removed
+        await db_session.flush()
 
     @staticmethod
     async def _reconcile_replacement_queue(team, db_session) -> None:
@@ -270,6 +325,7 @@ class MemberAutoKickService:
         queue_count = int(result.scalar_one())
         pending_count = int(team.pending_replacements or 0)
         if pending_count == queue_count:
+            await db_session.commit()
             return
         logger.error(
             "自动补位队列不一致，已按队列修复: team=%s name=%s pending=%s queue=%s",
@@ -298,10 +354,11 @@ class MemberAutoKickService:
         )
 
     @staticmethod
-    async def _next_queue_item(team_id, db_session):
+    async def _next_queue_item(team_id, db_session, blocked_seats=()):
         result = await db_session.execute(
             select(TeamReplacementQueue)
-            .where(TeamReplacementQueue.team_id == team_id)
+            .where(TeamReplacementQueue.team_id == team_id,
+                   TeamReplacementQueue.seat_type.not_in(blocked_seats))
             .order_by(TeamReplacementQueue.id.asc())
             .limit(1)
         )

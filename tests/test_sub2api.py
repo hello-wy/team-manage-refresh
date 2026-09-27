@@ -98,6 +98,29 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["accounts"][0]["credentials"], payload["accounts"][0]["credentials"])
                 self.assertEqual(json.dumps(payload), original)
 
+    async def test_export_reads_saved_setting_even_with_stale_worker_cache(self):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from app.database import Base
+        from app.models import Setting
+        from app.services.settings import SettingsService
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        service = SettingsService()
+        service._cache["sub2api_excel_bps_enabled"] = "false"
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with async_sessionmaker(engine)() as db:
+                db.add(Setting(key="sub2api_excel_bps_enabled", value="true"))
+                await db.commit()
+                with patch("app.services.sub2api.settings_service", service):
+                    result = await apply_export_settings({"accounts": [{"type": "oauth"}]}, db)
+                extra = result["accounts"][0]["extra"]
+                self.assertIs(extra["openai_excel_bps"], True)
+                self.assertIs(extra["openai_excel_bps_auto_disable_on_403"], True)
+                self.assertIs(extra["openai_excel_bps_cache_creation_as_input"], True)
+        finally:
+            await engine.dispose()
+
     async def test_missing_selected_group_blocks_creation(self):
         requests = []
 

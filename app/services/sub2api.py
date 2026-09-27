@@ -69,8 +69,9 @@ def response_data(response: httpx.Response):
 
 
 async def get_export_settings(db) -> Sub2apiExportSettings:
+    # 导入在另一 worker 执行时，也必须立即使用刚保存的设置。
     raw_concurrency = await settings_service.get_setting(
-        db, "sub2api_default_concurrency", str(DEFAULT_CONCURRENCY)
+        db, "sub2api_default_concurrency", str(DEFAULT_CONCURRENCY), use_cache=False
     )
     try:
         concurrency = int(raw_concurrency)
@@ -80,11 +81,11 @@ async def get_export_settings(db) -> Sub2apiExportSettings:
         raise Sub2apiError("sub2api 默认并发数必须大于 0")
 
     mode = await settings_service.get_setting(
-        db, "sub2api_codex_fingerprint_mode", CODEX_FINGERPRINT_MODE_OFF
+        db, "sub2api_codex_fingerprint_mode", CODEX_FINGERPRINT_MODE_OFF, use_cache=False
     )
     if mode not in VALID_CODEX_FINGERPRINT_MODES:
         raise Sub2apiError("Codex 指纹收敛配置无效，请在系统中心重新保存")
-    excel_bps = await settings_service.get_setting(db, "sub2api_excel_bps_enabled", "false")
+    excel_bps = await settings_service.get_setting(db, "sub2api_excel_bps_enabled", "false", use_cache=False)
     return Sub2apiExportSettings(concurrency, mode, excel_bps == "true")
 
 
