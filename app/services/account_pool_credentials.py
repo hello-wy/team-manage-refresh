@@ -38,11 +38,14 @@ class AccountPoolCredentialService:
         *,
         emails: Optional[list[str]] = None,
         content: str = "",
+        preserve_existing_credentials: bool = False,
     ) -> dict[str, object]:
         records, invalid = parse_account_inputs(emails, content)
         if not records:
             return self._empty_add_result(invalid)
-        result = await self._persist_records(db_session, records)
+        result = await self._persist_records(
+            db_session, records, preserve_existing_credentials=preserve_existing_credentials
+        )
         return {
             "success": True,
             "message": self._build_add_message(result, invalid),
@@ -76,9 +79,13 @@ class AccountPoolCredentialService:
         self,
         db_session: AsyncSession,
         records: list[AccountPoolCredentialRecord],
+        *,
+        preserve_existing_credentials: bool = False,
     ) -> AccountPoolImportResult:
         entries = await self._entries_by_email(db_session, records)
-        result = self._apply_records(db_session, entries, records)
+        result = self._apply_records(
+            db_session, entries, records, preserve_existing_credentials=preserve_existing_credentials
+        )
         changed = [entries[email].id for email in (*result.restored, *result.updated)]
         await db_session.flush()
         if changed:
@@ -108,6 +115,8 @@ class AccountPoolCredentialService:
         db_session: AsyncSession,
         entries: dict[str, AccountPoolEntry],
         records: list[AccountPoolCredentialRecord],
+        *,
+        preserve_existing_credentials: bool = False,
     ) -> AccountPoolImportResult:
         added: list[str] = []
         restored: list[str] = []
@@ -115,6 +124,9 @@ class AccountPoolCredentialService:
         existing: list[str] = []
         for record in records:
             entry = entries.get(record.email)
+            if preserve_existing_credentials and entry is not None and entry.deleted_at is None:
+                existing.append(record.email)
+                continue
             if entry is None:
                 entry = AccountPoolEntry(email=record.email)
                 db_session.add(entry)

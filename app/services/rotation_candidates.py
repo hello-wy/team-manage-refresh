@@ -8,6 +8,23 @@ from app.services.quota_rotation_policy import MAX_SNAPSHOT_AGE
 from app.utils.time_utils import get_now
 
 
+def rotation_candidate_block_reason(*, in_flight=False, exported=False, uncertain=False,
+                                    has_history=False, snapshot=None, now=None):
+    """Shared eligibility for execution and the read-only account-pool preview."""
+    if in_flight:
+        return "invite_pending"
+    if exported:
+        return "already_exported"
+    if uncertain:
+        return "import_uncertain"
+    if has_history and not (
+        snapshot and snapshot.status == "ok" and snapshot.weekly_remaining
+        and snapshot.observed_at >= (now or get_now()) - MAX_SNAPSHOT_AGE
+    ):
+        return "quota_not_ready"
+    return None
+
+
 async def find_rotation_candidate(db, team, pool):
     excluded = set()
     while candidate := await pool.find_replacement_candidate(
@@ -44,7 +61,6 @@ async def find_rotation_candidate(db, team, pool):
             QuotaSnapshot.email == candidate.email,
             QuotaSnapshot.team_space_id == team.account_id,
         ))).scalar_one_or_none()
-        if (snapshot and snapshot.status == "ok" and snapshot.weekly_remaining
-                and snapshot.observed_at >= get_now() - MAX_SNAPSHOT_AGE):
+        if not rotation_candidate_block_reason(has_history=True, snapshot=snapshot):
             return candidate
     return None

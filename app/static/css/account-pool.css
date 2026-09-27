@@ -59,6 +59,14 @@
     font-size: 0.82rem;
 }
 
+.account-pool-form .account-pool-auto-rotate {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0.6rem 0 0;
+    cursor: pointer;
+}
+
 .account-pool-status {
     display: inline-flex;
     align-items: center;
@@ -69,8 +77,8 @@
 .account-pool-liveness {
     display: grid;
     gap: 0.25rem;
-    min-width: 130px;
-    max-width: 220px;
+    min-width: 80px;
+    max-width: 120px;
     justify-items: start;
 }
 
@@ -84,21 +92,22 @@
     gap: 0.2rem;
     min-width: 0;
     white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .account-pool-workspace-selector {
     width: fit-content;
     min-width: 0;
-    max-width: 230px;
-    padding: 0;
-    border: 0;
-    background: transparent;
+    max-width: 200px;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border-base);
+    background: var(--bg-surface);
     color: var(--text-main);
     font: inherit;
     font-weight: 600;
     text-overflow: ellipsis;
     cursor: pointer;
-    appearance: none;
+    appearance: auto;
 }
 
 .account-pool-workspace-selector:focus-visible {
@@ -108,10 +117,10 @@
 
 .account-pool-team-cell {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 32px;
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 0.55rem;
-    min-width: 250px;
+    min-width: 180px;
     white-space: normal;
 }
 
@@ -121,26 +130,10 @@
     overflow-wrap: anywhere;
 }
 
-.account-pool-page td[data-label="高级使用"],
-.account-pool-page td[data-label="额度刷新"] {
-    min-width: 130px;
-    white-space: normal;
-}
-
-.account-pool-page td[data-label="高级使用"] small,
-.account-pool-page td[data-label="额度刷新"] small {
-    display: block;
-    margin-top: 0.25rem;
-    color: var(--text-muted);
-}
-
+/* Keep only always-visible icon actions compact. Text actions size naturally. */
 .account-pool-secret-button,
 .account-pool-invite-button,
-.account-pool-json-export-button,
 .account-pool-auto-login-button,
-.account-pool-edit-button,
-.account-pool-rotate-2fa-button,
-.account-pool-delete-button,
 .account-pool-workspace-scan-button {
     width: 32px;
     height: 32px;
@@ -149,9 +142,139 @@
     padding: 0;
 }
 
-.account-pool-page .data-table th:nth-child(4),
-.account-pool-page .data-table td:nth-child(4) {
-    min-width: 180px;
+.account-pool-page td[data-label="账号"] {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    min-width: 190px;
+    max-width: 250px;
+}
+
+body.admin-theme .account-pool-page .data-table th,
+body.admin-theme .account-pool-page .data-table td {
+    /* Override the theme's !important table spacing for this compact list. */
+    padding: 0.65rem 0.5rem !important;
+}
+
+.account-pool-page .account-pool-row-actions .btn:not(.btn-icon) {
+    padding: 0.4rem 0.5rem;
+    gap: 0.25rem;
+}
+
+.account-pool-text-button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.account-pool-text-button:hover {
+    text-decoration: underline;
+}
+
+.account-pool-text-button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+}
+
+.account-pool-team-badges,
+.account-pool-detail-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.account-pool-team-badges {
+    margin-top: 0.25rem;
+}
+
+.account-pool-premium-note,
+.account-pool-page .quota-cached-label {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.account-pool-page .quota-window {
+    width: auto;
+}
+
+.account-pool-page .quota-window-main {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.account-pool-page .quota-progress {
+    width: 40px;
+}
+
+.account-pool-export-status {
+    display: block;
+    margin-top: 0.3rem;
+    text-align: right;
+    color: var(--text-muted);
+    white-space: normal;
+}
+
+.account-pool-export-status[data-status="failed"],
+.account-pool-export-status[data-status="failed"] button {
+    color: var(--danger);
+}
+
+.account-pool-sub2api-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.account-pool-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+}
+
+.account-pool-detail-grid dt {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.3rem;
+}
+
+.account-pool-detail-grid dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.account-pool-detail-workspace {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin: 1rem 0;
+}
+
+.account-pool-detail-actions {
+    padding: 1rem 0;
+    border-top: 1px solid var(--border-base);
+    border-bottom: 1px solid var(--border-base);
+    margin-bottom: 1rem;
+}
+
+.account-pool-detail-actions .btn {
+    width: auto;
+    height: auto;
+    padding: 0.5rem 0.75rem;
+}
+
+.account-pool-detail-actions .account-pool-delete-button {
+    margin-left: auto;
+}
+
+.account-pool-detail-error {
+    color: var(--danger);
+    overflow-wrap: anywhere;
 }
 
 .account-pool-select-cell {
@@ -257,6 +380,60 @@
     white-space: nowrap;
 }
 
+.account-pool-rotation {
+    display: grid;
+    justify-items: start;
+    gap: 0.3rem;
+    min-width: 145px;
+    max-width: 195px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.account-pool-rotation small {
+    color: var(--text-muted);
+    font-weight: normal;
+}
+
+.account-pool-rotation-reason {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.5;
+}
+
+.account-pool-action {
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.account-pool-action:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+    border-radius: 6px;
+}
+
+body.admin-theme .account-pool-invite-button:disabled {
+    background: #e5e7eb !important;
+    color: #6b7280 !important;
+    cursor: not-allowed;
+}
+
+.account-pool-action-tooltip {
+    position: fixed;
+    z-index: 10000;
+    max-width: calc(100vw - 24px);
+    padding: 0.4rem 0.65rem;
+    border-radius: 6px;
+    background: #202938;
+    color: #fff;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    pointer-events: none;
+    overflow-wrap: anywhere;
+}
+
 .account-pool-team-picker-options {
     display: grid;
     gap: 0.6rem;
@@ -295,6 +472,18 @@
 }
 
 @media (max-width: 700px) {
+    .account-pool-page td[data-label="账号"] {
+        max-width: none;
+    }
+
+    .account-pool-page td[data-label="操作"] {
+        flex-wrap: wrap;
+    }
+
+    .account-pool-export-status {
+        width: 100%;
+    }
+
     .account-pool-page-header {
         grid-template-columns: 1fr;
         align-items: stretch;
@@ -310,7 +499,8 @@
         min-width: 0;
     }
 
-    .account-pool-history-item {
+    .account-pool-history-item,
+    .account-pool-detail-grid {
         grid-template-columns: 1fr;
     }
 

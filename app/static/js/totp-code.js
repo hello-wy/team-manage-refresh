@@ -20,6 +20,14 @@
     }
 
     class TotpCode extends HTMLElement {
+        static get observedAttributes() {
+            return ['display-only'];
+        }
+
+        attributeChangedCallback(name, oldValue, newValue) {
+            if (oldValue !== newValue) this._render();
+        }
+
         constructor() {
             super();
             this._secret = '';
@@ -103,7 +111,7 @@
             if (!email) return;
             this._setState('loading', '读取中');
             try {
-                const credentials = await window.accountPoolCredentialStore.load(email);
+                const credentials = await window.accountPoolCredentialStore.load(email, {fresh: true});
                 if (this.isConnected) this.setSecret(credentials.two_factor_secret);
             } catch (error) {
                 if (this.isConnected) this._setState('error', error.message || '读取失败');
@@ -126,22 +134,30 @@
         }
 
         _render() {
+            const displayOnly = this.hasAttribute('display-only');
+            const state = this.dataset.state || 'idle';
+            const message = this._digits?.textContent || '等待读取';
+            const valueTag = displayOnly ? 'span' : 'button';
             this.classList.add('totp-code');
             this.innerHTML = `
                 <div class="totp-code-frame">
-                    <button type="button" class="totp-code-value" title="复制当前验证码">
+                    <${valueTag} ${displayOnly ? '' : 'type="button" title="复制当前验证码"'} class="totp-code-value">
                         <span class="totp-code-digits">等待读取</span>
                         <span class="totp-code-seconds" aria-hidden="true">30s</span>
-                    </button>
+                    </${valueTag}>
+                    ${displayOnly ? '' : `
                     <button type="button" class="totp-code-copy" title="复制当前验证码" aria-label="复制当前 2FA 验证码">
                         <i data-lucide="copy" aria-hidden="true"></i>
-                    </button>
+                    </button>`}
                 </div>`;
             this._digits = this.querySelector('.totp-code-digits');
             this._seconds = this.querySelector('.totp-code-seconds');
             this._copyButton = this.querySelector('.totp-code-copy');
-            this.querySelector('.totp-code-value').addEventListener('click', () => this.copy());
-            this._copyButton.addEventListener('click', () => this.copy());
+            if (!displayOnly) {
+                this.querySelector('.totp-code-value').addEventListener('click', () => this.copy());
+                this._copyButton.addEventListener('click', () => this.copy());
+            }
+            this._setState(state, message);
         }
 
         _clearValue() {
@@ -154,7 +170,7 @@
         _setState(state, message) {
             this.dataset.state = state;
             this._digits.textContent = message;
-            this._copyButton.disabled = state !== 'ready';
+            if (this._copyButton) this._copyButton.disabled = state !== 'ready';
         }
 
         _setCopied() {

@@ -2,7 +2,8 @@
 数据库模型定义
 定义所有数据库表的 SQLAlchemy 模型
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index, and_, or_, case
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -41,6 +42,31 @@ class Team(Base):
     last_sync = Column(DateTime, comment="最后同步时间")
     created_at = Column(DateTime, default=get_now, comment="创建时间")
     pool_type = Column(String(20), default="normal", comment="池类型: normal/welfare")
+
+    @hybrid_property
+    def effective_status(self):
+        """容量已满时修正旧的 active 状态，保留封禁、过期及异常等状态。"""
+        local_full = (
+            self.current_members is not None and self.max_members is not None
+            and self.current_members >= self.max_members
+        )
+        upstream_full = (
+            self.joined_members is not None and self.total_seats is not None
+            and self.joined_members >= 0 and self.total_seats >= 0
+            and self.joined_members >= self.total_seats
+        )
+        return "full" if self.status == "active" and (local_full or upstream_full) else self.status
+
+    @effective_status.expression
+    def effective_status(cls):
+        return case(
+            (and_(cls.status == "active", or_(
+                cls.current_members >= cls.max_members,
+                and_(cls.joined_members >= 0, cls.total_seats >= 0,
+                     cls.joined_members >= cls.total_seats),
+            )), "full"),
+            else_=cls.status,
+        )
 
     # 关系
     team_accounts = relationship("TeamAccount", back_populates="team", cascade="all, delete-orphan")

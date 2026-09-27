@@ -122,3 +122,14 @@
 .totp-code[wide] .totp-code-digits {
     font-size: 1rem;
 }
+
+.totp-code[display-only] .totp-code-frame {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.totp-code[display-only] .totp-code-value {
+    min-height: 36px;
+    background: var(--bg-surface);
+    border-radius: calc(var(--radius-md) - 3px);
+    user-select: all;
+}

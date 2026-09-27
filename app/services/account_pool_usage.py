@@ -34,9 +34,20 @@ class AccountPoolUsageService:
                      workspace: AccountPoolWorkspace | None = None) -> tuple[str, str] | None:
         if not entry:
             return None
-        encrypted = workspace.export_json_encrypted if workspace else entry.export_json_encrypted
-        if team_space_id and not workspace and entry.workspace_id != team_space_id:
-            return None
+        sources = []
+        if workspace and workspace.workspace_id == team_space_id:
+            sources.append(workspace.export_json_encrypted)
+        # A discovered workspace may not have JSON yet; the account's matching
+        # JSON remains usable. Always validate the account ID inside the payload.
+        sources.append(entry.export_json_encrypted)
+        for encrypted in sources:
+            token = AccountPoolUsageService._json_token(encrypted, team_space_id)
+            if token:
+                return token
+        return None
+
+    @staticmethod
+    def _json_token(encrypted, team_space_id):
         if not encrypted:
             return None
         try:
@@ -87,7 +98,10 @@ class AccountPoolUsageService:
             return None
         if not team.access_token_encrypted:
             return None
-        token = encryption_service.decrypt_token(team.access_token_encrypted)
+        try:
+            token = encryption_service.decrypt_token(team.access_token_encrypted)
+        except (ValueError, TypeError, InvalidToken):
+            return None
         return (token, team_space_id) if token else None
 
     @staticmethod
@@ -124,34 +138,9 @@ class AccountPoolUsageService:
             return {"status": "error", "error": type(exc).__name__}
 
     async def check_email(self, db: AsyncSession, email: str, team_space_id: str = "") -> dict[str, Any]:
-        normalized_email = str(email or "").strip().lower()
-        result = await db.execute(
-            select(AccountPoolEntry).where(
-                AccountPoolEntry.email == normalized_email,
-                AccountPoolEntry.deleted_at.is_(None),
-            )
-        )
-        entry = result.scalar_one_or_none()
-        workspace = None
-        if entry and team_space_id:
-            workspace = (await db.execute(select(AccountPoolWorkspace).where(
-                AccountPoolWorkspace.account_pool_id == entry.id,
-                AccountPoolWorkspace.workspace_id == team_space_id,
-            ))).scalar_one_or_none()
-        token = self._entry_token(entry, team_space_id, workspace)
-        if not token and team_space_id:
-            record = (await db.execute(select(MemberAuthorization).where(
-                MemberAuthorization.email == normalized_email,
-                MemberAuthorization.account_id == team_space_id,
-            ))).scalar_one_or_none()
-            token = self._authorization_token(record, team_space_id)
-        if not token and team_space_id:
-            team = (await db.execute(select(Team).where(
-                Team.email == normalized_email,
-                Team.account_id == team_space_id,
-            ))).scalars().first()
-            token = self._team_token(team, normalized_email, team_space_id)
-        return await self._check_token(token, await self._proxies(db))
+        key = (str(email or "").strip().lower(), str(team_space_id or "").strip())
+        results = await self.check_many(db, [key])
+        return results.get(key, {"status": "unavailable", "error": "缺少账号邮箱"})
 
     @staticmethod
     def _normalize_accounts(accounts: list[str | tuple[str, str]]) -> list[tuple[Any, str, str]]:
@@ -207,6 +196,23 @@ class AccountPoolUsageService:
             auth_by_key = {(record.email, record.account_id): record for record in records}
             token_data = [
                 (key, token or self._authorization_token(auth_by_key.get((email, space)), space))
+                for (key, email, space), (_, token) in zip(normalized, token_data)
+            ]
+        missing = [(email, space) for (_, email, space), (_, token)
+                   in zip(normalized, token_data) if space and not token]
+        if missing:
+            teams = (await db.execute(select(Team).where(
+                Team.email.in_({email for email, _ in missing}),
+                Team.account_id.in_({space for _, space in missing}),
+            ).order_by(Team.id))).scalars().all()
+            owner_tokens = {}
+            for team in teams:
+                key = (team.email.strip().lower(), team.account_id)
+                token = self._team_token(team, *key)
+                if token:
+                    owner_tokens.setdefault(key, token)
+            token_data = [
+                (key, token or owner_tokens.get((email, space)))
                 for (key, email, space), (_, token) in zip(normalized, token_data)
             ]
         return token_data

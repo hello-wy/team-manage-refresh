@@ -56,11 +56,13 @@ class AccountPoolService:
         *,
         emails: Optional[list[str]] = None,
         content: str = "",
+        preserve_existing_credentials: bool = False,
     ) -> dict[str, Any]:
         return await self._credential_service.add_accounts(
             db_session,
             emails=emails,
             content=content,
+            preserve_existing_credentials=preserve_existing_credentials,
         )
 
     async def find_replacement_candidate(

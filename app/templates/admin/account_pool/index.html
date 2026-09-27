@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260925-1">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-rotation-status">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -25,6 +25,11 @@
             <div class="form-group">
                 <label for="accountPoolEmails">账号列表</label>
                 <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET\nbob@example.com"></textarea>
+                <label class="account-pool-auto-rotate" for="accountPoolAutoRotate">
+                    <input id="accountPoolAutoRotate" type="checkbox" checked aria-describedby="accountPoolAutoRotateHint">
+                    <span>加入后立即更换 2FA</span>
+                </label>
+                <small id="accountPoolAutoRotateHint" class="account-pool-hint">新增或恢复且凭据齐全的账号会立即更换，成功后旧密钥失效、新密钥自动保存。已有账号跳过；如需更新已有凭据，请取消勾选。</small>
             </div>
         </form>
         <div class="page-header-actions account-pool-page-actions">
@@ -96,138 +101,88 @@
                 <thead>
                     <tr>
                         <th class="account-pool-select-cell"><input type="checkbox" id="accountPoolSelectPage" aria-label="选择本页全部账号"></th>
-                        <th>邮箱</th>
-                        <th>密码</th>
-                        <th>2FA</th>
-                        <th>席位类型</th>
-                        <th>当前状态</th>
+                        <th>账号</th>
+                        <th>Team / 席位</th>
                         <th>验活状态</th>
-                        <th>当前 Team</th>
-                        <th>最近加入时间</th>
                         <th>额度</th>
-                        <th>高级使用</th>
-                        <th>额度刷新</th>
-                        <th>加入历史</th>
+                        <th title="按当前队列与最近一次额度、席位检查结果预估，实际轮转前会重新确认">轮转状态</th>
                         <th style="text-align: right;">操作</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for entry in entries %}
-                    <tr data-account-pool-row="{{ entry.id }}">
+                    {% set usage = entry.usage or {} %}
+                    {% set team_usage = entry.team_usage or {} %}
+                    {% if entry.workspace_is_personal %}
+                    {% set current_team_label = '个人账户' %}
+                    {% elif entry.workspace_id and entry.workspace_in_pool %}
+                    {% set current_team_label = entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) %}
+                    {% elif entry.workspace_id %}
+                    {% set current_team_label = entry.workspace_name or entry.workspace_id %}
+                    {% elif entry.workspace_status == 'no_workspace' %}
+                    {% set current_team_label = '未加入 Team' %}
+                    {% elif entry.workspace_status == 'workspace_error' %}
+                    {% set current_team_label = '获取失败' %}
+                    {% else %}{% set current_team_label = '-' %}{% endif %}
+                    {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
+                    <tr data-account-pool-row="{{ entry.id }}" data-email="{{ entry.email }}">
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}"></td>
-                        <td data-label="邮箱"><strong>{{ entry.email }}</strong></td>
-                        <td data-label="密码">
-                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" title="复制登录密码" aria-label="复制登录密码" onclick='copyAccountPoolCredential({{ entry.email|tojson }}, "password", "登录密码")'>
-                                <i data-lucide="copy" aria-hidden="true"></i>
-                            </button>
+                        <td data-label="账号">
+                            <strong>{{ entry.email }}</strong>
                         </td>
-                        <td data-label="2FA">
-                            <totp-code data-email="{{ entry.email }}"></totp-code>
-                        </td>
-                        <td data-label="席位类型">
-                            <span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% elif entry.seat_type == 'standard' %}status-active{% else %}status-banned{% endif %}">
-                                {% if entry.seat_type == 'premium' %}高级{% elif entry.seat_type == 'standard' %}标准{% else %}待加入后同步{% endif %}
-                            </span>
-                        </td>
-                        <td data-label="当前状态">
-                            <span class="account-pool-status status-badge {% if entry.status == 'joined' %}status-active{% elif entry.status == 'invited' %}status-pending{% elif entry.status == 'conflict' %}status-error{% else %}status-banned{% endif %}">
-                                {% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}
-                            </span>
+                        <td data-label="Team / 席位">
+                            <div class="account-pool-team-cell">
+                                <div class="account-pool-team">
+                                    <strong class="account-pool-team-name">{{ current_team_label }}</strong>
+                                </div>
+                            </div>
+                            <div class="account-pool-team-badges">
+                                <span class="account-pool-status status-badge {% if entry.status == 'joined' %}status-active{% elif entry.status == 'invited' %}status-pending{% elif entry.status == 'conflict' %}status-error{% else %}status-banned{% endif %}">{% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}</span>
+                                {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>{% endif %}
+                                {% if entry.team_usage %}<span class="account-pool-premium-note">{{ '高级已用' if team_usage.premium_used is sameas true else ('高级未用' if team_usage.premium_used is sameas false else '高级待确认') }}</span>{% endif %}
+                            </div>
                         </td>
                         <td data-label="验活状态">
                             <div class="account-pool-liveness">
-                                <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status == 'invalid' %}status-error{% elif entry.liveness_status == 'error' %}status-pending{% else %}status-banned{% endif %}">
-                                    {% if entry.liveness_status == 'alive' %}正常{% elif entry.liveness_status == 'invalid' %}凭据无效{% elif entry.liveness_status == 'error' %}检测异常{% elif entry.liveness_status == 'missing' %}缺少密码{% else %}未检测{% endif %}
-                                </span>
-                                {% if entry.liveness_checked_at %}<small>{{ entry.liveness_checked_at|format_datetime }}</small>{% endif %}
-                                {% if entry.liveness_message and entry.liveness_status != 'alive' %}<small title="{{ entry.liveness_message }}">{{ entry.liveness_message }}</small>{% endif %}
+                                <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status == 'invalid' %}status-error{% elif entry.liveness_status == 'error' %}status-pending{% else %}status-banned{% endif %}">{% if entry.liveness_status == 'alive' %}正常{% elif entry.liveness_status == 'invalid' %}凭据无效{% elif entry.liveness_status == 'error' %}检测异常{% elif entry.liveness_status == 'missing' %}缺少密码{% else %}未检测{% endif %}</span>
                             </div>
                         </td>
-                        <td data-label="当前 Team">
-                            <div class="account-pool-team-cell">
-                                <div class="account-pool-team">
-                                    {% if entry.workspace_is_personal %}
-                                    {% set current_team_label = '个人账户' %}
-                                    {% elif entry.workspace_id and entry.workspace_in_pool %}
-                                    {% set current_team_label = entry.workspace_team_name or ('Team #' ~ entry.workspace_team_id) %}
-                                    {% elif entry.workspace_id %}
-                                    {% set current_team_label = entry.workspace_name or entry.workspace_id %}
-                                    {% elif entry.workspace_status == 'no_workspace' %}
-                                    {% set current_team_label = '未加入 Team' %}
-                                    {% elif entry.workspace_status == 'workspace_error' %}
-                                    {% set current_team_label = '获取失败' %}
-                                    {% else %}{% set current_team_label = '-' %}{% endif %}
-                                    {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
+                        {% set quota_unavailable = {'unavailable': '待授权', 'invalid': '登录已失效', 'unknown': '未获取', 'error': '读取失败'}.get(usage.get('status'), '暂无额度') %}
+                        <td data-label="额度">{{ quota_cell(usage.get('5h'), usage.get('1week'), team_usage.short_reset_at, team_usage.weekly_reset_at, quota_unavailable) }}</td>
+                        {% set rotation = entry.rotation or {} %}
+                        <td data-label="轮转状态">
+                            <div class="account-pool-rotation" title="{{ rotation.reason or '等待轮转扫描' }}">
+                                <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
+                                {% if rotation.team_id %}<strong>{{ rotation.team_name }} <small>#{{ rotation.team_id }}</small></strong>{% endif %}
+                                <small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>
+                            </div>
+                        </td>
+                        <td data-label="操作">
+                            <template id="accountPoolDetails-{{ entry.id }}">
+                                <dl class="account-pool-detail-grid">
+                                    <div><dt>当前 2FA 验证码</dt><dd><totp-code data-email="{{ entry.email }}" display-only></totp-code></dd></div>
+                                    <div><dt>最近加入时间</dt><dd>{{ entry.joined_at|format_datetime }}</dd></div>
+                                    <div><dt>验活检查时间</dt><dd>{{ entry.liveness_checked_at|format_datetime }}</dd></div>
+                                    <div><dt>验活详情</dt><dd>{{ entry.liveness_message or '暂无详情' }}</dd></div>
+                                    <div><dt>额度检查时间</dt><dd>{{ team_usage.quota_checked_at|default(none)|format_datetime }}</dd></div>
+                                    <div><dt>额度读取结果</dt><dd>{{ usage.get('error') or ('读取成功' if usage.get('status') == 'ok' else '尚未获取额度') }}</dd></div>
+                                    <div><dt>轮转状态</dt><dd>{{ rotation.label or '待分配' }}{% if rotation.team_id %} · {{ rotation.team_name }} #{{ rotation.team_id }}{% endif %} · {{ rotation.reason or '等待轮转扫描' }}</dd></div>
+                                    <div><dt>首次高级使用</dt><dd>{{ team_usage.premium_used_at|default(none)|format_datetime }}</dd></div>
+                                    <div><dt>席位切换</dt><dd>{{ team_usage.seat_switch_count or 0 }} 次 · 最近 {{ team_usage.seat_switched_at|default(none)|format_datetime }}</dd></div>
+                                </dl>
+                                <div class="account-pool-detail-workspace"><span>切换 Team</span>
                                     {% if selectable_teams %}
-                                    <select class="account-pool-workspace-selector" data-entry-id="{{ entry.id }}" data-selected-id="{{ entry.workspace_id or '' }}" aria-label="选择 {{ entry.email }} 的 Team" title="选择 {{ entry.email }} 的 Team">
+                                    <select class="form-control account-pool-workspace-selector" data-entry-id="{{ entry.id }}" data-selected-id="{{ entry.workspace_id or '' }}" aria-label="选择 {{ entry.email }} 的 Team" title="选择 {{ entry.email }} 的 Team">
                                         {% for workspace in selectable_teams %}
                                         <option value="{{ workspace.id }}" {% if workspace.id == entry.workspace_id %}selected{% endif %}>{{ workspace.name }}</option>
                                         {% endfor %}
                                     </select>
                                     {% else %}<span class="account-pool-team-name">{{ current_team_label }}</span>{% endif %}
-                                    {% if entry.export_job_id %}
-                                    <small class="account-pool-export-status" data-job-id="{{ entry.export_job_id }}" data-status="{{ entry.export_job_status }}">
-                                        {% if entry.export_job_status == 'completed' %}Sub2API 导出完成
-                                        {% elif entry.export_job_status == 'failed' %}Sub2API 导出失败：{{ entry.export_job_error }}
-                                        {% else %}Sub2API 导出中{% endif %}
-                                    </small>
-                                    {% endif %}
                                 </div>
+                                <div class="account-pool-detail-actions">
                                 <button
                                     type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
-                                    title="刷新已加入的 Team"
-                                    aria-label="刷新已加入的 Team"
-                                    data-entry-id="{{ entry.id }}"
-                                    data-email="{{ entry.email }}"
-                                >
-                                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
-                                </button>
-                            </div>
-                        </td>
-                        <td data-label="最近加入时间">{{ entry.joined_at|format_datetime }}</td>
-                        {% set usage = entry.usage or {} %}
-                        <td data-label="额度">{{ quota_cell(usage.get('5h'), usage.get('1week')) }}</td>
-                        {% set team_usage = entry.team_usage or {} %}
-                        <td data-label="高级使用">
-                            {% if entry.team_usage %}
-                            <span class="status-badge {% if team_usage.premium_used is sameas true %}status-active{% elif team_usage.premium_used is sameas false %}status-pending{% else %}status-banned{% endif %}">
-                                {{ '已使用' if team_usage.premium_used is sameas true else ('未使用' if team_usage.premium_used is sameas false else '待确认') }}
-                            </span>
-                            {% if team_usage.premium_used_at %}<small>首次：{{ team_usage.premium_used_at|format_datetime }}</small>{% endif %}
-                            {% if team_usage.seat_switch_count %}<small>切换：{{ team_usage.seat_switch_count }} 次{% if team_usage.seat_switched_at %}，最近 {{ team_usage.seat_switched_at|format_datetime }}{% endif %}</small>{% endif %}
-                            {% else %}-{% endif %}
-                        </td>
-                        <td data-label="额度刷新">
-                            {% if team_usage.quota_checked_at %}<small>检查：{{ team_usage.quota_checked_at|format_datetime }}</small>{% endif %}
-                            {% if team_usage.weekly_reset_at %}<small>7d：<time class="quota-reset-time" data-reset-at="{{ team_usage.weekly_reset_at }}">{{ team_usage.weekly_reset_at }}</time></small>{% endif %}
-                            {% if team_usage.short_reset_at %}<small>5h：<time class="quota-reset-time" data-reset-at="{{ team_usage.short_reset_at }}">{{ team_usage.short_reset_at }}</time></small>{% endif %}
-                            {% if not team_usage %}-{% endif %}
-                        </td>
-                        <td data-label="加入历史">
-                            <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
-                                <i data-lucide="history" style="width: 14px; height: 14px;"></i>
-                                查看 {{ entry.history_count }} 次
-                            </button>
-                        </td>
-                        <td data-label="操作">
-                            <div class="account-pool-row-actions">
-                                {% if entry.status == 'unassigned' %}
-                                <button
-                                    type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-invite-button"
-                                    title="加入 Team"
-                                    aria-label="加入 Team"
-                                    data-entry-id="{{ entry.id }}"
-                                    data-email="{{ entry.email }}"
-                                    data-seat-type="{{ 'premium' if entry.seat_type == 'premium' else 'default' }}"
-                                >
-                                    <i data-lucide="user-plus" aria-hidden="true"></i>
-                                </button>
-                                {% endif %}
-                                <button
-                                    type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-json-export-button"
+                                    class="btn btn-sm btn-secondary account-pool-json-export-button"
                                     title="重新登录并导出 JSON"
                                     aria-label="重新登录并导出 JSON"
                                     data-entry-id="{{ entry.id }}"
@@ -235,11 +190,52 @@
                                     data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
                                 >
                                     <i data-lucide="download" aria-hidden="true"></i>
+                                导出 JSON</button>
+                                <button type="button" class="btn btn-sm btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
+                                    <i data-lucide="pencil" aria-hidden="true"></i>
+                                编辑密码 / 2FA</button>
+                                <button type="button" class="btn btn-sm btn-secondary account-pool-rotate-2fa-button" title="更换 2FA 密钥" aria-label="更换 2FA 密钥" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
+                                    <i data-lucide="key-round" aria-hidden="true"></i>
+                                更换 2FA</button>
+                                <button type="button" class="btn btn-sm btn-danger account-pool-delete-button" title="永久删除账号" aria-label="永久删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
+                                    <i data-lucide="trash-2" aria-hidden="true"></i>
+                                永久删除账号</button>
+                                </div>
+                                {% if entry.export_job_error %}<p class="account-pool-detail-error">Sub2API 导出失败：{{ entry.export_job_error }}</p>{% endif %}
+                                <h4>加入记录 · {{ entry.history_count }} 次</h4>
+                            </template>
+                            <div class="account-pool-row-actions">
+                                <span class="account-pool-action" data-pool-tooltip="复制邮箱----密码----2FA 密钥">
+                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" onclick='copyAccountPoolCredential({{ entry.email|tojson }})' aria-label="复制 {{ entry.email }} 的邮箱、密码和 2FA 密钥"><i data-lucide="copy" aria-hidden="true"></i></button>
+                                </span>
+                                <span class="account-pool-action" data-pool-tooltip="刷新已加入的 Team">
+                                    <button
+                                    type="button"
+                                    class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
+                                    aria-label="刷新已加入的 Team"
+                                    data-entry-id="{{ entry.id }}"
+                                    data-email="{{ entry.email }}"
+                                >
+                                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
                                 </button>
-                                <button
+                                </span>
+                                <span class="account-pool-action" data-pool-tooltip="{% if entry.status == 'unassigned' %}加入 Team{% elif entry.status == 'joined' %}已加入 Team，无需重复加入{% elif entry.status == 'invited' %}等待接受邀请，暂不可再次加入{% else %}当前状态不可加入 Team{% endif %}"{% if entry.status != 'unassigned' %} tabindex="0"{% endif %}>
+                                    <button
+                                    type="button"
+                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-invite-button"
+                                    aria-label="加入 Team"
+                                    data-entry-id="{{ entry.id }}"
+                                    data-email="{{ entry.email }}"
+                                    data-seat-type="{{ 'premium' if entry.seat_type == 'premium' else 'default' }}"
+                                    {% if entry.status != 'unassigned' %}disabled{% endif %}
+                                >
+                                    <i data-lucide="user-plus" aria-hidden="true"></i>
+                                </button>
+                                </span>
+                                <span class="account-pool-action" data-pool-tooltip="重新登录并导出到 Sub2API">
+                                    <button
                                     type="button"
                                     class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
-                                    title="重新登录并导出到 Sub2API"
                                     aria-label="重新登录并导出到 Sub2API"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
@@ -252,16 +248,16 @@
                                         aria-hidden="true"
                                     >
                                 </button>
-                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-edit-button" title="编辑密码和 2FA" aria-label="编辑密码和 2FA" onclick='openAccountPoolCredentialEditor({{ entry.id }}, {{ entry.email|tojson }})'>
-                                    <i data-lucide="pencil" aria-hidden="true"></i>
-                                </button>
-                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-rotate-2fa-button" title="更换 2FA 密钥" aria-label="更换 2FA 密钥" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}">
-                                    <i data-lucide="key-round" aria-hidden="true"></i>
-                                </button>
-                                <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger account-pool-delete-button" title="永久删除账号" aria-label="永久删除账号" onclick='deleteAccountPoolEntry({{ entry.id }}, {{ entry.email|tojson }})'>
-                                    <i data-lucide="trash-2" aria-hidden="true"></i>
-                                </button>
+                                </span>
+                                <span class="account-pool-action" data-pool-tooltip="更多操作与账号详情">
+                                    <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="{{ entry.email }} 的更多操作">更多</button>
+                                </span>
                             </div>
+                            {% if entry.export_job_id %}
+                            <small class="account-pool-export-status" data-job-id="{{ entry.export_job_id }}" data-status="{{ entry.export_job_status }}" role="status">
+                                {% if entry.export_job_status == 'completed' %}Sub2API 导出完成{% elif entry.export_job_status == 'failed' %}导出失败 · 原因见“更多”{% else %}Sub2API 导出中{% endif %}
+                            </small>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -366,14 +362,15 @@
     </div>
 </div>
 
-<div id="accountPoolHistoryModal" class="modal-overlay">
+<div id="accountPoolHistoryModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="accountPoolDetailsTitle">
     <div class="modal modal-large">
         <div class="modal-header">
-            <h3><i data-lucide="history" style="width: 18px; height: 18px;"></i> 加入历史</h3>
-            <button class="modal-close" type="button" onclick="hideModal('accountPoolHistoryModal')">&times;</button>
+            <h3 id="accountPoolDetailsTitle"><i data-lucide="history" style="width: 18px; height: 18px;"></i> 账号详情</h3>
+            <button class="modal-close" type="button" aria-label="关闭账号详情" onclick="closeAccountPoolDetails()">&times;</button>
         </div>
         <div class="modal-body">
             <p id="accountPoolHistoryEmail" class="text-muted"></p>
+            <div id="accountPoolDetailsContent"></div>
             <div id="accountPoolHistoryContent" class="account-pool-history-list">加载中...</div>
         </div>
     </div>
@@ -395,8 +392,8 @@
 
 {% block extra_js %}
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/account-pool.js?v=20260925-quota"></script>
-<script src="/static/js/account-pool-workspace.js?v=20260924-team-list"></script>
+<script src="/static/js/account-pool.js?v=20260927-rotation-status"></script>
+<script src="/static/js/account-pool-workspace.js?v=20260927-auto-rotate"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260924-1"></script>
-<script src="/static/js/account-pool-batch.js?v=20260924-1"></script>
+<script src="/static/js/account-pool-batch.js?v=20260927-auto-rotate"></script>
 {% endblock %}

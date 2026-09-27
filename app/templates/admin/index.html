@@ -978,7 +978,7 @@
                     {% endif %}
                 </td>
                 <td data-label="状态">
-                    <span class="status-badge status-{{ team.status }}">
+                    <span id="team-status-{{ team.id }}" class="status-badge status-{{ team.status }}">
                         {% if team.status == 'active' %}
                         可用
                         {% elif team.status == 'full' %}

@@ -44,6 +44,7 @@ class Sub2apiConfig:
 class Sub2apiExportSettings:
     concurrency: int
     codex_fingerprint_mode: str
+    excel_bps_enabled: bool = False
 
 
 def normalize_base_url(value: str) -> str:
@@ -83,7 +84,8 @@ async def get_export_settings(db) -> Sub2apiExportSettings:
     )
     if mode not in VALID_CODEX_FINGERPRINT_MODES:
         raise Sub2apiError("Codex 指纹收敛配置无效，请在系统中心重新保存")
-    return Sub2apiExportSettings(concurrency, mode)
+    excel_bps = await settings_service.get_setting(db, "sub2api_excel_bps_enabled", "false")
+    return Sub2apiExportSettings(concurrency, mode, excel_bps == "true")
 
 
 async def apply_export_settings(payload, db):
@@ -102,6 +104,10 @@ async def apply_export_settings(payload, db):
             extra.pop("codex_fingerprint_mode", None)
         else:
             extra["codex_fingerprint_mode"] = settings.codex_fingerprint_mode
+        if settings.excel_bps_enabled:
+            extra["openai_excel_bps"] = True
+        else:
+            extra.pop("openai_excel_bps", None)
         if extra:
             account["extra"] = extra
         else:

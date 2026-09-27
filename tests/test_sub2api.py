@@ -10,7 +10,7 @@ from app.dependencies.auth import require_admin
 from app.main import app
 from app.routes import admin
 from app.services.encryption import encryption_service
-from app.services.sub2api import Sub2apiError, Sub2apiService, normalize_base_url
+from app.services.sub2api import Sub2apiError, Sub2apiService, apply_export_settings, normalize_base_url
 
 
 class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -33,7 +33,7 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
                                  "credentials": {"refresh_token": "secret"}}]}
         with patch("app.services.sub2api.settings_service.get_setting", new=AsyncMock(
                 side_effect=["https://solidapi.top", encryption_service.encrypt_token("admin-secret"),
-                             "all", "10", "off"])):
+                             "all", "10", "off", "false"])):
             result = await service.import_member(payload, object())
         self.assertEqual(result, {"account_id": 42, "group_count": 2})
         self.assertEqual(requests[1].url.path, "/api/v1/admin/accounts")
@@ -59,7 +59,7 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
 
         service = Sub2apiService(lambda **kwargs: httpx.AsyncClient(
             transport=httpx.MockTransport(handler), **kwargs))
-        settings = ["https://solidapi.top", encryption_service.encrypt_token("key"), "selected", "[2]", "7", "session"]
+        settings = ["https://solidapi.top", encryption_service.encrypt_token("key"), "selected", "[2]", "7", "session", "true"]
         with patch("app.services.sub2api.settings_service.get_setting", new=AsyncMock(side_effect=settings)):
             result = await service.import_member({"accounts": [{"name": "member"}]}, object())
         self.assertEqual(result["group_count"], 1)
@@ -67,6 +67,24 @@ class Sub2apiServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["group_ids"], [2])
         self.assertEqual(sent["concurrency"], 7)
         self.assertEqual(sent["extra"]["codex_fingerprint_mode"], "session")
+        self.assertIs(sent["extra"]["openai_excel_bps"], True)
+
+    async def test_export_switch_overrides_saved_bps_without_mutating_credentials_or_input(self):
+        payload = {"accounts": [{"type": "oauth", "credentials": {"access_token": "test-token"},
+                                 "extra": {"openai_excel_bps": True, "other_option": "keep"}},
+                                {"type": "oauth", "credentials": {"access_token": "second-token"}}]}
+        original = json.dumps(payload)
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), patch(
+                "app.services.sub2api.settings_service.get_setting",
+                new=AsyncMock(side_effect=["10", "off", "true" if enabled else "false"]),
+            ):
+                result = await apply_export_settings(payload, object())
+                for account in result["accounts"]:
+                    self.assertEqual(account.get("extra", {}).get("openai_excel_bps", False), enabled)
+                self.assertEqual(result["accounts"][0]["extra"]["other_option"], "keep")
+                self.assertEqual(result["accounts"][0]["credentials"], payload["accounts"][0]["credentials"])
+                self.assertEqual(json.dumps(payload), original)
 
     async def test_missing_selected_group_blocks_creation(self):
         requests = []
@@ -205,8 +223,23 @@ class Sub2apiRouteTests(unittest.TestCase):
         self.assertEqual(json.loads(values["sub2api_group_ids"]), [2, 3])
         self.assertEqual(values["sub2api_default_concurrency"], "10")
         self.assertEqual(values["sub2api_codex_fingerprint_mode"], "off")
+        self.assertEqual(values["sub2api_excel_bps_enabled"], "false")
         self.assertEqual(encryption_service.decrypt_token(values["sub2api_api_key_encrypted"]), "top-secret")
         self.assertNotIn("top-secret", response.text)
+
+    def test_settings_save_and_return_excel_bps_boolean(self):
+        app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled), patch.object(
+                admin.settings_service, "get_setting", new=AsyncMock(return_value="encrypted")
+            ), patch.object(admin.settings_service, "update_settings", new=AsyncMock(return_value=True)) as save:
+                response = self.client.post("/admin/settings/sub2api", json={
+                    "base_url": "https://solidapi.top", "excel_bps_enabled": enabled,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertIs(response.json()["excel_bps_enabled"], enabled)
+                self.assertEqual(save.await_args.args[1]["sub2api_excel_bps_enabled"],
+                                 "true" if enabled else "false")
 
     def test_selected_mode_requires_group(self):
         app.dependency_overrides[require_admin] = lambda: {"username": "admin"}
