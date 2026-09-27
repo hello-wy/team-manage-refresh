@@ -3377,23 +3377,33 @@ class TeamService:
         email: Optional[str],
         db_session: AsyncSession,
     ) -> Optional[bool]:
-        snapshot = await self.chatgpt_service.get_members(
-            access_token,
-            team.account_id,
-            db_session,
-            identifier=team.email,
-        )
-        if not snapshot.get("success"):
-            return None
+        # 删除已成功时，上游成员快照仍可能短暂包含旧成员。
+        # 只重读快照，不重复删除；仍无法确认则保留失败状态，不能提前释放席位。
         normalized_email = self._normalize_member_email(email)
-        return not any(
-            member.get("id") == user_id
-            or (
-                normalized_email
-                and self._normalize_member_email(member.get("email")) == normalized_email
+        absent = None
+        for delay in (0, 2, 4, 8, 16):
+            if delay:
+                await asyncio.sleep(delay)
+            snapshot = await self.chatgpt_service.get_members(
+                access_token,
+                team.account_id,
+                db_session,
+                identifier=team.email,
             )
-            for member in snapshot.get("members", [])
-        )
+            if not snapshot.get("success"):
+                absent = None
+                continue
+            absent = not any(
+                member.get("id") == user_id
+                or (
+                    normalized_email
+                    and self._normalize_member_email(member.get("email")) == normalized_email
+                )
+                for member in snapshot.get("members", [])
+            )
+            if absent:
+                return True
+        return absent
 
     async def _delete_remote_member(
         self,

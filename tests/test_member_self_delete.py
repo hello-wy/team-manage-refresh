@@ -180,6 +180,53 @@ class TeamMemberDeleteTests(unittest.IsolatedAsyncioTestCase):
         )
         self.remote.get_members.assert_awaited_once()
 
+    async def test_owner_delete_waits_for_delayed_member_snapshot(self):
+        self.remote.get_members.side_effect = [
+            {"success": True, "members": [{"id": "member-user", "email": "member@example.com"}]},
+            {"success": True, "members": []},
+        ]
+        with patch("app.services.team.asyncio.sleep", new=AsyncMock()) as sleep:
+            result = await self.service._delete_team_member_locked(
+                1, "member-user", self.db, email="member@example.com"
+            )
+        self.assertTrue(result["success"])
+        self.remote.delete_member.assert_awaited_once()
+        self.assertEqual(self.remote.get_members.await_count, 2)
+        sleep.assert_awaited_once_with(2)
+        self.service.mark_team_email_mapping_removed.assert_awaited_once()
+
+    async def test_self_delete_waits_without_redundant_owner_delete(self):
+        await self._save_member_authorization()
+        self.remote.get_members.side_effect = [
+            {"success": False, "error": "temporary failure"},
+            {"success": True, "members": [{"id": "member-user", "email": "member@example.com"}]},
+            {"success": True, "members": []},
+        ]
+        with patch("app.services.team.asyncio.sleep", new=AsyncMock()):
+            result = await self.service._delete_team_member_locked(
+                1, "member-user", self.db, email="member@example.com"
+            )
+        self.assertTrue(result["success"])
+        self.remote.delete_workspace_user.assert_awaited_once()
+        self.remote.delete_member.assert_not_awaited()
+        self.assertEqual(self.remote.get_members.await_count, 3)
+
+    async def test_unconfirmed_delete_never_marks_member_removed(self):
+        for snapshot in (
+            {"success": True, "members": [{"id": "member-user", "email": "member@example.com"}]},
+            {"success": False, "error": "temporary failure"},
+        ):
+            with self.subTest(snapshot=snapshot):
+                self.remote.get_members.reset_mock()
+                self.remote.get_members.return_value = snapshot
+                with patch("app.services.team.asyncio.sleep", new=AsyncMock()):
+                    result = await self.service._delete_team_member_locked(
+                        1, "member-user", self.db, email="member@example.com"
+                    )
+                self.assertFalse(result["success"])
+                self.assertEqual(self.remote.get_members.await_count, 5)
+                self.service.mark_team_email_mapping_removed.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()
