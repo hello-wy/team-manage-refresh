@@ -288,18 +288,10 @@ async def build_pool_entry_data(
         if not row["quota_workspace_id"] and owned[row["email"]]:
             team = owned[row["email"]][0]
             row["quota_workspace_id"], row["quota_team_id"] = team.account_id, team.id
-        matched = workspace_teams.get(row["workspace_id"])
-        discovered_name = next((option["name"] for option in row["workspace_options"]
-                                if option["id"] == row["workspace_id"]), None)
-        if row["workspace_is_personal"]:
-            label = "个人账户"
-        elif matched:
-            label = team_display_name(matched, row["workspace_name"] or workspace_names.get(row["workspace_id"]) or discovered_name)
-        elif row["workspace_id"]:
-            label = row["workspace_name"] or workspace_names.get(row["workspace_id"]) or discovered_name or "Team 名称待同步"
-        else:
-            label = row["team_name"] or (" / ".join(t["name"] for t in row["owner_teams"]))
-        row["display_team_name"] = label or ("个人账户" if row["workspace_is_personal"] else
-            "未加入 Team" if row["workspace_status"] == "no_workspace" else
-            "获取失败" if row["workspace_status"] == "workspace_error" else "待同步 Team")
+        # 列表展示实际成员归属，历史导出空间仅用于导出选择。
+        joined_names = [option["name"] for option in row["team_options"] if option["status"] == "joined"]
+        if row["is_owner"]:
+            joined_names = [team["name"] for team in row["owner_teams"]]
+        row["display_team_name"] = " / ".join(dict.fromkeys(joined_names)) or "个人账户"
+
     return rows

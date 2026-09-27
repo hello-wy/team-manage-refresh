@@ -47,6 +47,23 @@ def _balance(snapshot, now):
     }}
 
 
+def _replacement_wait_reason(item, seat_label, balance, remaining, now):
+    if item.last_attempt_at and item.last_attempt_at >= now - MAX_SNAPSHOT_AGE and item.last_error_code:
+        reasons = {
+            "seat_limit_exceeded": f"等待{seat_label}席位空位",
+            "seat_balance_unavailable": "等待席位余额确认",
+            "seat_operation_pending": "等待上次席位操作确认",
+            "ghost_success": "邀请未在上游确认，等待重试",
+            "no_candidate": "等待后台重新确认补位账号",
+        }
+        return reasons.get(item.last_error_code, "上次邀请失败，等待后台重试"), True
+    if not balance["success"]:
+        return "等待席位余额确认", True
+    if remaining <= 0:
+        return f"等待{seat_label}席位空位", True
+    return "等待后台发出邀请", False
+
+
 def _member_view(mapping, team, snapshot, state, exported, now):
     if mapping.status == "invited":
         return _view("待接受邀请", "已邀请至此 Team，接受后继续授权导出", team)
@@ -120,7 +137,7 @@ async def attach_rotation_status(db, rows):
     in_flight = {action.email for action in actions if action.action_type == "invite"}
     queues = defaultdict(list)
     for item in (await db.execute(select(TeamReplacementQueue).order_by(TeamReplacementQueue.id))).scalars():
-        queues[item.team_id].append(item.seat_type)
+        queues[item.team_id].append(item)
 
     owners = {team.email.strip().lower() for team in teams.values()}
     available = [entry for entry in candidates if not by_email[entry.email] and entry.email not in owners]
@@ -164,7 +181,7 @@ async def attach_rotation_status(db, rows):
             if scheduled:
                 slots = [m.seat_type or "standard" for m in deadlines[team.id]]
             elif legacy:
-                slots = queues[team.id]
+                slots = [item.seat_type for item in queues[team.id]]
                 if not slots:
                     waiting.add("等待补位队列确认")
                     continue
@@ -191,7 +208,7 @@ async def attach_rotation_status(db, rows):
             remaining = {kind: balance["balance"][kind]["remaining"] if balance["success"] and not scheduled else None
                          for kind in ("standard", "premium")}
             for slot_index, seat_type in enumerate(slots):
-                if seat_type not in remaining or (remaining[seat_type] is not None and remaining[seat_type] <= 0):
+                if seat_type not in remaining or (not legacy and remaining[seat_type] is not None and remaining[seat_type] <= 0):
                     waiting.add("等待可用席位")
                     break
                 chosen = None
@@ -217,16 +234,21 @@ async def attach_rotation_status(db, rows):
                 if chosen is None:
                     break
                 reserved.add(chosen.email)
-                if remaining[seat_type] is not None:
+                seat_remaining = remaining[seat_type]
+                if seat_remaining is not None:
                     remaining[seat_type] -= 1
                 seat_label = "高级" if seat_type == "premium" else "标准"
+                waiting_reason, blocked = (
+                    _replacement_wait_reason(queues[team.id][slot_index], seat_label, balance, seat_remaining, now)
+                    if legacy and not scheduled else (None, False)
+                )
                 planned[chosen.email] = _view(
-                    "候选补位" if scheduled or not balance["success"] else (
+                    "候选补位" if scheduled or blocked or not balance["success"] else (
                         "仅预览" if team.rotation_mode == "dry_run" else "预计加入"),
                     f"{seat_label}席位 · {'定时补位' if legacy else '额度轮转'}，" + (
-                        "等待当前成员下线后释放席位" if scheduled else
-                        "执行前会重新确认" if balance["success"] else "等待席位余额确认"),
-                    team, kind="ready" if balance["success"] and not scheduled else "candidate",
+                        "等待当前成员下线后释放席位" if scheduled else waiting_reason or
+                        "执行前会重新确认"),
+                    team, kind="ready" if balance["success"] and not scheduled and not blocked else "candidate",
                 )
 
                 if legacy:
@@ -237,6 +259,9 @@ async def attach_rotation_status(db, rows):
                         view["replacement_at"] = pytz.timezone(settings.timezone).localize(deadline).isoformat()
                     else:
                         view["replacement_at"] = None
+                if blocked:
+                    # 队首未完成时不为后续任务分配候选，与实际 FIFO 执行一致。
+                    break
 
     for row in rows:
         email = row["email"]

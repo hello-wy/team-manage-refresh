@@ -638,7 +638,8 @@ function initAccountPoolRowActions() {
 
 function accountPoolCountdownLabel(value, now = Date.now()) {
     const deadline = Date.parse(value);
-    if (!Number.isFinite(deadline) || deadline <= now) return '等待执行';
+    if (!Number.isFinite(deadline)) return '下线时间待确认';
+    if (deadline <= now) return '下线时间已到，等待成员退出';
     const seconds = Math.ceil((deadline - now) / 1000);
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor(seconds % 3600 / 60);

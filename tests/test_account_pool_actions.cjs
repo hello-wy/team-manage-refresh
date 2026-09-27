@@ -63,8 +63,8 @@ test('scheduled replacement countdown reaches waiting state and respects timezon
     const {context} = runtime();
     const now = Date.parse('2030-01-01T00:00:00Z');
     assert.equal(context.accountPoolCountdownLabel('2030-01-01T09:02:03+08:00', now), '释放席位倒计时 01:02:03');
-    assert.equal(context.accountPoolCountdownLabel('2030-01-01T08:00:00+08:00', now), '等待执行');
-    assert.equal(context.accountPoolCountdownLabel('', now), '等待执行');
+    assert.equal(context.accountPoolCountdownLabel('2030-01-01T08:00:00+08:00', now), '下线时间已到，等待成员退出');
+    assert.equal(context.accountPoolCountdownLabel('', now), '下线时间待确认');
 });
 
 test('quota refresh updates only its cell and re-enables retry after an error', async () => {

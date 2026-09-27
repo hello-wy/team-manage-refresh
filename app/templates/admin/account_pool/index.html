@@ -119,7 +119,6 @@
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
                         <td data-label="账号">
                             <strong>{{ entry.email }}</strong>
-                            {% if entry.is_owner %}<span class="status-badge account-pool-owner-badge">所有者</span>{% endif %}
                         </td>
                         <td data-label="Team / 席位">
                             <div class="account-pool-team-cell">
@@ -128,9 +127,7 @@
                                 </div>
                             </div>
                             <div class="account-pool-team-badges">
-                                <span class="account-pool-status status-badge {% if entry.status == 'joined' %}status-active{% elif entry.status == 'invited' %}status-pending{% elif entry.status == 'conflict' %}status-error{% else %}status-banned{% endif %}">{% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}</span>
                                 {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>{% endif %}
-                                {% if entry.team_usage and (entry.seat_type == 'premium' or team_usage.premium_used is not none) %}<span class="account-pool-premium-note">{{ '高级已用' if team_usage.premium_used is sameas true else ('高级未用' if team_usage.premium_used is sameas false else '高级使用情况待确认') }}</span>{% endif %}
                             </div>
                         </td>
                         <td data-label="验活状态">
@@ -153,7 +150,7 @@
                             <div class="account-pool-rotation" title="{{ rotation.reason or '等待轮转扫描' }}">
                                 <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'candidate' %}account-pool-candidate-badge{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
                                 {% if rotation.team_id %}<strong>{{ rotation.team_name }} <small>#{{ rotation.team_id }}</small></strong>{% endif %}
-                                {% if rotation.scheduled_replacement %}<small class="account-pool-replacement-countdown" data-replacement-at="{{ rotation.replacement_at or '' }}">{{ '等待释放席位' if rotation.replacement_at else '等待执行' }}</small>{% endif %}
+                                {% if rotation.replacement_at %}<small class="account-pool-replacement-countdown" data-replacement-at="{{ rotation.replacement_at or '' }}">等待释放席位</small>{% endif %}
                                 {% if rotation.label != '等待排队' %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
                             </div>
                         </td>

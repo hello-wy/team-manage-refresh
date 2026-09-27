@@ -247,6 +247,7 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             row = (await build_pool_entry_data(db, [entry]))[0]
             self.assertEqual(row["workspace_id"], "personal")
+            self.assertEqual(row["display_team_name"], "Team A")
             self.assertEqual(row["quota_workspace_id"], "team-a")
             self.assertEqual(row["quota_team_id"], team.id)
             self.assertTrue(row["workspace_is_personal"])
@@ -255,7 +256,7 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
                 db, self.service._normalize_accounts([(row["email"], row["quota_workspace_id"])]),
             ))[0][1], ("member-token", "team-a"))
 
-    async def test_standard_member_does_not_display_unknown_premium_usage_label(self):
+    async def test_team_column_only_displays_team_and_seat(self):
         from starlette.requests import Request
         from app.routes import admin
         from app.services.account_pool_team_usage import record_seat_switch
@@ -278,7 +279,23 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
                 await record_seat_switch(db, team_id=team.id, email=entry.email, seat_type="premium")
                 await db.commit()
                 response = await admin.account_pool_page(request, 1, 20, "member@", "", db, {"username": "admin"})
-                self.assertIn("高级使用情况待确认", response.body.decode())
+                self.assertNotIn("高级使用情况待确认", response.body.decode())
+                self.assertNotIn("account-pool-premium-note", response.body.decode())
+                self.assertNotIn("account-pool-status status-badge", response.body.decode())
+                response = await admin.account_pool_page(request, 1, 20, "owner@", "", db, {"username": "admin"})
+                self.assertNotIn("account-pool-owner-badge", response.body.decode())
+                self.assertIn("所有者保留", response.body.decode())
+
+                from app.models import TeamReplacementQueue
+                from app.utils.time_utils import get_now
+                db.add_all([AccountPoolEntry(email="candidate@example.com"),
+                            TeamReplacementQueue(team_id=team.id, seat_type="standard",
+                                                 last_error_code="seat_limit_exceeded", last_attempt_at=get_now())])
+                await db.commit()
+                response = await admin.account_pool_page(request, 1, 20, "candidate@", "", db, {"username": "admin"})
+                self.assertIn("等待标准席位空位", response.body.decode())
+                self.assertNotIn('data-replacement-at=""', response.body.decode())
+                self.assertNotIn("等待执行", response.body.decode())
 
     async def test_multiple_teams_without_selected_workspace_are_not_guessed(self):
         async with self.sessions() as db:

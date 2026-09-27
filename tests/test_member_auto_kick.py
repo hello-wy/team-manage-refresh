@@ -385,6 +385,12 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("email=candidate@example.com", logs.output[0])
             self.assertIn("error_code=seat_operation_pending", logs.output[0])
             self.assertIn("status_code=409", logs.output[0])
+            queued = (await session.execute(select(TeamReplacementQueue))).scalar_one()
+            self.assertEqual(queued.last_error_code, "seat_operation_pending")
+            self.assertIsNotNone(queued.last_attempt_at)
+            await session.rollback()
+            await session.refresh(queued)
+            self.assertEqual(queued.last_error_code, "seat_operation_pending")
 
     async def test_pending_replacement_retries_on_next_scan(self):
         async with self.session_factory() as session:
