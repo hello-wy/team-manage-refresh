@@ -160,7 +160,8 @@ class Sub2apiRouteTests(unittest.TestCase):
                     admin.member_authorization_service,
                     "mark_sub2api_exported",
                     new=AsyncMock(),
-                ) as mark:
+                ) as mark, patch.object(admin.sub2api_export_record_service,
+                                        "record_success", new=AsyncMock()):
                     response = self.client.post("/admin/teams/1/members/authorization/import-sub2api",
                                                 json={"email": " MEMBER@example.com "})
         self.assertEqual(response.status_code, 200)

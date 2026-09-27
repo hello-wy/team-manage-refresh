@@ -161,6 +161,18 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
             "credentials": {"access_token": token, "chatgpt_account_id": space}
         }]}))
 
+    def test_real_authorization_credentials_fall_back_to_scoped_export_json(self):
+        for raw in (None, "broken", encryption_service.encrypt_token(json.dumps({
+                "access_token": "raw-token", "refresh_token": "refresh", "client_id": "client"}))):
+            with self.subTest(raw=raw):
+                record = MemberAuthorization(account_id="team-a", credentials_encrypted=raw,
+                                             export_json_encrypted=self.payload())
+                self.assertEqual(self.service._authorization_token(record, "team-a"),
+                                 ("member-token", "team-a"))
+                self.assertIsNone(self.service._authorization_token(record, "team-b"))
+                record.export_json_encrypted = self.payload("team-b")
+                self.assertIsNone(self.service._authorization_token(record, "team-a"))
+
     async def test_empty_or_broken_workspace_json_uses_matching_account_json(self):
         async with self.sessions() as db:
             entry = AccountPoolEntry(email="member@example.com", workspace_id="team-a",
@@ -229,14 +241,44 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(attached[0]["usage"]["1week"]["remaining"], 75)
             self.assertTrue(attached[0]["team_usage"]["premium_used"])
             self.service._check_token.assert_awaited_once_with(("member-token", "team-a"), None)
-            # An explicit personal selection must not silently query another workspace.
+            # 页面显示当前成员的 Team 额度；个人空间仍保留为用户的导出选择。
             entry.workspace_id = "personal"
             entry.workspace_status = "personal_account"
             await db.commit()
             row = (await build_pool_entry_data(db, [entry]))[0]
             self.assertEqual(row["workspace_id"], "personal")
-            self.assertEqual(row["quota_workspace_id"], "personal")
+            self.assertEqual(row["quota_workspace_id"], "team-a")
+            self.assertEqual(row["quota_team_id"], team.id)
             self.assertTrue(row["workspace_is_personal"])
+            self.assertEqual(row["team_usage"]["seat_type"], "premium")
+            self.assertEqual((await self.service._tokens_for_accounts(
+                db, self.service._normalize_accounts([(row["email"], row["quota_workspace_id"])]),
+            ))[0][1], ("member-token", "team-a"))
+
+    async def test_standard_member_does_not_display_unknown_premium_usage_label(self):
+        from starlette.requests import Request
+        from app.routes import admin
+        from app.services.account_pool_team_usage import record_seat_switch
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(email="member@example.com")
+            team = Team(email="owner@example.com", account_id="team-a", access_token_encrypted="unused")
+            db.add_all([entry, team])
+            await db.flush()
+            mapping = TeamEmailMapping(team_id=team.id, email=entry.email, status="joined", seat_type="standard")
+            db.add(mapping)
+            await record_seat_switch(db, team_id=team.id, email=entry.email, seat_type="standard")
+            await db.commit()
+            request = Request({"type": "http", "method": "GET", "path": "/admin/account-pool",
+                               "headers": [], "query_string": b"", "server": ("test", 80)})
+            with patch.object(admin, "_attach_account_pool_usage", new=AsyncMock(side_effect=lambda db, rows: rows)):
+                response = await admin.account_pool_page(request, 1, 20, "member@", "", db, {"username": "admin"})
+                self.assertNotIn("高级待确认", response.body.decode())
+                self.assertNotIn("高级使用情况待确认", response.body.decode())
+                mapping.seat_type = "premium"
+                await record_seat_switch(db, team_id=team.id, email=entry.email, seat_type="premium")
+                await db.commit()
+                response = await admin.account_pool_page(request, 1, 20, "member@", "", db, {"username": "admin"})
+                self.assertIn("高级使用情况待确认", response.body.decode())
 
     async def test_multiple_teams_without_selected_workspace_are_not_guessed(self):
         async with self.sessions() as db:

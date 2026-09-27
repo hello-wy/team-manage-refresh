@@ -415,6 +415,30 @@ class Sub2apiExportRecord(Base):
     )
 
 
+class Sub2apiAccountLink(Base):
+    """逐个保留远程账号 ID，并持久化退组后的删除任务。"""
+    __tablename__ = "sub2api_account_links"
+
+    id = Column(Integer, primary_key=True)
+    base_url = Column(String(255), nullable=False)
+    sub2api_account_id = Column(Integer, nullable=False)
+    email = Column(String(255), nullable=False)
+    team_space_id = Column(String(100), nullable=False)
+    status = Column(String(20), nullable=False, default="active")
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=get_now)
+    deletion_requested_at = Column(DateTime)
+    next_attempt_at = Column(DateTime)
+    deleted_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("idx_sub2api_link_target", "base_url", "sub2api_account_id", unique=True),
+        Index("idx_sub2api_link_member", "email", "team_space_id"),
+        Index("idx_sub2api_link_pending", "status", "next_attempt_at"),
+    )
+
+
 class AccountPoolHistory(Base):
     """账号邮箱加入过 Team 的历史记录。"""
     __tablename__ = "account_pool_histories"

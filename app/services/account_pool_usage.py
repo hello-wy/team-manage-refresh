@@ -72,25 +72,21 @@ class AccountPoolUsageService:
 
     @staticmethod
     def _authorization_token(record: MemberAuthorization | None, team_space_id: str):
-        if not record or not record.credentials_encrypted:
+        if not record or record.account_id != team_space_id:
             return None
-        try:
-            payload = json.loads(encryption_service.decrypt_token(record.credentials_encrypted))
-        except (ValueError, TypeError, InvalidToken) as exc:
-            logger.warning("成员授权凭据无法解析: authorization_id=%s error=%s", record.id, exc)
-            return None
-        if not isinstance(payload, dict):
-            logger.warning("成员授权凭据格式错误: authorization_id=%s", record.id)
-            return None
-        credentials = payload.get("credentials", payload)
-        if not isinstance(credentials, dict):
-            logger.warning("成员授权字段格式错误: authorization_id=%s", record.id)
-            return None
-        account_id = str(credentials.get("chatgpt_account_id") or "").strip()
-        token = str(credentials.get("access_token") or "").strip()
-        if account_id != team_space_id or not token:
-            return None
-        return token, account_id
+        # 授权流程的原始凭据只保存 token；空间身份保存在导出 JSON 中。
+        if record.credentials_encrypted:
+            try:
+                payload = json.loads(encryption_service.decrypt_token(record.credentials_encrypted))
+                credentials = payload.get("credentials", payload) if isinstance(payload, dict) else None
+                if isinstance(credentials, dict):
+                    account_id = str(credentials.get("chatgpt_account_id") or "").strip()
+                    token = str(credentials.get("access_token") or "").strip()
+                    if account_id == team_space_id and token:
+                        return token, account_id
+            except (ValueError, TypeError, InvalidToken):
+                logger.warning("成员授权凭据无法解析: authorization_id=%s", record.id)
+        return AccountPoolUsageService._json_token(record.export_json_encrypted, team_space_id)
 
     @staticmethod
     def _team_token(team: Team | None, email: str, team_space_id: str):
