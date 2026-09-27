@@ -72,9 +72,10 @@ def _member_view(mapping, team, snapshot, state, exported, now):
             return _view("保留当前 Team", "已免除定时下线", team, kind="idle")
         if not mapping.auto_kick_at or not mapping.upstream_user_id:
             return _view("待确认下线计划", "退出当前 Team 后再匹配下一站", team)
-        when = mapping.auto_kick_at.strftime("%m-%d %H:%M")
-        return _view("等待退出" if mapping.auto_kick_at <= now else "定时下线",
-                     f"{when} 下线，退出后再匹配下一站", team)
+        view = _view("等待退出" if mapping.auto_kick_at <= now else "定时下线",
+                     "下线时间 " + mapping.auto_kick_at.strftime("%m-%d %H:%M"), team)
+        view["exit_at"] = pytz.timezone(settings.timezone).localize(mapping.auto_kick_at).isoformat()
+        return view
     if state and state.blocked_reason:
         return _view("轮转受阻", REASONS.get(state.blocked_reason, "等待轮转问题处理"), team, kind="blocked")
     if not quota_ready(mapping, snapshot):
@@ -268,7 +269,7 @@ async def attach_rotation_status(db, rows):
         active = by_email[email]
         action = by_action_email.get(email)
         if row.get("is_owner"):
-            view = _view("所有者保留", "Team 所有者不参与跨 Team 补位", kind="idle")
+            view = _view("所有者", "", kind="idle")
         elif action:
             labels = {"invite": "邀请确认中", "remove": "退出确认中",
                       "upgrade": "升级确认中", "return_standard": "降级确认中"}

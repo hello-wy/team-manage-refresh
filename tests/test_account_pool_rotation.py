@@ -265,6 +265,7 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as db:
             await self.team(db, mode="off", standard=0, fresh=False)
             candidate = await self.entry(db, "candidate")
+            leaving = await self.entry(db, "leaving")
             deadline = self.now + timedelta(minutes=25)
             db.add_all([
                 TeamEmailMapping(team_id=1, email="leaving@example.com", status="joined",
@@ -274,11 +275,14 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
                                  member_role="account-owner"),
             ])
             await db.commit()
-            view = (await self.view(db, candidate))[candidate.email]
+            views = await self.view(db, candidate, leaving)
+            view = views[candidate.email]
             self.assertEqual(view["label"], "候选补位")
             self.assertEqual(view["kind"], "candidate")
             self.assertTrue(view["scheduled_replacement"])
             self.assertTrue(view["replacement_at"].startswith(deadline.isoformat()))
+            self.assertEqual(views[leaving.email]["exit_at"], view["replacement_at"])
+            self.assertEqual(views[leaving.email]["label"], "定时下线")
             self.assertEqual((await db.execute(select(RotationAction))).scalars().all(), [])
             self.assertFalse(db.new or db.dirty)
 
