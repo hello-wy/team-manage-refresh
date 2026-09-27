@@ -171,9 +171,10 @@ class AccountPoolService:
         if not candidate:
             return {"success": True, "status": "no_candidate", "email": None}
 
+        email = candidate.email
         result = await invite_member(
             team_id,
-            candidate.email,
+            email,
             db_session,
             seat_type=seat_type,
         )
@@ -181,13 +182,13 @@ class AccountPoolService:
             return {
                 "success": False,
                 "status": "failed",
-                "email": candidate.email,
+                "email": email,
                 "error": result.get("error") or result.get("message") or "邀请失败",
                 "error_code": result.get("error_code"),
                 "status_code": result.get("status_code"),
             }
-        await mark_replacement_pending(db_session, team_id, candidate.email)
-        return {"success": True, "status": "invited", "email": candidate.email}
+        await mark_replacement_pending(db_session, team_id, email)
+        return {"success": True, "status": "invited", "email": email}
 
     async def record_reconciliation(
         self,

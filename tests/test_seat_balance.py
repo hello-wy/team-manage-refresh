@@ -80,6 +80,29 @@ class SeatBalanceCalculationTests(unittest.TestCase):
 
 
 class SeatBalancePreflightTests(unittest.IsolatedAsyncioTestCase):
+    async def test_standard_batch_checks_standard_balance(self):
+        service = TeamService()
+        db = AsyncMock()
+        db.get.return_value = SimpleNamespace(id=1, account_id="account", current_members=1, max_members=10)
+        service.sync_team_info = AsyncMock(return_value={"success": True, "member_emails": []})
+        service.get_team_seat_balance = AsyncMock(return_value={"success": True, "balance": {
+            "standard": {"known": True, "remaining": 0},
+        }})
+        result = await service.add_team_members(1, ["one@example.com"], db, "standard")
+        self.assertEqual(result["error_code"], "seat_limit_exceeded")
+        self.assertFalse(result["processed"])
+
+    async def test_unknown_seat_is_rejected_before_upstream_calls(self):
+        service = TeamService()
+        db = AsyncMock()
+        db.get.return_value = SimpleNamespace(id=1, account_id="account")
+        service.sync_team_info = AsyncMock()
+        for method, emails in ((service.add_team_member, "one@example.com"),
+                              (service.add_team_members, ["one@example.com"])):
+            result = await method(1, emails, db, "unknown")
+            self.assertEqual(result["error_code"], "invalid_seat_type")
+        service.sync_team_info.assert_not_awaited()
+
     async def test_over_limit_batch_sends_nothing(self):
         service = TeamService()
         db = AsyncMock()

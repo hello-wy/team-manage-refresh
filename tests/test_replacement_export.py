@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.database import Base
 from app.models import MemberAuthorization, Team, TeamEmailMapping
 from app.services.member_auto_kick import MemberAutoKickService
+from app.services.member_authorization import MemberAuthorizationError
 from app.services.replacement_export import ReplacementExportService
+from app.services.team import TeamService
 from app.services.sub2api import Sub2apiError, Sub2apiImportUncertain
 
 EMAIL = "member@example.com"
@@ -160,6 +162,53 @@ class ReplacementExportTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(mappings[0].replacement_export_pending)
             self.assertFalse(mappings[1].replacement_export_pending)
             self.assertEqual(complete.await_count, 2)
+
+    async def test_removed_member_without_pool_entry_cancels_export(self):
+        async with self.sessions() as session:
+            mapping = await self._pending(session)
+            mapping.status = "removed"
+            await session.commit()
+
+            stats = await self.runner.process_pending_exports(session, self.exporter.complete)
+
+            self.assertTrue(stats["success"])
+            self.assertEqual(stats["cancelled"], 1)
+            self.assertEqual(stats["failed"], 0)
+            self.assertFalse(mapping.replacement_export_pending)
+            self.authorization.check.assert_not_awaited()
+            self.authorization.automatic_login.assert_not_awaited()
+            self.sub2api.import_member.assert_not_awaited()
+            retried = await self.runner.process_pending_exports(session, self.exporter.complete)
+            self.assertEqual(retried["scanned"], 0)
+
+    async def test_single_missing_snapshot_does_not_cancel_pending_export(self):
+        async with self.sessions() as session:
+            mapping = await self._pending(session)
+            await TeamService()._reconcile_team_email_mappings(1, set(), set(), session)
+            await session.commit()
+            self.assertEqual(mapping.status, "invited")
+            self.authorization.check.return_value = {
+                "authorized": True, "sub2api_exported": False,
+                "membership": "absent", "message": "尚未看到成员",
+            }
+            with self.assertLogs("app.services.member_auto_kick", level="ERROR"):
+                stats = await self.runner.process_pending_exports(session, self.exporter.complete)
+            await session.refresh(mapping)
+            self.assertEqual(stats["cancelled"], 0)
+            self.assertTrue(mapping.replacement_export_pending)
+            self.sub2api.import_member.assert_not_awaited()
+
+    async def test_membership_read_failure_keeps_pending(self):
+        async with self.sessions() as session:
+            mapping = await self._pending(session)
+            self.authorization.check.side_effect = MemberAuthorizationError("成员列表读取失败")
+            with self.assertLogs("app.services.member_auto_kick", level="ERROR"):
+                stats = await self.runner.process_pending_exports(session, self.exporter.complete)
+            await session.refresh(mapping)
+            self.assertEqual(stats["cancelled"], 0)
+            self.assertEqual(stats["failed"], 1)
+            self.assertTrue(mapping.replacement_export_pending)
+            self.sub2api.import_member.assert_not_awaited()
 
 
 if __name__ == "__main__":
