@@ -61,6 +61,7 @@ from app.services.account_pool_export import AccountPoolExportService, selected_
 from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
+from app.services.account_pool_rotation import attach_rotation_status
 from app.services.account_pool_team_usage import record_quota_observation
 from app.services.sub2api_export_records import sub2api_export_record_service
 from app.utils.time_utils import get_now
@@ -242,6 +243,7 @@ class AccountPoolAddRequest(BaseModel):
     """账号号池批量录入请求。"""
     emails: List[str] = Field(default_factory=list, description="邮箱列表")
     content: str = Field("", description="换行分隔的邮箱文本")
+    rotate_2fa: bool = Field(False, description="新增或恢复账号后立即更换 2FA")
 
 
 class AccountPoolAutomaticLoginRequest(BaseModel):
@@ -421,7 +423,7 @@ async def admin_dashboard(
 
 async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     keys = [
-        (entry["email"], entry.get("workspace_id") or "")
+        (entry["email"], entry.get("quota_workspace_id", entry.get("workspace_id")) or "")
         for entry in entries
     ]
     usage_by_account = await account_pool_usage_service.check_many(db, keys)
@@ -429,10 +431,10 @@ async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, A
     attached = []
     for entry in entries:
         usage = usage_by_account.get(
-            (entry["email"], entry.get("workspace_id") or ""), unavailable
+            (entry["email"], entry.get("quota_workspace_id", entry.get("workspace_id")) or ""), unavailable
         )
-        team_space_id = entry.get("workspace_id") or ""
-        if team_space_id and entry.get("workspace_team_id"):
+        team_space_id = entry.get("quota_workspace_id", entry.get("workspace_id")) or ""
+        if team_space_id and entry.get("quota_team_id", entry.get("workspace_team_id")):
             tracked = await record_quota_observation(
                 db,
                 email=entry["email"],
@@ -478,6 +480,7 @@ async def account_pool_page(
         status_filter=status_filter,
     )
     listing["entries"] = await _attach_account_pool_usage(db, listing["entries"])
+    listing["entries"] = await attach_rotation_status(db, listing["entries"])
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     context.update({
         **listing,
@@ -503,6 +506,7 @@ async def account_pool_team_options(
 @router.post("/account-pool")
 async def add_account_pool_emails(
     payload: AccountPoolAddRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
@@ -511,8 +515,27 @@ async def add_account_pool_emails(
         db,
         emails=payload.emails,
         content=payload.content,
+        preserve_existing_credentials=payload.rotate_2fa,
     )
-    return JSONResponse(status_code=200 if result["success"] else 400, content=result)
+    if result["success"] and payload.rotate_2fa:
+        # Import at request time because the shared batch service uses admin's
+        # authorization service during its initialization.
+        from app.routes.account_pool_batch import batch_service
+
+        try:
+            rotation = await batch_service.enqueue_import_rotations(
+                db, [*result.get("added", []), *result.get("restored", [])]
+            )
+        except Exception:
+            await db.rollback()
+            logger.exception("账号已加入号池，但自动 2FA 任务创建失败")
+            result["rotation_error"] = "账号已加入号池，但 2FA 任务创建失败，请在操作菜单中重试"
+        else:
+            result["rotation"] = rotation
+            if rotation["batch_id"]:
+                background_tasks.add_task(batch_service.run_rotations, rotation["batch_id"])
+    return JSONResponse(status_code=200 if result["success"] else 400, content=result,
+                        headers={"Cache-Control": "no-store"})
 
 
 async def _login_and_save_account_pool_entry(
@@ -2849,6 +2872,9 @@ async def settings_page(
             "sub2api_codex_fingerprint_mode": await settings_service.get_setting(
                 db, "sub2api_codex_fingerprint_mode", CODEX_FINGERPRINT_MODE_OFF
             ),
+            "sub2api_excel_bps_enabled": await settings_service.get_setting(
+                db, "sub2api_excel_bps_enabled", "false"
+            ),
             "warranty_expiration_mode": await settings_service.get_warranty_expiration_mode(db),
             "ui_theme": settings_service.normalize_ui_theme(await settings_service.get_setting(db, "ui_theme", DEFAULT_UI_THEME)),
             "ui_style": settings_service.normalize_ui_style(await settings_service.get_setting(db, "ui_style", DEFAULT_UI_STYLE)),
@@ -2910,6 +2936,7 @@ class Sub2apiSettingsRequest(BaseModel):
     group_ids: List[int] = Field(default_factory=list)
     concurrency: int = Field(DEFAULT_CONCURRENCY, ge=1)
     codex_fingerprint_mode: Literal["off", "device", "session", "full"] = CODEX_FINGERPRINT_MODE_OFF
+    excel_bps_enabled: bool = False
 
     @field_validator("group_ids")
     @classmethod
@@ -3929,6 +3956,7 @@ async def update_sub2api_settings(payload: Sub2apiSettingsRequest,
         "sub2api_group_ids": json.dumps(payload.group_ids),
         "sub2api_default_concurrency": str(payload.concurrency),
         "sub2api_codex_fingerprint_mode": payload.codex_fingerprint_mode,
+        "sub2api_excel_bps_enabled": "true" if payload.excel_bps_enabled else "false",
     }
     if api_key:
         settings_to_save["sub2api_api_key_encrypted"] = encryption_service.encrypt_token(api_key)
@@ -3941,6 +3969,7 @@ async def update_sub2api_settings(payload: Sub2apiSettingsRequest,
         "group_ids": payload.group_ids,
         "concurrency": payload.concurrency,
         "codex_fingerprint_mode": payload.codex_fingerprint_mode,
+        "excel_bps_enabled": payload.excel_bps_enabled,
         "message": "sub2api 配置已保存",
     }, headers={"Cache-Control": "no-store"})
 

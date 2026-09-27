@@ -48,7 +48,7 @@ function harness() {
         apiCall: async url => { calls.push(url); return context.response; },
     });
     vm.runInContext(`
-        let memberListRequestId = 0, memberSeatBalance = null, memberExistingEmails = new Set();
+        let memberListRequestId = 0, memberSeatBalance = null, memberExistingEmails = new Set(), renderedMemberTeamId = null;
         ${section('let memberAuthorizationContext = null;', 'function generateMemberAuthorization()')}
         ${section('async function viewMembers(', 'async function revokeInvite(')}
         memberAuthorizationContext = {teamId: 1, email: 'member@example.com', busy: false, hasLink: true};
@@ -63,6 +63,7 @@ function response(membership) {
         membership, can_export: membership === 'joined', message: '验证完成',
         members_snapshot: {
             success: true, joined_members: membership === 'joined' ? 2 : 1, total_seats: 2,
+            team_status: membership === 'joined' ? 'full' : 'active',
             members: [{email: 'member@example.com', status: membership, authorized: true}],
             seat_summary: {invites_complete: true}, seat_balance: {success: true},
         },
@@ -81,6 +82,8 @@ test('callback immediately moves member and updates count using one snapshot', a
     await h.run("requestMemberAuthorization('callback')");
     assert.equal(h.calls.length, 1);
     assert.equal(h.element('team-member-count-1').textContent, '2/2');
+    assert.equal(h.element('team-status-1').textContent, '已满');
+    assert.equal(h.element('team-status-1').className, 'status-badge status-full');
     assert.match(h.element('modalJoinedMembersTableBody').innerHTML, /member@example.com/);
     assert.doesNotMatch(h.element('modalInvitedMembersTableBody').innerHTML, /member@example.com/);
     assert.equal(h.element('memberAuthStatus').classList.contains('is-success'), true);
@@ -97,6 +100,7 @@ test('pending authorization polls until joined then stops and announces completi
     h.context.response = response('invited');
     await h.run("requestMemberAuthorization('check', {notify:false})");
     assert.equal(h.element('team-member-count-1').textContent, '1/2');
+    assert.equal(h.element('team-status-1').textContent, '可用');
     assert.match(h.element('modalInvitedMembersTableBody').innerHTML, /member@example.com/);
     assert.equal(h.toasts.length, 0);
     assert.equal(h.timers.size, 1);

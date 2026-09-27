@@ -384,6 +384,13 @@
             <p class="form-help">控制导出账号的 installation_id、session_id、thread_id 收敛程度，默认关闭。</p>
         </div>
         <div class="form-group">
+            <label class="checkbox-label" for="sub2apiExcelBpsEnabled">
+                <input type="checkbox" id="sub2apiExcelBpsEnabled" {% if sub2api_excel_bps_enabled == 'true' %}checked{% endif %}>
+                <span>导入账号时自动启用 Excel / BPS 协议</span>
+            </label>
+            <p class="form-help">默认关闭。开启后，后续导入的 OpenAI OAuth 账号将自动启用 Excel / BPS；已导入账号保持原设置。</p>
+        </div>
+        <div class="form-group">
             <label>导出分组</label>
             <label class="checkbox-label">
                 <input type="radio" name="sub2api_group_mode" value="all"
@@ -1025,6 +1032,7 @@
         const api_key = document.getElementById('sub2apiApiKey').value.trim();
         const concurrency = Number(document.getElementById('sub2apiConcurrency').value);
         const codex_fingerprint_mode = document.getElementById('sub2apiCodexFingerprintMode').value;
+        const excel_bps_enabled = document.getElementById('sub2apiExcelBpsEnabled').checked;
         const group_mode = getSub2apiGroupMode();
         const group_ids = group_mode === 'selected' ? Array.from(sub2apiGroupState.selectedIds) : [];
         if (!Number.isInteger(concurrency) || concurrency < 1) {
@@ -1038,13 +1046,14 @@
         try {
             const response = await fetch('/admin/settings/sub2api', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({base_url, api_key, group_mode, group_ids, concurrency, codex_fingerprint_mode})
+                body: JSON.stringify({base_url, api_key, group_mode, group_ids, concurrency, codex_fingerprint_mode, excel_bps_enabled})
             });
             const data = await response.json();
             if (!response.ok || !data.success) throw new Error(data.error || '保存失败');
             document.getElementById('sub2apiBaseUrl').value = data.base_url;
             document.getElementById('sub2apiConcurrency').value = data.concurrency;
             document.getElementById('sub2apiCodexFingerprintMode').value = data.codex_fingerprint_mode;
+            document.getElementById('sub2apiExcelBpsEnabled').checked = data.excel_bps_enabled;
             document.getElementById('sub2apiApiKey').value = '';
             document.getElementById('sub2apiApiKey').placeholder = '已配置，留空保持不变';
             sub2apiGroupState.selectedIds = new Set(data.group_ids || []);

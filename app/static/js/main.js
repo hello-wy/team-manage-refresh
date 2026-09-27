@@ -2513,6 +2513,12 @@ async function viewMembers(teamId, teamEmail = '') {
 function updateTeamMemberCount(teamId, data) {
     const memberCount = document.getElementById(`team-member-count-${teamId}`);
     if (memberCount) memberCount.textContent = `${data.joined_members ?? '—'}/${data.total_seats ?? '—'}`;
+    const statusBadge = document.getElementById(`team-status-${teamId}`);
+    const statusLabels = {active: '可用', full: '已满', expired: '已过期', banned: '已封禁', error: '异常'};
+    if (statusBadge && Object.hasOwn(statusLabels, data.team_status)) {
+        statusBadge.className = `status-badge status-${data.team_status}`;
+        statusBadge.textContent = statusLabels[data.team_status];
+    }
 }
 
 async function loadModalMemberList(teamId, snapshot = null) {

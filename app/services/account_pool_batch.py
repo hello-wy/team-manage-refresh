@@ -84,6 +84,35 @@ class AccountPoolBatchService:
         await session.commit()
         return batch_id
 
+    async def enqueue_import_rotations(self, session, emails):
+        """Queue newly added/restored accounts, reporting incomplete credentials."""
+        emails = list(dict.fromkeys(emails))
+        if not emails:
+            return {"batch_id": None, "queued": 0, "skipped": []}
+        entries = (await session.execute(select(AccountPoolEntry).where(
+            AccountPoolEntry.email.in_(emails), AccountPoolEntry.deleted_at.is_(None)
+        ))).scalars().all()
+        by_email = {entry.email: entry for entry in entries}
+        busy = set((await session.execute(select(AccountPoolTotpJob.account_pool_id).where(
+            AccountPoolTotpJob.account_pool_id.in_([entry.id for entry in entries]),
+            AccountPoolTotpJob.status.in_(("pending", "running")),
+        ))).scalars().all())
+        ids, skipped = [], []
+        for email in emails:
+            entry = by_email.get(email)
+            if entry is None:
+                reason = "账号不存在或已删除"
+            elif entry.id in busy:
+                reason = "已有 2FA 更换任务进行中"
+            elif not entry.password_encrypted or not entry.two_factor_secret_encrypted:
+                reason = "缺少登录密码或原 2FA 密钥"
+            else:
+                ids.append(entry.id)
+                continue
+            skipped.append({"email": email, "reason": reason})
+        batch_id = await self.enqueue_rotations(session, ids) if ids else None
+        return {"batch_id": batch_id, "queued": len(ids), "skipped": skipped}
+
     async def run_rotations(self, batch_id):
         async with self._sessions() as session:
             ids = (await session.execute(select(AccountPoolTotpJob.id).where(

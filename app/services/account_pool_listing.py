@@ -206,6 +206,13 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         "export_job_error": job.error if job else None,
     }
     row.update(_workspace_data(entry, workspace_team, saved, teams))
+    # Membership sync can precede a workspace scan. Resolve the quota target
+    # independently so this does not change the user's export/Team selection.
+    quota_team = workspace_team
+    if not entry.workspace_id and status == "joined":
+        quota_team = current[1]
+    row["quota_workspace_id"] = entry.workspace_id or (quota_team.account_id if quota_team else "")
+    row["quota_team_id"] = quota_team.id if quota_team else None
     return row
 
 

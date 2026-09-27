@@ -1,4 +1,4 @@
-{% macro quota_window(window, period) %}
+{% macro quota_window(window, period, cached_reset_at=none, unavailable_text='暂无额度') %}
   {% set window = window or {} %}
   <div class="quota-window{% if window.get('state') == 'exhausted' %} is-exhausted{% endif %}">
     <div class="quota-window-main">
@@ -7,19 +7,23 @@
         {% set percent = ((window.get('used', 0) / window.get('limit')) * 100) | int %}
         <progress class="quota-progress" max="100" value="{{ percent }}" aria-label="{{ period }} 已使用额度">{{ percent }}%</progress>
         <strong class="quota-percent">{{ percent }}%</strong>
-        {% if window.get('reset_at') %}<time class="quota-reset-time" data-reset-at="{{ window.get('reset_at') }}">{{ window.get('reset_at') }}</time>{% endif %}
       {% elif window.get('state') == 'not_applicable' %}
         <span class="quota-unavailable">不适用</span>
       {% else %}
-        <span class="quota-unavailable">暂无额度</span>
+        <span class="quota-unavailable">{{ unavailable_text }}</span>
+      {% endif %}
+      {% set reset_at = window.get('reset_at') or cached_reset_at %}
+      {% if reset_at and window.get('state') != 'not_applicable' %}
+        <time class="quota-reset-time" data-reset-at="{{ reset_at }}"{% if not window.get('reset_at') %} title="上次检查缓存的重置时间"{% endif %}>{{ reset_at }}</time>
+        {% if not window.get('reset_at') %}<span class="quota-cached-label">缓存</span>{% endif %}
       {% endif %}
     </div>
   </div>
 {% endmacro %}
 
-{% macro quota_cell(short, weekly) %}
+{% macro quota_cell(short, weekly, short_reset_at=none, weekly_reset_at=none, unavailable_text='暂无额度') %}
   <div class="quota-cell">
-    {{ quota_window(short, '5h') }}
-    {{ quota_window(weekly, '7d') }}
+    {{ quota_window(short, '5h', short_reset_at, unavailable_text) }}
+    {{ quota_window(weekly, '7d', weekly_reset_at, unavailable_text) }}
   </div>
 {% endmacro %}

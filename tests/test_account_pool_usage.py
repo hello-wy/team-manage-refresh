@@ -1,8 +1,11 @@
 import unittest
 import json
 from unittest.mock import AsyncMock, patch
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import AccountPoolEntry, AccountPoolWorkspace
+from app.database import Base
+from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization, Team, TeamEmailMapping
+from app.services.account_pool_listing import build_pool_entry_data
 from app.services.encryption import encryption_service
 from app.services.account_pool_usage import AccountPoolUsageService, parse_usage
 
@@ -136,9 +139,119 @@ class AccountPoolUsageTests(unittest.IsolatedAsyncioTestCase):
                 [("one@example.com", "space-a"), ("two@example.com", "space-b")],
             )
 
-        self.assertEqual(db.execute.await_count, 2)
+        self.assertEqual(db.execute.await_count, 3)
         self.assertEqual(len(values), 2)
         self.assertEqual(service._check_token.await_count, 2)
+
+
+class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        self.sessions = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        self.service = AccountPoolUsageService()
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+
+    @staticmethod
+    def payload(space="team-a", token="member-token"):
+        return encryption_service.encrypt_token(json.dumps({"accounts": [{
+            "credentials": {"access_token": token, "chatgpt_account_id": space}
+        }]}))
+
+    async def test_empty_or_broken_workspace_json_uses_matching_account_json(self):
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(email="member@example.com", workspace_id="team-a",
+                                     export_json_encrypted=self.payload())
+            db.add(entry)
+            await db.flush()
+            workspace = AccountPoolWorkspace(account_pool_id=entry.id, workspace_id="team-a",
+                                              status="workspace_ok")
+            db.add(workspace)
+            await db.commit()
+            for json_value in (None, "broken-encryption", self.payload("other-team")):
+                workspace.export_json_encrypted = json_value
+                await db.commit()
+                tokens = await self.service._tokens_for_accounts(db, [("key", entry.email, "team-a")])
+                self.assertEqual(tokens, [("key", ("member-token", "team-a"))])
+
+    async def test_batch_and_single_lookup_use_owner_token_without_leaking_to_other_members(self):
+        async with self.sessions() as db:
+            db.add(Team(email="owner@example.com", account_id="team-a",
+                        access_token_encrypted=encryption_service.encrypt_token("owner-token")))
+            await db.commit()
+            self.service._check_token = AsyncMock(side_effect=lambda token, proxies:
+                {"status": "ok" if token else "unavailable"})
+            keys = [("owner@example.com", "team-a"), ("other@example.com", "team-a"),
+                    ("owner@example.com", "team-b")]
+            with patch.object(self.service, "_proxies", new=AsyncMock(return_value=None)):
+                batch = await self.service.check_many(db, keys)
+                single = await self.service.check_email(db, *keys[0])
+            self.assertEqual(batch[keys[0]], single)
+            self.assertEqual(single["status"], "ok")
+            self.assertEqual(batch[keys[1]]["status"], "unavailable")
+            self.assertEqual(batch[keys[2]]["status"], "unavailable")
+            self.service._check_token.assert_any_await(("owner-token", "team-a"), None)
+
+    async def test_joined_members_without_workspace_scan_use_their_team_authorization(self):
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(email="member@example.com")
+            team = Team(email="owner@example.com", account_id="team-a", team_name="Team A",
+                        access_token_encrypted="unused")
+            db.add_all([entry, team])
+            await db.flush()
+            db.add_all([
+                TeamEmailMapping(team_id=team.id, email=entry.email, status="joined", seat_type="premium"),
+                MemberAuthorization(team_id=team.id, email=entry.email, account_id=team.account_id,
+                                    credentials_encrypted=encryption_service.encrypt_token(json.dumps({
+                                        "access_token": "member-token", "chatgpt_account_id": "team-a",
+                                    }))),
+            ])
+            await db.commit()
+            row = (await build_pool_entry_data(db, [entry]))[0]
+            self.assertIsNone(row["workspace_id"])
+            self.assertEqual(row["quota_workspace_id"], "team-a")
+            self.assertEqual(row["quota_team_id"], team.id)
+            normalized = self.service._normalize_accounts([(row["email"], row["quota_workspace_id"])])
+            tokens = await self.service._tokens_for_accounts(db, normalized)
+            self.assertEqual(tokens[0][1], ("member-token", "team-a"))
+            from app.routes import admin
+            self.service._check_token = AsyncMock(return_value={
+                "status": "ok", "error": None,
+                "1week": {"used": 25, "remaining": 75, "limit": 100, "reset_at": None},
+            })
+            with patch.object(admin, "account_pool_usage_service", self.service), patch.object(
+                self.service, "_proxies", new=AsyncMock(return_value=None)
+            ):
+                attached = await admin._attach_account_pool_usage(db, [row])
+            self.assertEqual(attached[0]["usage"]["1week"]["remaining"], 75)
+            self.assertTrue(attached[0]["team_usage"]["premium_used"])
+            self.service._check_token.assert_awaited_once_with(("member-token", "team-a"), None)
+            # An explicit personal selection must not silently query another workspace.
+            entry.workspace_id = "personal"
+            entry.workspace_status = "personal_account"
+            await db.commit()
+            row = (await build_pool_entry_data(db, [entry]))[0]
+            self.assertEqual(row["workspace_id"], "personal")
+            self.assertEqual(row["quota_workspace_id"], "personal")
+            self.assertTrue(row["workspace_is_personal"])
+
+    async def test_multiple_teams_without_selected_workspace_are_not_guessed(self):
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(email="member@example.com")
+            db.add(entry)
+            for space in ("team-a", "team-b"):
+                team = Team(email=f"{space}@example.com", account_id=space, access_token_encrypted="unused")
+                db.add(team)
+                await db.flush()
+                db.add(TeamEmailMapping(team_id=team.id, email=entry.email, status="joined"))
+            await db.commit()
+            row = (await build_pool_entry_data(db, [entry]))[0]
+            self.assertEqual(row["status"], "conflict")
+            self.assertIsNone(row["workspace_id"])
+            self.assertFalse(row["quota_workspace_id"])
 
 
 if __name__ == "__main__":

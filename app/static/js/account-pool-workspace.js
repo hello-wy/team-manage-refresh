@@ -39,6 +39,8 @@ async function selectAccountPoolWorkspace(control) {
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.detail || result.error || '选择 Team 失败');
         control.dataset.selectedId = result.workspace_id;
+        closeAccountPoolDetails();
+        await refreshAccountPoolTable();
     } catch (error) {
         control.value = previousId;
         showToast(error.message || '选择 Team 失败', 'error');

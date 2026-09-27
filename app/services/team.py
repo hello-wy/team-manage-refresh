@@ -2534,6 +2534,7 @@ class TeamService:
                 "seat_balance": seat_balance,
                 "joined_members": team.joined_members,
                 "total_seats": team.total_seats,
+                "team_status": team.effective_status,
                 "total": effective_members,
                 "member_auto_kick_hours": int(team.member_auto_kick_hours or 2),
                 "error": None
@@ -3777,7 +3778,7 @@ class TeamService:
 
             # 3. 如果有状态过滤,添加过滤条件
             if status:
-                stmt = stmt.where(Team.status == status)
+                stmt = stmt.where(Team.effective_status == status)
 
             if pool_type:
                 stmt = stmt.where(Team.pool_type == pool_type)
@@ -3815,7 +3816,7 @@ class TeamService:
                     "expires_at": team.expires_at.isoformat() if team.expires_at else None,
                     "current_members": team.current_members,
                     "max_members": team.max_members,
-                    "status": team.status,
+                    "status": team.effective_status,
                     "device_code_auth_enabled": getattr(team, 'device_code_auth_enabled', False),
                     "joined_members": team.joined_members,
                     "total_seats": team.total_seats,
@@ -3976,7 +3977,7 @@ class TeamService:
             stmt = select(
                 func.count(Team.id).label("total"),
                 func.sum(case(
-                    ((Team.status == "active") & (Team.current_members < Team.max_members), 1),
+                    (Team.effective_status == "active", 1),
                     else_=0,
                 )).label("available"),
                 func.sum(case((Team.status.in_(("active", "full")), 1), else_=0)).label("live"),

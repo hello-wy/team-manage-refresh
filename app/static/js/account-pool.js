@@ -8,14 +8,14 @@ function accountPoolFormatDate(value) {
     });
 }
 
-async function copyAccountPoolCredential(email, field, label) {
+async function copyAccountPoolCredential(email) {
     try {
-        const credentials = await window.accountPoolCredentialStore.load(email);
-        const value = credentials[field];
-        if (!value) throw new Error(`该账号未保存${label}`);
-        await copyToClipboard(value);
+        const credentials = await window.accountPoolCredentialStore.load(email, {fresh: true});
+        if (!credentials.password) throw new Error('该账号未保存登录密码，请先补充账号凭据');
+        if (!credentials.two_factor_secret) throw new Error('该账号未保存 2FA 密钥，请先补充账号凭据');
+        await copyToClipboard([credentials.email || email, credentials.password, credentials.two_factor_secret].join('----'));
     } catch (error) {
-        showToast(error.message || `复制${label}失败`, 'error');
+        showToast(error.message || '复制账号凭据失败', 'error');
     }
 }
 
@@ -283,17 +283,44 @@ function downloadAccountPoolJson(blob, entryId) {
     URL.revokeObjectURL(url);
 }
 
+let accountPoolHistoryRequest = null;
+let accountPoolDetailsTrigger = null;
+
+function closeAccountPoolDetails() {
+    accountPoolHistoryRequest?.abort();
+    hideModal('accountPoolHistoryModal');
+    document.getElementById('accountPoolDetailsContent').replaceChildren();
+    accountPoolDetailsTrigger?.focus();
+}
+
 async function loadAccountPoolHistory(entryId, email) {
+    accountPoolHistoryRequest?.abort();
+    const controller = new AbortController();
+    accountPoolHistoryRequest = controller;
     const content = document.getElementById('accountPoolHistoryContent');
+    const details = document.getElementById('accountPoolDetailsContent');
+    const template = document.getElementById(`accountPoolDetails-${entryId}`);
+    details.replaceChildren(...(template ? [template.content.cloneNode(true)] : []));
     document.getElementById('accountPoolHistoryEmail').textContent = email;
     content.textContent = '加载中...';
+    initAccountPoolRowActions();
+    window.initAccountPoolRotateButtons?.();
+    window.initAccountPoolWorkspaceButtons?.();
+    // Close this dialog before a detail action opens its own dialog.
+    details.querySelector('.account-pool-detail-actions')?.addEventListener('click', event => {
+        if (event.target.closest('button')) hideModal('accountPoolHistoryModal');
+    }, {capture: true});
     showModal('accountPoolHistoryModal');
+    if (window.lucide) lucide.createIcons();
+    document.querySelector('#accountPoolHistoryModal .modal-close')?.focus();
     try {
-        const response = await fetch(`/admin/account-pool/${entryId}/history`);
+        const response = await fetch(`/admin/account-pool/${entryId}/history`, {signal: controller.signal});
         const payload = await response.json();
+        if (controller.signal.aborted) return;
         if (!response.ok || !payload.success) throw new Error(payload.error || '加载历史失败');
         renderAccountPoolHistory(content, payload.data.histories || []);
     } catch (error) {
+        if (error.name === 'AbortError') return;
         content.textContent = error.message || '加载历史失败';
     }
 }
@@ -316,17 +343,29 @@ async function submitAccountPoolForm(event) {
     const input = document.getElementById('accountPoolEmails');
     const button = document.getElementById('accountPoolSubmitBtn');
     const content = input.value.trim();
+    const rotate2fa = document.getElementById('accountPoolAutoRotate').checked;
     if (!content) return showToast('请先输入邮箱', 'warning');
     button.disabled = true;
     try {
         const response = await fetch('/admin/account-pool', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({content})
+            body: JSON.stringify({content, rotate_2fa: rotate2fa})
         });
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');
         showToast(payload.message, 'success');
         input.value = '';
+        [...(payload.added || []), ...(payload.restored || []), ...(payload.updated || [])]
+            .forEach(email => window.accountPoolCredentialStore.clear(email));
+        if (payload.rotation_error) {
+            showToast(payload.rotation_error, 'warning');
+            startAccountPoolRotationWatch(null, [payload.rotation_error]);
+        } else if (payload.rotation) {
+            const rotation = payload.rotation;
+            const notes = rotation.skipped.map(item => `${item.email}：跳过自动更换 · ${item.reason}`);
+            if (!rotation.batch_id && !notes.length) notes.push('本次没有新增或恢复的账号，未自动更换 2FA。');
+            startAccountPoolRotationWatch(rotation.batch_id, notes);
+        }
         await refreshAccountPoolTable();
     } catch (error) {
         showToast(error.message || '添加失败', 'error');
@@ -338,9 +377,15 @@ async function submitAccountPoolForm(event) {
 function initAccountPoolColumnToggler() {
     const table = document.querySelector('.account-pool-page .data-table');
     const container = document.getElementById('accountPoolColumnToggleDropdown');
-    if (!table || !container) return;
+    if (!container) return;
+    document.getElementById('accountPoolColumnToggleBtn').disabled = !table;
+    if (!table) {
+        container.replaceChildren();
+        closeAccountPoolColumnDropdown();
+        return;
+    }
 
-    const storageKey = 'account_pool_list_columns_v2';
+    const storageKey = 'account_pool_list_columns_v4';
     const hiddenColumns = loadAccountPoolHiddenColumns(storageKey);
     container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
@@ -497,11 +542,58 @@ async function refreshAccountPoolTable(options = {}) {
 }
 window.refreshAccountPoolTable = refreshAccountPoolTable;
 
+function initAccountPoolActionTooltips() {
+    const tooltip = document.createElement('div');
+    tooltip.id = 'accountPoolActionTooltip';
+    tooltip.className = 'account-pool-action-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.hidden = true;
+    document.body.appendChild(tooltip);
+    let active = null;
+    let described = null;
+
+    const hide = () => {
+        tooltip.hidden = true;
+        described?.removeAttribute('aria-describedby');
+        active = null;
+        described = null;
+    };
+    const show = event => {
+        const trigger = event.target.closest?.('[data-pool-tooltip]');
+        if (!trigger || trigger === active) return;
+        hide();
+        active = trigger;
+        described = trigger.hasAttribute('tabindex') ? trigger : trigger.querySelector('button');
+        described?.setAttribute('aria-describedby', tooltip.id);
+        tooltip.textContent = trigger.dataset.poolTooltip;
+        tooltip.hidden = false;
+        const anchor = trigger.getBoundingClientRect();
+        const box = tooltip.getBoundingClientRect();
+        const left = Math.max(12, Math.min(anchor.left + (anchor.width - box.width) / 2, window.innerWidth - box.width - 12));
+        const top = anchor.top >= box.height + 20 ? anchor.top - box.height - 8 : anchor.bottom + 8;
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+    };
+    const leave = event => {
+        if (active && !active.contains(event.relatedTarget)) hide();
+    };
+    // Wrappers also receive pointer events when the enclosed button is disabled.
+    document.addEventListener('pointerover', show);
+    document.addEventListener('pointerout', leave);
+    document.addEventListener('focusin', show);
+    document.addEventListener('focusout', leave);
+    document.addEventListener('click', hide);
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') hide(); });
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+}
+
 function initAccountPoolRowActions() {
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';
         button.addEventListener('click', () => {
+            accountPoolDetailsTrigger = button;
             loadAccountPoolHistory(button.dataset.entryId, button.dataset.email);
         });
     });
@@ -541,7 +633,7 @@ function initAccountPoolRowActions() {
 function initAccountPoolExportJobs() {
     document.querySelectorAll('.account-pool-export-status').forEach(label => {
         if (label.dataset.status === 'pending' || label.dataset.status === 'running') {
-            const email = label.closest('[data-account-pool-row]')?.querySelector('[data-label="邮箱"]')?.textContent?.trim() || '账号';
+            const email = label.closest('[data-account-pool-row]')?.dataset.email || '账号';
             watchAccountPoolExportJob(Number(label.dataset.jobId), email);
         }
     });
@@ -557,6 +649,29 @@ function initAccountPoolPageSizeControl() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    initAccountPoolActionTooltips();
+    const detailsModal = document.getElementById('accountPoolHistoryModal');
+    detailsModal?.addEventListener('click', event => {
+        if (event.target === detailsModal) closeAccountPoolDetails();
+    });
+    detailsModal?.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeAccountPoolDetails();
+        } else if (event.key === 'Tab') {
+            const controls = [...detailsModal.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled)')]
+                .filter(control => control.getClientRects().length);
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first?.focus();
+            }
+        }
+    });
     document.getElementById('accountPoolCredentialForm')?.addEventListener(
         'submit',
         submitAccountPoolCredentialForm

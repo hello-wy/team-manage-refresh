@@ -1,6 +1,9 @@
 const accountPoolSelection = new Set();
 const ACCOUNT_POOL_POLL_MS = 2000;
-const ACCOUNT_POOL_ROTATION_KEY = 'account_pool_rotation_batch';
+const ACCOUNT_POOL_ROTATION_KEY = 'account_pool_rotation_batches_v2';
+const accountPoolRotationResults = new Map();
+const accountPoolRotationNotes = [];
+const accountPoolRotationWatchers = new Set();
 let accountPoolHistoryPage = 1;
 
 function selectedAccountPoolIds() {
@@ -116,24 +119,77 @@ function showAccountPoolBatchError(error) {
     showAccountPoolBatchProgress([error.message || '批量任务失败']);
 }
 
+function savedAccountPoolRotationBatches() {
+    try {
+        const saved = JSON.parse(sessionStorage.getItem(ACCOUNT_POOL_ROTATION_KEY) || '[]');
+        return new Set(Array.isArray(saved) ? saved.filter(id => typeof id === 'string') : []);
+    } catch {
+        return new Set();
+    }
+}
+
+function renderAccountPoolRotationProgress() {
+    const results = [...accountPoolRotationResults.values()].flat();
+    const completed = results.filter(item => item.status === 'completed').length;
+    const failed = results.filter(item => item.status === 'failed').length;
+    const pending = results.length - completed - failed;
+    showAccountPoolBatchProgress([
+        `2FA 更换：成功 ${completed}，失败 ${failed}，进行中 ${pending}`,
+        ...accountPoolRotationNotes,
+        ...results.map(item => {
+            const status = {pending: '等待', running: '执行中', completed: '成功', failed: '失败'}[item.status] || item.status;
+            return `${item.email}：${status}${item.error ? ` · ${item.error}` : ''}` +
+                (item.two_factor_secret ? ` · 新密钥 ${item.two_factor_secret}` : '');
+        }),
+    ]);
+}
+
+function startAccountPoolRotationWatch(batchId, notes = []) {
+    accountPoolRotationNotes.push(...notes);
+    if (!batchId) {
+        renderAccountPoolRotationProgress();
+        return;
+    }
+    if (accountPoolRotationWatchers.has(batchId)) return;
+    const saved = savedAccountPoolRotationBatches();
+    saved.add(batchId);
+    sessionStorage.setItem(ACCOUNT_POOL_ROTATION_KEY, JSON.stringify([...saved]));
+    accountPoolRotationWatchers.add(batchId);
+    showAccountPoolBatchProgress(['2FA 更换任务已启动，正在读取进度...', ...accountPoolRotationNotes]);
+    watchAccountPoolBatchRotations(batchId).catch(error => handleAccountPoolRotationError(batchId, error));
+}
+
+function handleAccountPoolRotationError(batchId, error) {
+    accountPoolRotationWatchers.delete(batchId);
+    showAccountPoolBatchError(new Error(`${error.message}；后台任务会继续，可刷新页面或查看“2FA 记录”。`));
+}
+
 async function watchAccountPoolBatchRotations(batchId) {
     const response = await fetch(`/admin/account-pool/batch/rotate-2fa/${batchId}`, {
         credentials: 'same-origin', cache: 'no-store',
     });
     if (!response.ok) throw new Error('读取 2FA 任务结果失败');
     const {results} = await response.json();
-    showAccountPoolBatchProgress(results.map(item => {
-        const status = {pending: '等待', running: '执行中', completed: '成功', failed: '失败'}[item.status];
-        return `${item.email}：${status}${item.error ? ` · ${item.error}` : ''}` +
-            (item.two_factor_secret ? ` · 新密钥 ${item.two_factor_secret}` : '');
-    }));
+    accountPoolRotationResults.set(batchId, results);
+    results.filter(item => ['completed', 'failed'].includes(item.status))
+        .forEach(item => {
+            window.accountPoolCredentialStore.clear(item.email);
+            if (item.status === 'completed' && item.two_factor_secret) {
+                document.querySelectorAll('totp-code[data-email]').forEach(control => {
+                    if (control.dataset.email === item.email) control.secret = item.two_factor_secret;
+                });
+            }
+        });
+    renderAccountPoolRotationProgress();
     if (results.every(item => ['completed', 'failed'].includes(item.status))) {
-        sessionStorage.removeItem(ACCOUNT_POOL_ROTATION_KEY);
-        results.forEach(item => window.accountPoolCredentialStore.clear(item.email));
+        const saved = savedAccountPoolRotationBatches();
+        saved.delete(batchId);
+        sessionStorage.setItem(ACCOUNT_POOL_ROTATION_KEY, JSON.stringify([...saved]));
+        accountPoolRotationWatchers.delete(batchId);
         await refreshAccountPoolTable();
         return;
     }
-    setTimeout(() => watchAccountPoolBatchRotations(batchId).catch(showAccountPoolBatchError), ACCOUNT_POOL_POLL_MS);
+    setTimeout(() => watchAccountPoolBatchRotations(batchId).catch(error => handleAccountPoolRotationError(batchId, error)), ACCOUNT_POOL_POLL_MS);
 }
 
 async function rotateAccountPoolBatch() {
@@ -141,8 +197,7 @@ async function rotateAccountPoolBatch() {
     try {
         const response = await requestAccountPoolBatch('rotate-2fa', selectedAccountPoolIds());
         const {batch_id: batchId} = await response.json();
-        sessionStorage.setItem(ACCOUNT_POOL_ROTATION_KEY, batchId);
-        await watchAccountPoolBatchRotations(batchId);
+        startAccountPoolRotationWatch(batchId);
     } catch (error) {
         showAccountPoolBatchError(error);
     }
@@ -215,6 +270,11 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('.account-pool-row-select').forEach(box => { box.checked = false; });
         updateAccountPoolSelectionUi();
     });
-    const batchId = sessionStorage.getItem(ACCOUNT_POOL_ROTATION_KEY);
-    if (batchId) watchAccountPoolBatchRotations(batchId).catch(showAccountPoolBatchError);
+    const saved = savedAccountPoolRotationBatches();
+    const legacyBatch = sessionStorage.getItem('account_pool_rotation_batch');
+    if (legacyBatch) {
+        saved.add(legacyBatch);
+        sessionStorage.removeItem('account_pool_rotation_batch');
+    }
+    saved.forEach(batchId => startAccountPoolRotationWatch(batchId));
 });
