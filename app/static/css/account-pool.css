@@ -559,7 +559,9 @@ body.admin-theme .account-pool-page .account-pool-candidate-badge {
 }
 
 .account-pool-owner-badge { margin-left: .35rem; }
-.account-pool-page .account-pool-quota-refresh { margin-top: .25rem; width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 3px; }
+.account-pool-quota-layout { display: flex; align-items: center; gap: .4rem; }
+.account-pool-quota-content { min-width: 0; }
+.account-pool-page .account-pool-quota-refresh { margin: 0; width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 3px; }
 .account-pool-quota-refresh svg { width: 12px; height: 12px; }
 .account-pool-quota-feedback { display: block; color: var(--text-secondary); max-width: 240px; }
 .account-pool-replacement-countdown { color: #1d4ed8; font-variant-numeric: tabular-nums; }

@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-owner-actions-2">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-quota-right">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -139,8 +139,13 @@
                             </div>
                         </td>
                         <td data-label="额度">
+                            {% set short_quota = usage.get('5h') or {} %}
+                            {% set weekly_quota = usage.get('1week') or {} %}
+                            {% set can_refresh_quota = (short_quota.get('remaining') is not none and short_quota.get('limit', 0) > 0) or (weekly_quota.get('remaining') is not none and weekly_quota.get('limit', 0) > 0) %}
+                            <div class="account-pool-quota-layout">
                             <div class="account-pool-quota-content">{% include "admin/account_pool/_quota.html" %}</div>
-                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-quota-refresh" title="刷新额度" data-entry-id="{{ entry.id }}" aria-label="刷新 {{ entry.email }} 的额度"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+                            {% if can_refresh_quota %}<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-quota-refresh" title="刷新额度" data-entry-id="{{ entry.id }}" aria-label="刷新 {{ entry.email }} 的额度"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>{% endif %}
+                            </div>
                             <small class="account-pool-quota-feedback" role="status" aria-live="polite"></small>
                         </td>
                         {% set rotation = entry.rotation or {} %}
@@ -391,7 +396,7 @@
 {% block extra_js %}
 <script src="/static/js/account-pool-confirm.js?v=20260927-1"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/account-pool.js?v=20260927-owner-actions"></script>
+<script src="/static/js/account-pool.js?v=20260927-quota-right"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-batch.js?v=20260927-owner-actions"></script>

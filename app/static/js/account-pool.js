@@ -664,6 +664,7 @@ async function refreshAccountPoolQuota(button) {
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.detail || result.error || '刷新额度失败');
         cell.querySelector('.account-pool-quota-content').innerHTML = result.html;
+        if (!cell.querySelector('.quota-progress')) button.remove();
         formatQuotaResetTimes();
         feedback.textContent = result.status === 'ok' ? '刚刚更新' : (result.error || '暂未获取额度');
     } catch (error) {

@@ -71,8 +71,11 @@ test('quota refresh updates only its cell and re-enables retry after an error', 
     const {context} = runtime();
     const content = {innerHTML: 'old quota'};
     const feedback = {};
+    let quotaVisible = true;
     const button = {dataset: {entryId: '-1'}, disabled: false,
-        closest: () => ({querySelector: key => key.includes('feedback') ? feedback : content})};
+        remove() { this.removed = true; },
+        closest: () => ({querySelector: key => key.includes('feedback') ? feedback
+            : key === '.quota-progress' ? (quotaVisible ? {} : null) : content})};
     let posted;
     context.fetch = async (url, options) => {
         posted = {url, options};
@@ -90,4 +93,11 @@ test('quota refresh updates only its cell and re-enables retry after an error', 
     assert.equal(button.disabled, false);
     assert.equal(feedback.textContent, '网络失败');
     assert.equal(content.innerHTML, 'new quota');
+    quotaVisible = false;
+    context.fetch = async () => ({ok: true, json: async () => ({
+        success: true, status: 'unavailable', html: '待授权', error: '缺少授权',
+    })});
+    await context.refreshAccountPoolQuota(button);
+    assert.equal(button.removed, true);
+    assert.equal(feedback.textContent, '缺少授权');
 });
