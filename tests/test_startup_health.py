@@ -93,6 +93,13 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     team_id INTEGER NOT NULL,
                     account_id VARCHAR(100) NOT NULL
                 );
+                CREATE TABLE team_replacement_queue (
+                    id INTEGER PRIMARY KEY,
+                    team_id INTEGER NOT NULL,
+                    seat_type VARCHAR(20) NOT NULL,
+                    created_at DATETIME NOT NULL
+                );
+                INSERT INTO team_replacement_queue VALUES (1, 1, 'standard', '2026-01-01');
                 CREATE TABLE account_pool_entries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) NOT NULL,
@@ -105,14 +112,20 @@ class MigrationCompatibilityTests(unittest.TestCase):
             database_url = f"sqlite+aiosqlite:///{db_path}"
             with patch("app.config.settings.database_url", database_url):
                 db_migrations.run_auto_migration()
+                db_migrations.run_auto_migration()
 
             connection = sqlite3.connect(db_path)
             team_columns = self._columns(connection, "teams")
             mapping_columns = self._columns(connection, "team_email_mappings")
             pool_columns = self._columns(connection, "account_pool_entries")
+            queue_columns = self._columns(connection, "team_replacement_queue")
+            self.assertEqual(connection.execute("SELECT seat_type, last_error_code, last_attempt_at FROM team_replacement_queue").fetchone(),
+                             ("standard", None, None))
             connection.close()
 
             self.assertIn("pending_replacements", team_columns)
+            self.assertIn("last_error_code", queue_columns)
+            self.assertIn("last_attempt_at", queue_columns)
             self.assertIn("replacement_export_pending", mapping_columns)
             self.assertIn("last_invited_at", mapping_columns)
             self.assertIn("seat_type", mapping_columns)

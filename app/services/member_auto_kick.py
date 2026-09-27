@@ -243,6 +243,11 @@ class MemberAutoKickService:
             await db_session.refresh(team)
             await db_session.refresh(queue_item)
             status = replacement.get("status")
+            if status != "invited":
+                queue_item.last_attempt_at = get_now()
+                queue_item.last_error_code = ("no_candidate" if status == "no_candidate" else
+                                              str(replacement.get("error_code") or "invite_failed")[:100])
+                await db_session.commit()
             if status == "no_candidate":
                 stats["replacement_unavailable"] += int(team.pending_replacements or 0)
                 return

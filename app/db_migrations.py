@@ -197,6 +197,14 @@ def run_auto_migration():
             )
             migrations_applied.append("team_replacement_queue")
 
+        if table_exists(cursor, "team_replacement_queue"):
+            for column_name, column_type in {
+                "last_error_code": "VARCHAR(100)", "last_attempt_at": "DATETIME",
+            }.items():
+                if not column_exists(cursor, "team_replacement_queue", column_name):
+                    cursor.execute(f"ALTER TABLE team_replacement_queue ADD COLUMN {column_name} {column_type}")
+                    migrations_applied.append(f"team_replacement_queue.{column_name}")
+
         if not column_exists(cursor, "redemption_codes", "pool_type"):
             logger.info("添加 redemption_codes.pool_type 字段")
             cursor.execute("ALTER TABLE redemption_codes ADD COLUMN pool_type VARCHAR(20) DEFAULT 'normal'")

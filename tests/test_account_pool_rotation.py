@@ -182,6 +182,46 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("等待席位余额确认", views[first.email]["reason"])
             self.assertIsNone(views[second.email]["team_id"])
 
+    async def test_queue_reports_recent_execution_blocker_without_fake_countdown(self):
+        async with self.sessions() as db:
+            await self.team(db, mode="off", fresh=False)
+            item = TeamReplacementQueue(team_id=1, seat_type="standard", last_attempt_at=self.now,
+                                        last_error_code="seat_limit_exceeded")
+            db.add_all([item, TeamReplacementQueue(team_id=1, seat_type="premium")])
+            first = await self.entry(db, "first")
+            second = await self.entry(db, "second", 1)
+            await db.commit()
+            for code, expected in (("seat_limit_exceeded", "等待标准席位空位"),
+                                   ("seat_balance_unavailable", "等待席位余额确认"),
+                                   ("ghost_success", "邀请未在上游确认"),
+                                   ("upstream_failed", "上次邀请失败")):
+                item.last_error_code = code
+                await db.commit()
+                views = await self.view(db, first, second)
+                self.assertEqual(views[first.email]["label"], "候选补位")
+                self.assertIn(expected, views[first.email]["reason"])
+                self.assertIsNone(views[first.email]["replacement_at"])
+                self.assertIsNone(views[second.email]["team_id"])
+            item.last_attempt_at = self.now - timedelta(minutes=6)
+            await db.commit()
+            view = (await self.view(db, first))[first.email]
+            self.assertIn("等待席位余额确认", view["reason"])
+            self.assertNotIn("邀请失败", view["reason"])
+
+    async def test_zero_capacity_preserves_head_candidate_and_blocks_later_queue(self):
+        async with self.sessions() as db:
+            await self.team(db, mode="off", standard=0, premium=2)
+            db.add_all([TeamReplacementQueue(team_id=1, seat_type="standard"),
+                        TeamReplacementQueue(team_id=1, seat_type="premium")])
+            first = await self.entry(db, "first")
+            second = await self.entry(db, "second", 1)
+            await db.commit()
+            views = await self.view(db, first, second)
+            self.assertEqual(views[first.email]["label"], "候选补位")
+            self.assertIn("等待标准席位空位", views[first.email]["reason"])
+            self.assertIsNone(views[first.email]["replacement_at"])
+            self.assertIsNone(views[second.email]["team_id"])
+
     async def test_invited_conflicted_and_exempt_members(self):
         async with self.sessions() as db:
             await self.team(db, mode="off")

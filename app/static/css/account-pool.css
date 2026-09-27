@@ -192,7 +192,6 @@ body.admin-theme .account-pool-page .data-table td {
     margin-top: 0.25rem;
 }
 
-.account-pool-premium-note,
 .account-pool-page .quota-cached-label {
     color: var(--text-muted);
     font-size: 0.75rem;
@@ -558,7 +557,6 @@ body.admin-theme .account-pool-page .account-pool-candidate-badge {
     background: #dbeafe !important;
 }
 
-.account-pool-owner-badge { margin-left: .35rem; }
 .account-pool-quota-layout { display: flex; align-items: center; gap: .4rem; }
 .account-pool-quota-content { min-width: 0; }
 .account-pool-page .account-pool-quota-refresh { margin: 0; width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 3px; }

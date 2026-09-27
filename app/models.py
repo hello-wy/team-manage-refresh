@@ -110,6 +110,8 @@ class TeamReplacementQueue(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
     seat_type = Column(String(20), nullable=False, default="standard")
+    last_error_code = Column(String(100), comment="最近一次补位未完成的原因代码")
+    last_attempt_at = Column(DateTime, comment="最近一次补位执行时间")
     created_at = Column(DateTime, default=get_now, nullable=False)
 
     team = relationship("Team", back_populates="replacement_queue")

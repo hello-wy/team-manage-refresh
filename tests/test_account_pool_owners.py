@@ -90,11 +90,11 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([self.team(), member, TeamAccount(team_id=1, account_id=space, account_name="第二工作区")])
             await db.commit()
             row = (await account_pool_service.rows_by_ids(db, [member.id]))[0]
-            self.assertEqual(row["display_team_name"], "第二工作区")
+            self.assertEqual(row["display_team_name"], "个人账户")
             self.assertEqual(row["workspace_options"][0]["name"], "第二工作区")
             member.workspace_id = "unknown-space"
             row = (await account_pool_service.rows_by_ids(db, [member.id]))[0]
-            self.assertEqual(row["display_team_name"], "Team 名称待同步")
+            self.assertEqual(row["display_team_name"], "个人账户")
             member.workspace_id = None
             db.add(TeamEmailMapping(team_id=1, email=member.email, status="joined"))
             await db.commit()
