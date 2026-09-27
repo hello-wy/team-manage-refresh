@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Sub2apiExportRecord, Team, TeamEmailMapping
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
+from app.services.sub2api_cleanup import enqueue_member_cleanup, track_export
 
 
 class Sub2apiExportRecordService:
@@ -99,6 +100,7 @@ class Sub2apiExportRecordService:
             )
             db.add(record)
         else:
+            await track_export(db, normalized_email, normalized_space, record.sub2api_account_id)
             record.team_id = team_id if team_id is not None else record.team_id
             record.team_name = team_name or record.team_name
             record.team_email = team_email or record.team_email
@@ -109,6 +111,18 @@ class Sub2apiExportRecordService:
             record.last_exported_at = now
             record.updated_at = now
         await db.flush()
+        await track_export(db, normalized_email, normalized_space, sub2api_account_id)
+        # 导入可能在踢人之前启动、在退组之后才完成，不能漏掉迟到的导出。
+        if team_id is not None:
+            removed = (await db.execute(select(TeamEmailMapping.id).where(
+                TeamEmailMapping.team_id == team_id,
+                TeamEmailMapping.email == normalized_email,
+                TeamEmailMapping.status == "removed",
+            ))).scalar_one_or_none()
+            if type(removed) is int:
+                team = await db.get(Team, team_id)
+                if team:
+                    await enqueue_member_cleanup(db, team, normalized_email)
         return record
 
 

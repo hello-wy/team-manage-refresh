@@ -200,5 +200,33 @@ class Sub2apiService:
             raise Sub2apiImportUncertain("sub2api 创建响应缺少账户 ID，请到目标站点核对")
         return {"account_id": created["id"], "group_count": len(group_ids)}
 
+    async def delete_exported_account(self, account_id, email, team_space_id, base_url, db):
+        """核对导出身份后删除；404 视为已删除，允许安全重试。"""
+        if type(account_id) is not int or account_id <= 0:
+            raise Sub2apiError("缺少有效的 sub2api 账号 ID，无法自动删除")
+        config = await self._config(db)
+        if config.base_url != base_url:
+            raise Sub2apiError("sub2api 地址已变更，保留删除任务等待核对原站点")
+        url = f"{config.base_url}/api/v1/admin/accounts/{account_id}"
+        try:
+            async with self.client_factory(
+                    timeout=REQUEST_TIMEOUT_SECONDS, headers={"x-api-key": config.api_key}) as client:
+                response = await client.get(url)
+                if response.status_code == 404:
+                    return
+                account = response_data(response)
+                credentials = account.get("credentials") if isinstance(account, dict) else None
+                if (not isinstance(credentials, dict)
+                        or account.get("id") != account_id
+                        or account.get("platform") != "openai" or account.get("type") != "oauth"
+                        or str(credentials.get("email") or "").strip().lower() != email
+                        or str(credentials.get("chatgpt_account_id") or "").strip() != team_space_id):
+                    raise Sub2apiError("sub2api 账号的邮箱或 Team 空间不匹配，未执行删除")
+                response = await client.delete(url)
+                if response.status_code not in (404, 204):
+                    response_data(response)
+        except httpx.RequestError as exc:
+            raise Sub2apiError("sub2api 删除请求暂未确认，将自动重试") from exc
+
 
 sub2api_service = Sub2apiService()

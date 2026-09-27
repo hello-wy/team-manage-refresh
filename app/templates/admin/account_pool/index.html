@@ -130,7 +130,7 @@
                             <div class="account-pool-team-badges">
                                 <span class="account-pool-status status-badge {% if entry.status == 'joined' %}status-active{% elif entry.status == 'invited' %}status-pending{% elif entry.status == 'conflict' %}status-error{% else %}status-banned{% endif %}">{% if entry.status == 'joined' %}已加入{% elif entry.status == 'invited' %}待接受邀请{% elif entry.status == 'conflict' %}多个 Team{% else %}未加入{% endif %}</span>
                                 {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>{% endif %}
-                                {% if entry.team_usage %}<span class="account-pool-premium-note">{{ '高级已用' if team_usage.premium_used is sameas true else ('高级未用' if team_usage.premium_used is sameas false else '高级待确认') }}</span>{% endif %}
+                                {% if entry.team_usage and (entry.seat_type == 'premium' or team_usage.premium_used is not none) %}<span class="account-pool-premium-note">{{ '高级已用' if team_usage.premium_used is sameas true else ('高级未用' if team_usage.premium_used is sameas false else '高级使用情况待确认') }}</span>{% endif %}
                             </div>
                         </td>
                         <td data-label="验活状态">

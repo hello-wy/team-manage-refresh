@@ -24,6 +24,7 @@ from app.utils.seat_lock import seat_account_lock
 from app.config import settings
 from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS, account_pool_service
 from app.services.account_pool_team_usage import record_seat_switch
+from app.services.sub2api_cleanup import enqueue_member_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -617,6 +618,8 @@ class TeamService:
                 previous_states=previous_states,
                 seen_at=seen_at or get_now(),
             )
+            await enqueue_member_cleanup(db_session, team, normalized_email)
+            mapping.replacement_export_pending = False
         return mapping
 
     async def _reconcile_team_email_mappings(
@@ -653,6 +656,12 @@ class TeamService:
             current_mappings[email] = mapping
         active_emails = normalized_joined | normalized_invited
         self._mark_missing_mappings(existing_mappings, active_emails, seen_at)
+        if team:
+            for email, mapping in existing_mappings.items():
+                if (previous_states[email][0] in ACTIVE_TEAM_EMAIL_STATUSES
+                        and mapping.status == TEAM_EMAIL_STATUS_REMOVED):
+                    await enqueue_member_cleanup(db_session, team, email)
+                    mapping.replacement_export_pending = False
         await account_pool_service.record_reconciliation(
             db_session,
             team=team,
@@ -3465,6 +3474,13 @@ class TeamService:
                     "team_not_found",
                     f"未找到 ID 为 {team_id} 的 Team",
                 )
+
+            if not email:
+                email = (await db_session.execute(select(TeamEmailMapping.email).where(
+                    TeamEmailMapping.team_id == team_id,
+                    TeamEmailMapping.upstream_user_id == user_id,
+                    TeamEmailMapping.status == TEAM_EMAIL_STATUS_JOINED,
+                ))).scalar_one_or_none()
 
             # 2. 确保母号 AT 有效，用于快照复核和必要时的兜底删除
             access_token = await self.ensure_access_token(team, db_session)

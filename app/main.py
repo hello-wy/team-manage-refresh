@@ -37,6 +37,7 @@ from app.models import Team
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
 from app.services.quota_sync import refresh_export_snapshots, refresh_historical_candidates
+from app.services.sub2api_cleanup import process_pending_cleanup
 from app.utils.time_utils import get_now
 
 # 获取项目根目录
@@ -268,7 +269,21 @@ async def scheduled_export_quota_sync():
         logger.info("后台额度快照同步: exported=%s historical=%s", count, candidates)
 
 
+async def scheduled_sub2api_cleanup():
+    try:
+        async with AsyncSessionLocal() as session:
+            stats = await process_pending_cleanup(session)
+        if stats["scanned"]:
+            logger.info("退组账号 sub2api 清理: scanned=%s deleted=%s failed=%s",
+                        stats["scanned"], stats["deleted"], stats["failed"])
+    except Exception:
+        logger.exception("退组账号 sub2api 清理任务失败")
+
+
 def configure_rotation_jobs():
+    scheduler.add_job(scheduled_sub2api_cleanup, IntervalTrigger(minutes=1),
+                      id="sub2api_cleanup", replace_existing=True, max_instances=1,
+                      coalesce=True, next_run_time=get_now())
     scheduler.add_job(scheduled_rotation, IntervalTrigger(minutes=ROTATION_SCAN_INTERVAL_MINUTES),
                       id="quota_rotation", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(scheduled_export_quota_sync,
