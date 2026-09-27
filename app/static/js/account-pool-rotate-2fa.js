@@ -7,7 +7,7 @@ function showAccountPoolRotatedSecret(email, secret, message) {
 
 async function rotateAccountPool2fa(button) {
     const {entryId, email} = button.dataset;
-    if (!confirm(`确定更换 ${email} 的 2FA 吗？当前验证器密钥将失效。`)) return;
+    if (!await confirmAccountPoolAction(`确定更换 ${email} 的 2FA 吗？当前验证器密钥将失效。`)) return;
     button.disabled = true;
     try {
         const response = await fetch(`/admin/account-pool/${entryId}/rotate-2fa`, {

@@ -27,6 +27,15 @@ async def rotate_account_pool_totp(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
+    from app.models import AccountPoolEntry
+    from app.services.account_pool_owners import require_non_owner
+    entry = await db.get(AccountPoolEntry, entry_id)
+    if entry is None or entry.deleted_at is not None:
+        return JSONResponse(status_code=404, content={"success": False, "error": "账号不存在"})
+    try:
+        await require_non_owner(db, [entry])
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
     try:
         secret = await totp_service.rotate(db, entry_id)
     except AccountPoolTotpError as exc:

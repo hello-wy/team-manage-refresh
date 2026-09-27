@@ -17,7 +17,7 @@ function updateAccountPoolSelectionUi() {
         'accountPoolBatchRotate', 'accountPoolBatchDelete', 'accountPoolBatchClear']) {
         document.getElementById(id).disabled = count === 0;
     }
-    const boxes = [...document.querySelectorAll('.account-pool-row-select')];
+    const boxes = [...document.querySelectorAll('.account-pool-row-select:not(:disabled)')];
     const selectPage = document.getElementById('accountPoolSelectPage');
     if (selectPage) {
         const checked = boxes.filter(box => box.checked).length;
@@ -27,7 +27,8 @@ function updateAccountPoolSelectionUi() {
 }
 
 window.initAccountPoolBatchSelection = function initAccountPoolBatchSelection() {
-    document.querySelectorAll('.account-pool-row-select').forEach(box => {
+    document.querySelectorAll('.account-pool-row-select:disabled').forEach(box => accountPoolSelection.delete(Number(box.value)));
+    document.querySelectorAll('.account-pool-row-select:not(:disabled)').forEach(box => {
         box.checked = accountPoolSelection.has(Number(box.value));
         box.addEventListener('change', () => {
             const id = Number(box.value);
@@ -37,7 +38,7 @@ window.initAccountPoolBatchSelection = function initAccountPoolBatchSelection() 
         });
     });
     document.getElementById('accountPoolSelectPage')?.addEventListener('change', event => {
-        document.querySelectorAll('.account-pool-row-select').forEach(box => {
+        document.querySelectorAll('.account-pool-row-select:not(:disabled)').forEach(box => {
             box.checked = event.target.checked;
             const id = Number(box.value);
             if (box.checked) accountPoolSelection.add(id);
@@ -103,7 +104,7 @@ async function watchAccountPoolBatchExports(jobIds) {
 }
 
 async function exportAccountPoolBatchSub2api() {
-    if (!confirm(`确定将选中的 ${accountPoolSelection.size} 个账号导出到 Sub2API 吗？`)) return;
+    if (!await confirmAccountPoolAction(`确定将选中的 ${accountPoolSelection.size} 个账号导出到 Sub2API 吗？`)) return;
     try {
         const response = await requestAccountPoolBatch('sub2api', selectedAccountPoolIds());
         const result = await response.json();
@@ -193,7 +194,7 @@ async function watchAccountPoolBatchRotations(batchId) {
 }
 
 async function rotateAccountPoolBatch() {
-    if (!confirm(`确定更换选中的 ${accountPoolSelection.size} 个账号的 2FA 吗？旧密钥会失效。`)) return;
+    if (!await confirmAccountPoolAction(`确定更换选中的 ${accountPoolSelection.size} 个账号的 2FA 吗？旧密钥会失效。`)) return;
     try {
         const response = await requestAccountPoolBatch('rotate-2fa', selectedAccountPoolIds());
         const {batch_id: batchId} = await response.json();
@@ -204,7 +205,7 @@ async function rotateAccountPoolBatch() {
 }
 
 async function deleteAccountPoolBatch() {
-    if (!confirm(`确定永久删除选中的 ${accountPoolSelection.size} 个账号及加入历史吗？此操作无法恢复。`)) return;
+    if (!await confirmAccountPoolAction(`确定永久删除选中的 ${accountPoolSelection.size} 个账号及加入历史吗？此操作无法恢复。`)) return;
     try {
         const response = await requestAccountPoolBatch('delete', selectedAccountPoolIds());
         const {deleted} = await response.json();
@@ -267,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('accountPoolBatchClear').addEventListener('click', () => {
         accountPoolSelection.clear();
-        document.querySelectorAll('.account-pool-row-select').forEach(box => { box.checked = false; });
+        document.querySelectorAll('.account-pool-row-select:not(:disabled)').forEach(box => { box.checked = false; });
         updateAccountPoolSelectionUi();
     });
     const saved = savedAccountPoolRotationBatches();

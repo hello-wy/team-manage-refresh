@@ -71,7 +71,7 @@ async function submitAccountPoolCredentialForm(event) {
 }
 
 async function deleteAccountPoolEntry(entryId, email) {
-    if (!confirm(`确定永久删除 ${email} 吗？账号信息和加入历史都会从数据库删除，且无法恢复。`)) return;
+    if (!await confirmAccountPoolAction(`确定永久删除 ${email} 吗？账号信息和加入历史都会从数据库删除，且无法恢复。`)) return;
     try {
         const response = await fetch(`/admin/account-pool/${entryId}`, {
             method: 'DELETE', credentials: 'same-origin'
@@ -152,7 +152,7 @@ function openAccountPoolTeamPicker(entryId, email, teams, action = 'automatic_lo
 }
 
 async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) {
-    if (!confirm(`确定邀请 ${email} 加入所选 Team 吗？`)) return;
+    if (!await confirmAccountPoolAction(`确定邀请 ${email} 加入所选 Team 吗？`)) return;
     const original = button.innerHTML;
     button.disabled = true;
     button.innerHTML = '<i data-lucide="loader-circle" class="spin" aria-hidden="true"></i>';
@@ -192,7 +192,7 @@ async function openAccountPoolInvitePicker(entryId, email, seatType) {
 async function runAccountPoolAutomaticLogin(entryId, email, workspaceId, button) {
     const target = workspaceId ? `Workspace ${workspaceId}` : '当前可用账号';
     const targetHint = workspaceId ? `目标为 ${target}。` : '';
-    if (!confirm(`确定重新登录 ${email} 并导入配置的 sub2api 吗？${targetHint}`)) return;
+    if (!await confirmAccountPoolAction(`确定重新登录 ${email} 并导入配置的 sub2api 吗？${targetHint}`)) return;
     const original = button.innerHTML;
     button.disabled = true;
     button.innerHTML = '<i data-lucide="loader-circle" class="spin" aria-hidden="true"></i>';
@@ -246,7 +246,7 @@ async function watchAccountPoolExportJob(jobId, email) {
 }
 
 async function exportAccountPoolJson(entryId, email, workspaceId, button) {
-    if (!confirm(`确定重新登录 ${email} 并导出最新 JSON 吗？`)) return;
+    if (!await confirmAccountPoolAction(`确定重新登录 ${email} 并导出最新 JSON 吗？`)) return;
     const original = button.innerHTML;
     button.disabled = true;
     button.innerHTML = '<i data-lucide="loader-circle" class="spin" aria-hidden="true"></i>';
@@ -589,6 +589,12 @@ function initAccountPoolActionTooltips() {
 }
 
 function initAccountPoolRowActions() {
+    updateAccountPoolCountdowns();
+    document.querySelectorAll('.account-pool-quota-refresh').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => refreshAccountPoolQuota(button));
+    });
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';
@@ -630,6 +636,43 @@ function initAccountPoolRowActions() {
     });
 }
 
+function accountPoolCountdownLabel(value, now = Date.now()) {
+    const deadline = Date.parse(value);
+    if (!Number.isFinite(deadline) || deadline <= now) return '等待执行';
+    const seconds = Math.ceil((deadline - now) / 1000);
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor(seconds % 3600 / 60);
+    return `释放席位倒计时 ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function updateAccountPoolCountdowns() {
+    document.querySelectorAll('[data-replacement-at]').forEach(node => {
+        node.textContent = accountPoolCountdownLabel(node.dataset.replacementAt);
+    });
+}
+
+async function refreshAccountPoolQuota(button) {
+    if (button.disabled) return;
+    const cell = button.closest('td');
+    const feedback = cell.querySelector('.account-pool-quota-feedback');
+    button.disabled = true;
+    feedback.textContent = '正在读取…';
+    try {
+        const response = await fetch(`/admin/account-pool/${button.dataset.entryId}/usage`, {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.detail || result.error || '刷新额度失败');
+        cell.querySelector('.account-pool-quota-content').innerHTML = result.html;
+        formatQuotaResetTimes();
+        feedback.textContent = result.status === 'ok' ? '刚刚更新' : (result.error || '暂未获取额度');
+    } catch (error) {
+        feedback.textContent = error.message || '刷新额度失败，请重试';
+    } finally {
+        button.disabled = false;
+    }
+}
+
 function initAccountPoolExportJobs() {
     document.querySelectorAll('.account-pool-export-status').forEach(label => {
         if (label.dataset.status === 'pending' || label.dataset.status === 'running') {
@@ -649,6 +692,7 @@ function initAccountPoolPageSizeControl() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    setInterval(updateAccountPoolCountdowns, 1000);
     initAccountPoolActionTooltips();
     const detailsModal = document.getElementById('accountPoolHistoryModal');
     detailsModal?.addEventListener('click', event => {
