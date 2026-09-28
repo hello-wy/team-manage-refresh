@@ -1,5 +1,14 @@
-.rotation-toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.75rem; }
+.rotation-page,
+.rotation-team {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+.rotation-team { overflow: hidden; }
+.rotation-page-header { align-items: center; }
+.rotation-page-header h1 { margin: 0; }
 .rotation-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.rotation-column-controls { flex: 0 0 auto; margin-left: auto; }
 .rotation-switch { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; }
 .rotation-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .rotation-switch-track { width: 2.4rem; height: 1.3rem; border-radius: 1rem; background: #9ca3af; position: relative; transition: background .15s; }
@@ -9,13 +18,21 @@
 .rotation-switch input:focus-visible + .rotation-switch-track { outline: 2px solid #1d4ed8; outline-offset: 2px; }
 .rotation-quota-refresh { margin-left: 0.35rem; vertical-align: top; }
 .rotation-quota-content { display: inline-block; vertical-align: top; }
+.rotation-member-actions { white-space: nowrap; text-align: right; }
+.rotation-member-action-disabled { color: var(--text-muted); display: inline-flex; padding: 0.4rem; }
 .rotation-result:not(:empty) { margin: 0.5rem 0; }
-.rotation-table-container {
+.rotation-page .rotation-table-container {
+    display: block;
+    width: 100%;
+    min-width: 0;
     max-width: 100%;
     overflow-x: auto;
     overflow-y: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
 }
-.rotation-table {
+.rotation-page .rotation-table {
+    width: max-content;
     min-width: 980px;
 }
 .rotation-member-email {
@@ -45,6 +62,7 @@
 .rotation-identity-icon--premium { color: var(--warning); background: var(--warning-soft); }
 .rotation-identity-icon--standard { color: var(--success); background: var(--success-soft); }
 @media (max-width: 640px) {
+    .rotation-page-header { flex-direction: row; }
     .rotation-quota-content { min-width: 170px; }
     .rotation-quota-refresh { margin-left: 0.5rem; }
 }

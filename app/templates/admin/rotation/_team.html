@@ -19,7 +19,7 @@
   </div>
   <div class="rotation-result" aria-live="polite"></div>
   <div class="table-container rotation-table-container"><table class="data-table rotation-table">
-    <thead><tr><th>邮箱</th><th>成员状态</th><th>轮转阶段</th><th>登录状态</th><th>额度</th><th>数据更新时间</th><th>阻塞原因</th></tr></thead>
+    <thead><tr><th>邮箱</th><th>成员状态</th><th>轮转阶段</th><th>登录状态</th><th>额度</th><th>数据更新时间</th><th>阻塞原因</th><th>操作</th></tr></thead>
     <tbody>{% for member in team.members %}{% set usage=member.usage %}
       <tr data-email="{{ member.email }}">
         <td data-label="邮箱">
@@ -35,8 +35,17 @@
         <td data-label="额度"><div class="rotation-quota-content">{% include "admin/rotation/_quota.html" %}</div><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary rotation-quota-refresh" title="刷新此账号额度" aria-label="刷新 {{ member.email }} 的额度"><i data-lucide="refresh-cw"></i></button></td>
         <td data-label="数据更新时间" class="rotation-observed-at">{{ usage.get('observed_at', '未同步') }}</td>
         <td data-label="阻塞原因" class="rotation-blocked-reason">{{ member.blocked_reason or ('额度数据过期或不可用' if not member.quota_fresh else '-') }}</td>
+        <td data-label="操作" class="rotation-member-actions">
+          {% if member.status == 'joined' and member.user_id and member.role != 'account-owner' %}
+          <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger rotation-member-delete" data-user-id="{{ member.user_id }}" title="{{ '成员自行退出' if member.has_login else '管理员代为删除' }}" aria-label="{{ '成员自行退出' if member.has_login else '管理员代为删除' }} {{ member.email }}">
+            <i data-lucide="trash-2" aria-hidden="true"></i>
+          </button>
+          {% elif member.role == 'account-owner' %}
+          <span class="rotation-member-action-disabled" title="所有者不可删除"><i data-lucide="lock-keyhole" aria-hidden="true"></i></span>
+          {% else %}-{% endif %}
+        </td>
       </tr>
-    {% else %}<tr><td colspan="7">暂无成员</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="8">暂无成员</td></tr>{% endfor %}</tbody>
   </table></div>
   <details><summary>动作历史</summary><div class="rotation-actions" data-team-id="{{ team.team_id }}"></div></details>
 </section>

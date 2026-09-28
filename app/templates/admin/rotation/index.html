@@ -3,24 +3,24 @@
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/records.css?v=20260925-rotation">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
-<link rel="stylesheet" href="/static/css/rotation.css?v=20260926-2">
+<link rel="stylesheet" href="/static/css/rotation.css?v=20260928-scroll">
 {% endblock %}
 {% block content %}
 <div class="workspace-page records-workspace-page rotation-page">
-  <header class="page-header"><h1>额度轮转</h1></header>
-  <div class="rotation-toolbar">
-    <div class="dropdown-wrapper">
-      <button type="button" class="btn btn-secondary btn-sm dropdown-toggle" id="rotation-columns-button" aria-expanded="false" aria-controls="rotation-columns-menu">
+  <header class="page-header rotation-page-header">
+    <h1>额度轮转</h1>
+    <div class="dropdown-wrapper rotation-column-controls">
+      <button type="button" class="btn btn-secondary btn-sm dropdown-toggle rotation-columns-button" id="rotation-columns-button" aria-expanded="false" aria-controls="rotation-columns-menu">
         <i data-lucide="columns"></i> 列设置
       </button>
-      <div id="rotation-columns-menu" class="dropdown-menu dropdown-menu-floating" role="menu"></div>
+      <div id="rotation-columns-menu" class="dropdown-menu dropdown-menu-floating rotation-columns-menu" role="menu"></div>
     </div>
-  </div>
+  </header>
   {% for team in rotation_teams %}{% include "admin/rotation/_team.html" %}
   {% else %}<p>暂无 Team。</p>{% endfor %}
 </div>
 {% endblock %}
 {% block extra_js %}
 <script src="/static/js/quota.js?v=20260925-1"></script>
-<script src="/static/js/rotation.js?v=20260926-3"></script>
+<script src="/static/js/rotation.js?v=20260928-scroll"></script>
 {% endblock %}

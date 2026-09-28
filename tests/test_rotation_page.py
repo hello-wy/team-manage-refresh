@@ -53,10 +53,27 @@ class RotationPageTests(unittest.IsolatedAsyncioTestCase):
         view = await load_team_rotation(self.db, self.team)
         html = templates.env.get_template("admin/rotation/_team.html").render(team=view)
         self.assertIn("普通成员", html)
+        self.assertIn("<th>操作</th>", html)
         self.assertIn("有登录状态", html)
         self.assertIn("无登录状态", html)
         self.assertIn("quota-period-5h", html)
         self.assertIn("quota-period-7d", html)
+
+    async def test_rotation_view_exposes_upstream_user_id_for_member_actions(self):
+        from app.main import templates
+        mapping = (await self.db.execute(select(TeamEmailMapping).where(
+            TeamEmailMapping.team_id == 1,
+            TeamEmailMapping.email == "none@example.com",
+        ))).scalar_one()
+        mapping.upstream_user_id = "user-123"
+        await self.db.commit()
+
+        view = await load_team_rotation(self.db, self.team)
+        member = next(row for row in view["members"] if row["email"] == "none@example.com")
+        self.assertEqual(member["user_id"], "user-123")
+        html = templates.env.get_template("admin/rotation/_team.html").render(team=view)
+        self.assertIn('data-user-id="user-123"', html)
+        self.assertIn("管理员代为删除", html)
 
     async def test_member_quota_refresh_updates_only_requested_snapshot(self):
         self.db.add(QuotaSnapshot(email="none@example.com", team_space_id="space-1",

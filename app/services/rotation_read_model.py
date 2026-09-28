@@ -82,6 +82,7 @@ def _member_row(mapping, details):
     authorization = details["authorization"]
     return {
         "email": mapping.email, "role": mapping.member_role or "member",
+        "user_id": getattr(mapping, "upstream_user_id", None),
         "status": mapping.status, "seat_type": mapping.seat_type,
         "has_login": details["has_login"],
         "phase": state.phase if state else mapping.seat_type or "unknown",

@@ -218,6 +218,29 @@ async function runRotation(section) {
     }
 }
 
+async function deleteRotationMember(section, row, button) {
+    const userId = button.dataset.userId;
+    const email = row.dataset.email;
+    if (!userId || !await confirmPageAction(`确定要删除成员 "${email}" 吗？\n\n将优先使用成员登录状态自行退出，没有登录状态时由管理员代为删除。`)) {
+        return;
+    }
+    button.disabled = true;
+    rotationMessage(section, `正在删除 ${email}...`);
+    try {
+        const result = await rotationRequest(
+            `/admin/teams/${section.dataset.teamId}/members/${encodeURIComponent(userId)}/delete`,
+            {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email})},
+        );
+        if (!result.success) throw new Error(result.error || '删除成员失败');
+        await refreshRotation(section);
+        rotationMessage(section, result.message || `${email} 已删除`);
+    } catch (error) {
+        rotationMessage(section, `${email}: ${error.message}`);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 document.querySelector('.rotation-page')?.addEventListener('click', (event) => {
     const section = event.target.closest('.rotation-team');
     if (!section) return;
@@ -225,6 +248,9 @@ document.querySelector('.rotation-page')?.addEventListener('click', (event) => {
     if (button?.matches('.rotation-refresh')) void refreshRotation(section);
     if (button?.matches('.rotation-preview')) void previewRotation(section);
     if (button?.matches('.rotation-run')) void runRotation(section);
+    if (button?.matches('.rotation-member-delete')) {
+        void deleteRotationMember(section, button.closest('tr'), button);
+    }
     if (button?.matches('.rotation-quota-refresh')) {
         void refreshRotationQuota(section, button.closest('tr'), button);
     }
