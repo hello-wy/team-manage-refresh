@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
@@ -7,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolEntry, Team, TeamAccount, TeamEmailMapping
+from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamAccount, TeamEmailMapping
 from app.routes.admin import AccountPoolInviteRequest, invite_account_pool_entry, refresh_account_pool_usage
 from app.routes.account_pool_totp import rotate_account_pool_totp
 from app.services.account_pool import account_pool_service
@@ -16,6 +17,7 @@ from app.services.account_pool_credentials import account_pool_credential_servic
 from app.services.account_pool_rotation import attach_rotation_status
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.encryption import encryption_service
+from app.utils.time_utils import get_now
 
 
 class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
@@ -82,6 +84,28 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
             rows = await account_pool_service.rows_by_ids(db, [owner.id])
             self.assertEqual((await attach_rotation_status(db, rows))[0]["rotation"]["label"], "所有者")
             self.assertIsNotNone(await db.get(AccountPoolEntry, owner.id))
+
+    async def test_recently_joined_account_cannot_be_invited_again(self):
+        async with self.sessions() as db:
+            team = self.team()
+            entry = AccountPoolEntry(email="member@example.com")
+            db.add_all([team, entry])
+            await db.flush()
+            db.add(AccountPoolHistory(
+                account_pool_id=entry.id,
+                team_id=team.id,
+                team_name=team.team_name,
+                team_email=team.email,
+                joined_at=get_now() - timedelta(days=1),
+            ))
+            await db.commit()
+            with patch("app.routes.admin.team_service.add_team_members", new=AsyncMock()) as invite:
+                response = await invite_account_pool_entry(
+                    entry.id, AccountPoolInviteRequest(team_id=team.id), db, {}
+                )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("7 天内加入过", json.loads(response.body)["error"])
+            invite.assert_not_awaited()
 
     async def test_team_name_uses_membership_and_saved_account_names_not_uuid(self):
         space = "a08a87ce-e8ed-4316-9e80-66aa15fb745e"

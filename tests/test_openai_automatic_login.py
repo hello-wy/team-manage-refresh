@@ -23,11 +23,12 @@ class FakeCookies:
 
 
 class FakeResponse:
-    def __init__(self, status_code, *, url="", headers=None, payload=None):
+    def __init__(self, status_code, *, url="", headers=None, payload=None, text=""):
         self.status_code = status_code
         self.url = url
         self.headers = headers or {}
         self.payload = payload or {}
+        self.text = text
 
     def json(self):
         return self.payload
@@ -128,11 +129,13 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exchange.await_args.kwargs["code_verifier"], "test-verifier")
 
     async def test_verify_credentials_stops_before_workspace_and_closes_session(self):
+        workspace_data = json.dumps({"workspaces": [{"id": "team-account", "name": "Team"}]})
+        page = f'<script>streamController.enqueue({json.dumps(workspace_data)})</script>'
         session = FakeSession(
             get_responses=[
                 FakeResponse(302, headers={"location": "/log-in"}),
                 FakeResponse(200), FakeResponse(200), FakeResponse(200),
-                FakeResponse(200),
+                FakeResponse(200, text=page),
             ],
             post_responses=[
                 FakeResponse(200, payload={"continue_url": "/log-in/password"}),

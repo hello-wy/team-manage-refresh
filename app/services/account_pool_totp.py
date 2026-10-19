@@ -30,15 +30,16 @@ def _totp_factor_ids(info: dict[str, Any]) -> list[str]:
 
 
 class AccountPoolTotpService:
-    def __init__(self, authorization, credentials, remote):
+    def __init__(self, authorization, credentials, remote, *, import_profile_saver):
         self._authorization = authorization
         self._credentials = credentials
         self._remote = remote
+        self._import_profile_saver = import_profile_saver
 
-    async def rotate(self, db, entry_id: int) -> str:
+    async def rotate(self, db, entry_id: int, *, populate_name=False) -> str:
         identifier = f"account-pool-login-{entry_id}"
         try:
-            login = await self._authorization.login_entry(db, entry_id)
+            login = await self._login(db, entry_id, populate_name=populate_name)
             token = login.payload["accounts"][0]["credentials"]["access_token"]
             session = await self._remote._get_session(db, identifier)
             headers = self._headers(session, token)
@@ -75,6 +76,13 @@ class AccountPoolTotpService:
             raise AccountPoolTotpError(str(exc)) from exc
         finally:
             await self._remote.clear_session(identifier)
+
+    async def _login(self, db, entry_id, *, populate_name):
+        login = await self._authorization.login_entry(db, entry_id)
+        if populate_name:
+            await self._import_profile_saver(db, entry_id, login.payload)
+            await db.commit()
+        return login
 
     @staticmethod
     def _headers(session, token: str) -> dict[str, str]:

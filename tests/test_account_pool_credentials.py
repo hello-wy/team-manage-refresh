@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from starlette.requests import Request
 
 from app.database import Base
 from app.database import get_db
@@ -176,6 +177,34 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(credentials["password"], "old-password")
             self.assertEqual(credentials["two_factor_secret"], "")
+
+    async def test_more_dialog_contains_editor_without_rendering_plaintext_credentials(self):
+        from app.routes.admin import account_pool_page
+
+        async with self.sessions() as session:
+            session.add(AccountPoolEntry(
+                email="member@example.com",
+                password_encrypted=encryption_service.encrypt_token("private-password"),
+                two_factor_secret_encrypted=encryption_service.encrypt_token("JBSWY3DPEHPK3PXP"),
+            ))
+            await session.commit()
+            request = Request({
+                "type": "http", "method": "GET", "path": "/admin/account-pool",
+                "headers": [], "query_string": b"", "server": ("localhost", 8008),
+            })
+            page = await account_pool_page(request, db=session, current_user={"username": "admin"})
+            html = page.body.decode()
+
+        editor = html.index('<form id="accountPoolCredentialForm"')
+        self.assertLess(html.index('id="accountPoolHistoryModal"'), editor)
+        self.assertLess(editor, html.index('id="accountPoolDetailsContent"'))
+        self.assertIn('id="accountPoolCredentialPassword"', html)
+        self.assertIn('id="accountPoolCredentialTwoFactor"', html)
+        self.assertIn('保存密码 / 2FA', html)
+        self.assertIn('/static/js/account-pool-credential-editor.js', html)
+        self.assertNotIn('id="accountPoolCredentialModal"', html)
+        self.assertNotIn('private-password', html)
+        self.assertNotIn('JBSWY3DPEHPK3PXP', html)
 
 
 class AccountPoolCredentialRouteTests(unittest.TestCase):

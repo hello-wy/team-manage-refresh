@@ -67,6 +67,9 @@ def run_auto_migration():
             "sub2api_account_id": "INTEGER",
             "sub2api_exported_at": "DATETIME",
             "sub2api_import_uncertain": "BOOLEAN NOT NULL DEFAULT 0",
+            "workspace_id": "VARCHAR(100)",
+            "workspace_status": "VARCHAR(30)",
+            "workspace_name": "VARCHAR(255)",
         }
         if table_exists(cursor, "member_authorizations"):
             for column_name, column_type in member_authorization_columns.items():
@@ -268,6 +271,7 @@ def run_auto_migration():
         mapping_columns = {
             "upstream_user_id": "VARCHAR(255)",
             "member_role": "VARCHAR(50)",
+            "member_name": "VARCHAR(255)",
             "seat_type": "VARCHAR(20)",
             "joined_at": "DATETIME",
             "auto_kick_exempt": "BOOLEAN NOT NULL DEFAULT 0",
@@ -328,6 +332,8 @@ def run_auto_migration():
             migrations_applied.append("account_pool_entries")
 
         account_pool_credential_columns = {
+            "name": "VARCHAR(255)",
+            "name_key": "VARCHAR(255)",
             "password_encrypted": "TEXT",
             "two_factor_secret_encrypted": "TEXT",
             "liveness_status": "VARCHAR(20)",
@@ -349,6 +355,7 @@ def run_auto_migration():
                         f"ALTER TABLE account_pool_entries ADD COLUMN {column_name} {column_type}"
                     )
                     migrations_applied.append(f"account_pool_entries.{column_name}")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_pool_name_key ON account_pool_entries (name_key)")
 
         if not table_exists(cursor, "sub2api_export_records"):
             logger.info("创建 sub2api_export_records 表")

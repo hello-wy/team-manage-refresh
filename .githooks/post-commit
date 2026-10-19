@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly DEPLOY_BRANCH="main"
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ "${NETCUP_AUTO_DEPLOY:-1}" == "0" ]]; then
+    printf '%s\n' "[netcup] 自动部署已通过 NETCUP_AUTO_DEPLOY=0 跳过。"
+    exit 0
+fi
+
+current_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+if [[ "$current_branch" != "$DEPLOY_BRANCH" ]]; then
+    printf '%s\n' "[netcup] 当前分支为 ${current_branch:-detached}，仅 ${DEPLOY_BRANCH} 分支自动部署。"
+    exit 0
+fi
+
+git remote get-url origin >/dev/null
+printf '%s\n' "[netcup] 提交已完成，推送 ${DEPLOY_BRANCH} 以触发 Netcup 部署。"
+git push origin "HEAD:${DEPLOY_BRANCH}"

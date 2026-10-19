@@ -1,3 +1,4 @@
+import base64
 import json
 import unittest
 from unittest.mock import AsyncMock
@@ -7,7 +8,9 @@ from app.services.openai_automatic_login import (
     AutomaticLoginDependencies,
     AutomaticLoginRequest,
     OpenAIAutomaticLoginService,
+    OpenAIAutomaticLoginError,
 )
+from app.services.openai_workspace_discovery import discover_workspaces
 
 
 class FakeCookies:
@@ -66,6 +69,36 @@ def auth_page_html():
 
 
 class OpenAIAuthPageTests(unittest.IsolatedAsyncioTestCase):
+    def test_workspace_scan_includes_all_auth_page_stream_documents(self):
+        personal = json.dumps({"workspaces": [{"id": "personal-a", "kind": "personal"}]})
+        prefix = f'<script>streamController.enqueue({json.dumps(personal)})</script>'
+        scan = inspect_auth_page_workspace(prefix + auth_page_html())
+        self.assertEqual({workspace["id"] for workspace in scan["available_workspaces"]},
+                         {"personal-a", "team-a"})
+
+    async def test_personal_cookie_does_not_skip_team_discovery_from_page(self):
+        session = FakeSession([FakeResponse(200, text=auth_page_html())], [])
+        claims = {"workspaces": [{"id": "personal-a", "kind": "personal"}]}
+        encoded = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        session.cookies.set("oai-client-auth-session", f"header.{encoded}.signature")
+        scan = await discover_workspaces(
+            session, "https://auth.openai.com/workspace", device_id="test-device",
+            sentinel_token="test-sentinel", expected_state="test-state",
+        )
+        self.assertEqual({item["id"] for item in scan["available_workspaces"]}, {"personal-a", "team-a"})
+        self.assertEqual(session.get_responses, [])
+        self.assertEqual(session.posts, [])
+
+    async def test_unreadable_auth_page_is_reported_instead_of_claiming_personal_account(self):
+        for response in (FakeResponse(403), FakeResponse(200, text="Unknown page format")):
+            with self.subTest(status=response.status_code):
+                session = FakeSession([response], [])
+                with self.assertRaises(OpenAIAutomaticLoginError):
+                    await discover_workspaces(
+                        session, "https://auth.openai.com/workspace", device_id="test-device",
+                        sentinel_token="test-sentinel", expected_state="test-state",
+                    )
+
     def test_workspace_data_is_decoded_from_react_router_stream(self):
         scan = inspect_auth_page_workspace(auth_page_html())
 

@@ -56,6 +56,18 @@ test('import success is kept when rotation enqueue fails', async () => {
     assert.match(elements.get('accountPoolBatchProgress').textContent, /任务创建失败/);
 });
 
+test('import displays name lookup failures and missing credentials', async () => {
+    const {context, toasts} = runtime();
+    context.fetch = async () => ({ok: true, json: async () => ({success: true,
+        message: '已加入', profiles: {saved: [],
+            failed: [{email: 'new@example.com', error: '登录被拒绝'}],
+            skipped: [{email: 'plain@example.com', reason: '缺少登录密码或 2FA 密钥'}]},
+    })});
+    await context.submitAccountPoolForm({preventDefault() {}});
+    assert.ok(toasts.some(([message, level]) => message.includes('登录被拒绝') && level === 'warning'));
+    assert.ok(toasts.some(([message, level]) => message.includes('缺少登录密码') && level === 'warning'));
+});
+
 test('multiple rotation batches retain unfinished tracking and aggregate progress', async () => {
     const {context, elements, storage, timers, cleared, code} = runtime();
     let secondDone = false;

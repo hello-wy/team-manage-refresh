@@ -167,6 +167,8 @@ class MemberAutoKickService:
                 continue
 
             stats["kicked"] = int(stats["kicked"]) + 1
+            logger.info("成员到期下线已确认: team=%s email=%s method=%s",
+                        member.team_id, member.email, result.get("removal_method"))
             queued = await self._queue_replacement(
                 member.team_id, member.seat_type, db_session
             )
@@ -189,6 +191,9 @@ class MemberAutoKickService:
         team = await db_session.get(Team, team_id)
         if not team:
             return False
+        if team.rotation_mode != "off":
+            # 额度轮转自行根据空位补人，不创建定时下线的旧补位队列。
+            return True
         db_session.add(TeamReplacementQueue(team_id=team_id, seat_type=seat_type))
         team.pending_replacements = int(team.pending_replacements or 0) + 1
         await db_session.commit()
@@ -455,7 +460,6 @@ class MemberAutoKickService:
                 TeamEmailMapping.auto_kick_exempt.is_(False),
                 TeamEmailMapping.upstream_user_id.is_not(None),
                 TeamEmailMapping.member_role != OWNER_ROLE,
-                Team.rotation_mode == "off",
             )
             .order_by(TeamEmailMapping.auto_kick_at.asc())
         )

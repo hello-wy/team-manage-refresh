@@ -31,9 +31,13 @@ class AccountPoolImportRotationTests(unittest.IsolatedAsyncioTestCase):
         self.batch = AccountPoolBatchService(self.sessions, self.totp, encryption_service)
         self.service_patch = patch('app.routes.account_pool_batch.batch_service', self.batch)
         self.service_patch.start()
+        self.authorization = SimpleNamespace(login_entry=AsyncMock(side_effect=RuntimeError('profile unavailable')))
+        self.auth_patch = patch('app.routes.admin.account_pool_authorization_service', self.authorization)
+        self.auth_patch.start()
 
     async def asyncTearDown(self):
         self.service_patch.stop()
+        self.auth_patch.stop()
         await self.engine.dispose()
 
     async def add(self, content, rotate=True):
@@ -74,6 +78,7 @@ class AccountPoolImportRotationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tasks.tasks), 1)
         await tasks()
         self.assertEqual(self.totp.rotate.await_count, 2)
+        self.assertTrue(all(call.kwargs['populate_name'] for call in self.totp.rotate.await_args_list))
         self.assertTrue(all(job.status == 'completed' for job in await self.jobs()))
 
     async def test_repeat_import_does_not_rotate_existing_account_again(self):
@@ -96,6 +101,7 @@ class AccountPoolImportRotationTests(unittest.IsolatedAsyncioTestCase):
         _, result, tasks = await self.add(record('new@example.com'), rotate=False)
         self.assertTrue(result['success'])
         self.assertNotIn('rotation', result)
+        self.assertEqual(len(result['profiles']['failed']), 1)
         self.assertEqual(tasks.tasks, [])
         self.assertEqual(await self.jobs(), [])
         _, updated, _ = await self.add(record('new@example.com').replace('example-password', 'updated-password'), rotate=False)
@@ -110,7 +116,7 @@ class AccountPoolImportRotationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_queue_failure_preserves_import_and_reports_separate_error(self):
         with patch.object(self.batch, 'enqueue_import_rotations', new=AsyncMock(side_effect=RuntimeError('queue unavailable'))):
-            with self.assertLogs('app.routes.admin', level='ERROR'):
+            with self.assertLogs('app.services.account_pool_import', level='ERROR'):
                 status, result, tasks = await self.add(record('new@example.com'))
         self.assertEqual(status, 200)
         self.assertTrue(result['success'])

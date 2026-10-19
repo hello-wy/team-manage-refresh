@@ -99,6 +99,9 @@ class MemberAuthorization(Base):
     sub2api_account_id = Column(Integer, comment="最近一次导入的 sub2api 账户 ID")
     sub2api_exported_at = Column(DateTime, comment="最近一次成功导入 sub2api 的时间")
     sub2api_import_uncertain = Column(Boolean, nullable=False, default=False)
+    workspace_id = Column(String(100), comment="最近一次登录确认的 workspace ID")
+    workspace_status = Column(String(30), comment="最近一次登录确认的 workspace 状态")
+    workspace_name = Column(String(255), comment="最近一次登录确认的 workspace 名称")
     oauth_state = Column(String(100))
     verifier_encrypted = Column(Text)
     oauth_expires_at = Column(DateTime)
@@ -175,6 +178,7 @@ class TeamEmailMapping(Base):
     )
     upstream_user_id = Column(String(255), comment="上游成员用户 ID")
     member_role = Column(String(50), comment="上游成员角色")
+    member_name = Column(String(255), comment="最近同步的成员姓名")
     seat_type = Column(String(20), comment="成员实际席位类型: standard/premium")
     joined_at = Column(DateTime, comment="成员实际加入 Team 的时间")
     auto_kick_exempt = Column(
@@ -281,6 +285,8 @@ class AccountPoolEntry(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), nullable=False, comment="成员邮箱(统一存小写)")
+    name = Column(String(255), comment="自动登录或验活获取的账号名称")
+    name_key = Column(String(255), comment="用于成员姓名匹配的规范化账号名称")
     password_encrypted = Column(Text, comment="加密存储的 ChatGPT 登录密码")
     two_factor_secret_encrypted = Column(Text, comment="加密存储的 2FA 密钥")
     liveness_status = Column(String(20), comment="验活结果: alive/invalid/error/missing")
@@ -312,6 +318,7 @@ class AccountPoolEntry(Base):
 
     __table_args__ = (
         Index("idx_account_pool_email", "email", unique=True),
+        Index("idx_account_pool_name_key", "name_key"),
         Index("idx_account_pool_workspace", "workspace_id"),
     )
 

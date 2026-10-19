@@ -1774,7 +1774,7 @@ class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(statuses["bad-email"], "invalid_email")
             self.assertEqual(statuses["existing@example.com"], "already_exists")
 
-    async def test_add_team_members_marks_no_seat_for_overflow(self):
+    async def test_add_team_members_uses_official_balance_beyond_local_limit(self):
         await self._seed_team(current_members=4, max_members=5)
         team_service = TeamService()
         add_member_calls = []
@@ -1808,12 +1808,12 @@ class TeamServiceBulkInviteTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertTrue(result["success"])
-            self.assertTrue(result["partial_success"])
-            self.assertEqual(add_member_calls, ["first@example.com"])
-            self.assertEqual(result["summary"]["invited"], 1)
-            self.assertEqual(result["summary"]["no_seat"], 1)
+            self.assertFalse(result["partial_success"])
+            self.assertEqual(add_member_calls, ["first@example.com", "second@example.com"])
+            self.assertEqual(result["summary"]["invited"], 2)
+            self.assertEqual(result["summary"]["no_seat"], 0)
             statuses = {item["email"]: item["status"] for item in result["results"]}
-            self.assertEqual(statuses["second@example.com"], "no_seat")
+            self.assertEqual(statuses["second@example.com"], "invited")
 
     async def test_add_team_member_returns_success_without_blocking_on_verification(self):
         """单邮箱后台邀请：send_invite 返回成功后立即返回，不再同步阻塞 15s 等成员同步。

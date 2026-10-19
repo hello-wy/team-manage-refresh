@@ -77,7 +77,7 @@ class OwnerLivenessTests(unittest.IsolatedAsyncioTestCase):
             db.add(Team(id=2, email='owner@example.com', account_id='space-2', access_token_encrypted='stored-token'))
             await db.commit()
         with patch.object(admin, 'account_pool_liveness_service', self.service), patch.object(main, 'AsyncSessionLocal', self.sessions):
-            self.assertEqual((await main.scheduled_account_pool_liveness())['alive'], 1)
+            self.assertEqual((await main.run_account_pool_liveness_check())['alive'], 1)
         self.remote.assert_awaited_once()
         async with self.sessions() as db:
             db.add(AccountPoolEntry(id=10, email='owner@example.com'))

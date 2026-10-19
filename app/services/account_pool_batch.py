@@ -118,15 +118,15 @@ class AccountPoolBatchService:
         batch_id = await self.enqueue_rotations(session, ids) if ids else None
         return {"batch_id": batch_id, "queued": len(ids), "skipped": skipped}
 
-    async def run_rotations(self, batch_id):
+    async def run_rotations(self, batch_id, *, populate_names=False):
         async with self._sessions() as session:
             ids = (await session.execute(select(AccountPoolTotpJob.id).where(
                 AccountPoolTotpJob.batch_id == batch_id
             ).order_by(AccountPoolTotpJob.id))).scalars().all()
         for job_id in ids:
-            await self._run_rotation(job_id)
+            await self._run_rotation(job_id, populate_names=populate_names)
 
-    async def _run_rotation(self, job_id):
+    async def _run_rotation(self, job_id, *, populate_names=False):
         async with self._sessions() as session:
             job = await session.get(AccountPoolTotpJob, job_id)
             job.status = "running"
@@ -134,7 +134,8 @@ class AccountPoolBatchService:
             try:
                 entries = await self.entries(session, [job.account_pool_id])
                 await require_non_owner(session, entries)
-                secret = await self._totp.rotate(session, job.account_pool_id)
+                secret = await self._totp.rotate(session, job.account_pool_id,
+                                                 populate_name=populate_names)
             except Exception as exc:
                 await session.rollback()
                 job = await session.get(AccountPoolTotpJob, job_id)

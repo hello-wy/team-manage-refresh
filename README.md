@@ -370,6 +370,22 @@ curl -fsSL https://raw.githubusercontent.com/hello-wy/team-manage-refresh/main/d
 
 GHCR 登录使用当前 workflow 的 `GITHUB_TOKEN`，不需要额外配置 GHCR 用户名或 token。配置完成后，向 `main` push 一次即可在 Actions 页面查看构建和部署日志。
 
+#### 3. 启用本地任务完成后的自动触发
+
+项目提供 Git `post-commit` hook。启用一次即可：
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+以后在 `main` 分支完成提交后，hook 会自动执行 `git push origin main`，随后由上面的 GitHub Actions 构建镜像并部署到 Netcup。其他分支不会自动部署；临时跳过一次可使用：
+
+```bash
+NETCUP_AUTO_DEPLOY=0 git commit ...
+```
+
+hook 只负责触发 push，不读取或保存 Netcup 私钥；服务器地址、SSH 凭据和部署目录仍只保存在 GitHub Actions Secrets 中。
+
 ### 从源码构建路径升级
 
 `方式 B` 用户升级仍需 `git pull && docker compose up -d --build`，没有变化。

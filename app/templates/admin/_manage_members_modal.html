@@ -1,0 +1,136 @@
+    <!-- 成员管理 模态框 -->
+    <div id="manageMembersModal" class="modal-overlay">
+        <div class="modal member-management-modal">
+            <div class="modal-header">
+                <div>
+                    <h3 id="modalTeamName">Team 成员管理</h3>
+                    <small id="modalTeamEmail" class="text-muted" style="display: block; margin-top: 4px;"></small>
+                </div>
+                <button class="modal-close" onclick="hideModal('manageMembersModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="member-sync-toolbar">
+                    <p id="memberSyncStatus" class="text-muted" role="status" aria-live="polite"></p>
+                    <button type="button" class="btn btn-sm btn-secondary member-balance-refresh" onclick="loadModalMemberList(window.currentTeamId)">
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i> 刷新余额
+                    </button>
+                </div>
+                <div class="member-overview">
+                    <div id="memberSeatSummary" class="member-seat-summary" role="status" aria-live="polite">正在读取席位数量...</div>
+                    <div class="member-auto-kick-settings">
+                        <span class="member-overview-icon member-overview-icon-clock" aria-hidden="true">
+                            <i data-lucide="clock-3"></i>
+                        </span>
+                        <div class="member-auto-kick-content">
+                            <strong title="按成员实际加入时间计算；Team 所有者不会自动下线。">成员自动下线</strong>
+                            <div class="member-auto-kick-controls">
+                                <label for="memberAutoKickHours">加入后</label>
+                                <input id="memberAutoKickHours" class="form-control" type="number" value="2"
+                                    min="1" max="8760" step="1" inputmode="numeric"
+                                    aria-describedby="memberAutoKickHelp">
+                                <span>小时</span>
+                                <button id="memberAutoKickSaveBtn" type="button" class="btn btn-primary"
+                                    onclick="saveMemberAutoKickSettings()">
+                                    <i data-lucide="clock-3"></i> 保存
+                                </button>
+                            </div>
+                            <small id="memberAutoKickHelp" class="member-visually-hidden">按成员实际加入时间计算；Team 所有者不会自动下线。</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-muted member-seat-hint">
+                    <span><i data-lucide="info" aria-hidden="true"></i>剩余席位已扣除邀请及待确认操作的预留。</span>
+                </div>
+                <p id="memberSeatBalanceError" class="text-muted" role="status"></p>
+                <!-- 原生折叠控件同时支持鼠标、键盘和屏幕阅读器。 -->
+                <details class="member-invite-panel">
+                    <summary class="member-invite-summary">
+                        <span class="member-overview-icon member-overview-icon-invite" aria-hidden="true">
+                            <i data-lucide="user-plus"></i>
+                        </span>
+                        <span class="member-invite-summary-copy">
+                            <strong>新增成员</strong>
+                            <small class="member-invite-collapsed-copy">点击展开邀请成员</small>
+                            <small class="member-invite-expanded-copy">填写邮箱或从账号号池选择</small>
+                        </span>
+                        <i data-lucide="chevron-down" class="member-invite-chevron" aria-hidden="true"></i>
+                    </summary>
+                    <form id="addMemberForm" class="member-invite-form" onsubmit="handleAddMember(event)">
+                        <div class="form-group member-invite-emails">
+                            <label for="memberEmails">新增成员邮箱</label>
+                            <textarea id="memberEmails" name="memberEmails" class="form-control" rows="4"
+                                oninput="updateMemberInviteAvailability()"
+                                placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com"></textarea>
+                            <small class="form-text">每行一个邮箱，或用逗号分隔；自动去重。</small>
+                        </div>
+                        <div class="form-group member-invite-seat">
+                            <label for="inviteSeatType">邀请席位类型</label>
+                            <select id="inviteSeatType" name="seatType" class="form-control" onchange="updateMemberInviteAvailability()">
+                                <option value="default">标准席位</option>
+                                <option value="premium">高级席位</option>
+                            </select>
+                            <small class="form-text">本批次所有邮箱使用所选类型。</small>
+                            <small id="memberInviteQuotaHint" class="form-text" aria-live="polite">正在读取余额...</small>
+                        </div>
+                        <div class="form-group member-pool-picker">
+                            <label for="memberPoolEmail">从账号号池选择</label>
+                            <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
+                                <option value="">正在读取可用账号...</option>
+                            </select>
+                            <small id="memberPoolEmailHint" class="form-text" aria-live="polite">上方显示 7 天内加入过的账号，下方显示 7 天内没有加入过的账号，均可选择。</small>
+                        </div>
+                        <div class="member-invite-actions">
+                            <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn" disabled>
+                                <i data-lucide="user-plus"></i> 发送邀请
+                            </button>
+                        </div>
+                    </form>
+                </details>
+
+
+
+                <!-- 已加入成员 -->
+                <div class="content-section" style="margin-bottom: 1.5rem;">
+                    <h4 style="margin-bottom: 1rem; color: var(--success);">已加入成员</h4>
+                    <div class="table-container" style="max-height: 250px; overflow-y: auto; margin: 0;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>邮箱</th>
+                                    <th style="width: 100px;">角色</th>
+                                    <th style="width: 200px;">席位类型</th>
+                                    <th style="width: 160px;">加入时间</th>
+                                    <th style="width: 160px;">下线时间</th>
+                                    <th style="text-align: right; width: 128px;">授权与操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modalJoinedMembersTableBody">
+                                <!-- 动态加载内容 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 待加入成员 -->
+                <div class="content-section" style="margin: 0;">
+                    <h4 style="margin-bottom: 1rem; color: var(--warning);">待加入成员 (邀请中)</h4>
+                    <div class="table-container" style="max-height: 250px; overflow-y: auto; margin: 0;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>邮箱</th>
+                                    <th style="width: 100px;">角色</th>
+                                    <th style="width: 120px;">席位类型</th>
+                                    <th style="width: 160px;">邀请时间</th>
+                                    <th style="text-align: right; width: 128px;">授权与操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modalInvitedMembersTableBody">
+                                <!-- 动态加载内容 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

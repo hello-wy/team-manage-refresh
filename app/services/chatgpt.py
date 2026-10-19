@@ -17,10 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession as DBAsyncSession
 from app.utils.jwt_parser import JWTParser
 from app.utils.proxy import build_curl_cffi_proxies
 from app.utils.seats import upstream_seat_type
+from app.services.member_pagination import MEMBER_PAGE_SIZE, fetch_all_members, fetch_member_batch
 
 logger = logging.getLogger(__name__)
 
-TEAM_PLAN_TYPES = frozenset({"team", "business"})
+TEAM_PLAN_TYPES = frozenset({"team", "business", "self_serve_business_prolite"})
 
 
 class ChatGPTService:
@@ -249,40 +250,29 @@ class ChatGPTService:
         )
 
     async def get_members(
-        self,
-        access_token: str,
-        account_id: str,
-        db_session: DBAsyncSession,
-        identifier: str = "default"
+        self, access_token: str, account_id: str, db_session: DBAsyncSession,
+        identifier: str = "default",
     ) -> Dict[str, Any]:
-        """获取 Team 成员列表"""
-        all_members = []
-        offset = 0
-        limit = 50
-        while True:
-            url = f"{self.BASE_URL}/accounts/{account_id}/users?limit={limit}&offset={offset}"
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "chatgpt-account-id": account_id,
-            }
-            result = await self._make_request("GET", url, headers, db_session=db_session, identifier=identifier)
-            if not result["success"]:
-                return {
-                    "success": False,
-                    "members": [],
-                    "total": 0,
-                    "error": result["error"],
-                    "error_code": result.get("error_code"),
-                    "status_code": result.get("status_code"),
-                }
-            data = result["data"]
-            items = data.get("items", [])
-            total = data.get("total", 0)
-            all_members.extend(items)
-            if len(all_members) >= total:
-                break
-            offset += limit
-        return {"success": True, "members": all_members, "total": len(all_members), "error": None}
+        """内部需要完整快照的操作仍读取全部成员。"""
+        async def fetch_batch(offset):
+            return await self.get_members_batch(
+                access_token, account_id, db_session, identifier=identifier, offset=offset,
+            )
+        return await fetch_all_members(fetch_batch)
+
+    async def get_members_batch(
+        self, access_token: str, account_id: str, db_session: DBAsyncSession,
+        *, identifier: str = "default", offset: int = 0,
+    ) -> Dict[str, Any]:
+        """每批最多读取十页，使用实际返回条数推进分页。"""
+        headers = {"Authorization": f"Bearer {access_token}", "chatgpt-account-id": account_id}
+
+        async def fetch_page(page_offset):
+            url = f"{self.BASE_URL}/accounts/{account_id}/users?limit={MEMBER_PAGE_SIZE}&offset={page_offset}"
+            return await self._make_request(
+                "GET", url, headers, db_session=db_session, identifier=identifier,
+            )
+        return await fetch_member_batch(fetch_page, offset=offset)
 
     async def get_invites(
         self,

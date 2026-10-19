@@ -78,6 +78,11 @@ class AccountPoolService:
             TeamEmailMapping.last_invited_at.is_not(None),
             TeamEmailMapping.last_invited_at > cutoff,
         )
+        recent_team_join = select(AccountPoolHistory.id).where(
+            AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
+            AccountPoolHistory.team_id == team_id,
+            AccountPoolHistory.joined_at > cutoff,
+        )
         result = await db_session.execute(
             select(AccountPoolEntry)
             .where(
@@ -85,10 +90,40 @@ class AccountPoolService:
                 ~active_mapping.exists(),
                 ~owner_email_exists(),
                 ~recent_team_invite.exists(),
+                ~recent_team_join.exists(),
                 ~AccountPoolEntry.id.in_(excluded_ids),
             )
             .order_by(AccountPoolEntry.updated_at.asc(), AccountPoolEntry.id.asc())
             .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def is_recently_joined(
+        self,
+        team_id: int,
+        entry_id: int,
+        db_session: AsyncSession,
+    ) -> bool:
+        cutoff = get_now() - timedelta(days=TEAM_REJOIN_COOLDOWN_DAYS)
+        result = await db_session.execute(
+            select(AccountPoolHistory.id).where(
+                AccountPoolHistory.account_pool_id == entry_id,
+                AccountPoolHistory.team_id == team_id,
+                AccountPoolHistory.joined_at > cutoff,
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def get_by_email(
+        self,
+        db_session: AsyncSession,
+        email: str,
+    ) -> Optional[AccountPoolEntry]:
+        result = await db_session.execute(
+            select(AccountPoolEntry).where(
+                AccountPoolEntry.email == self.normalize_email(email),
+                AccountPoolEntry.deleted_at.is_(None),
+            )
         )
         return result.scalar_one_or_none()
 
@@ -106,9 +141,15 @@ class AccountPoolService:
             TeamEmailMapping.email == AccountPoolEntry.email,
             TeamEmailMapping.status.in_(ACTIVE_MAPPING_STATUSES),
         )
+        recent_team_join = select(AccountPoolHistory.id).where(
+            AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
+            AccountPoolHistory.team_id == team_id,
+            AccountPoolHistory.joined_at > cutoff,
+        )
         conditions = [
             AccountPoolEntry.deleted_at.is_(None),
             ~active_mapping.exists(),
+            ~recent_team_join.exists(),
             ~owner_email_exists(),
             or_(
                 AccountPoolEntry.workspace_id.is_(None),
@@ -130,24 +171,11 @@ class AccountPoolService:
         if not entries:
             return []
 
-        recent_result = await db_session.execute(
-            select(
-                AccountPoolHistory.account_pool_id,
-                func.max(AccountPoolHistory.joined_at),
-            )
-            .where(
-                AccountPoolHistory.account_pool_id.in_([entry.id for entry in entries]),
-                AccountPoolHistory.team_id == team_id,
-                AccountPoolHistory.joined_at > cutoff,
-            )
-            .group_by(AccountPoolHistory.account_pool_id)
-        )
-        recent_entry_ids = {account_pool_id for account_pool_id, _ in recent_result.all()}
         return [
             {
                 "id": entry.id,
                 "email": entry.email,
-                "recently_joined": entry.id in recent_entry_ids,
+                "recently_joined": False,
             }
             for entry in entries
         ]

@@ -10,6 +10,7 @@ from app.dependencies.auth import require_admin
 from app.routes.admin import account_pool_authorization_service, team_service
 from app.services.account_pool_credentials import account_pool_credential_service
 from app.services.account_pool_totp import AccountPoolTotpError, AccountPoolTotpService
+from app.services.account_pool_profile import save_import_account_name
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/account-pool", tags=["admin-account-pool"])
@@ -18,6 +19,7 @@ totp_service = AccountPoolTotpService(
     account_pool_authorization_service,
     account_pool_credential_service,
     team_service.chatgpt_service,
+    import_profile_saver=save_import_account_name,
 )
 
 

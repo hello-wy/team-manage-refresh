@@ -1,0 +1,27 @@
+<div id="accountPoolHistoryModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="accountPoolDetailsTitle">
+    <div class="modal modal-large">
+        <div class="modal-header">
+            <h3 id="accountPoolDetailsTitle"><i data-lucide="history" style="width: 18px; height: 18px;"></i> 账号详情</h3>
+            <button class="modal-close" type="button" aria-label="关闭账号详情" onclick="closeAccountPoolDetails()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="accountPoolHistoryEmail" class="text-muted"></p>
+            {% include "admin/account_pool/_credential_form.html" %}
+            <div id="accountPoolDetailsContent"></div>
+            <div id="accountPoolHistoryContent" class="account-pool-history-list">加载中...</div>
+        </div>
+    </div>
+</div>
+
+<div id="accountPoolTeamPickerModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i data-lucide="layers"></i> <span id="accountPoolTeamPickerTitle">选择目标 Team</span></h3>
+            <button class="modal-close" type="button" onclick="hideModal('accountPoolTeamPickerModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="accountPoolTeamPickerEmail" class="text-muted"></p>
+            <div id="accountPoolTeamPickerOptions" class="account-pool-team-picker-options"></div>
+        </div>
+    </div>
+</div>

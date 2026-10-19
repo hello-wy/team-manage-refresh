@@ -12,11 +12,11 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import logging
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -30,6 +30,7 @@ from app.database import init_db, close_db, AsyncSessionLocal, engine
 from app.services.auth import auth_service
 from app.services.team import team_service
 from app.services.member_auto_kick import member_auto_kick_service
+from app.services.member_departure import AccountPoolMemberExit
 from app.services.account_pool import account_pool_service
 from app.services.replacement_export import ReplacementExportService
 from app.models import Team
@@ -70,8 +71,6 @@ MAX_WARRANTY_AUTO_KICK_INTERVAL_HOURS = 24 * 7
 MEMBER_AUTO_KICK_SCAN_INTERVAL_MINUTES = 1
 ROTATION_SCAN_INTERVAL_MINUTES = 1
 EXPORT_QUOTA_SYNC_INTERVAL_MINUTES = 5
-DEFAULT_ACCOUNT_POOL_LIVENESS_CRON = "30 2 * * *"
-ACCOUNT_POOL_LIVENESS_JOB_ID = "account_pool_liveness"
 
 
 def _safe_int(value, default):
@@ -297,41 +296,7 @@ def configure_rotation_jobs():
         scheduler.start()
 
 
-def account_pool_liveness_trigger(expression: str) -> CronTrigger:
-    trigger = CronTrigger.from_crontab(expression, timezone=settings.timezone)
-    if trigger.get_next_fire_time(None, datetime.now(trigger.timezone)) is None:
-        raise ValueError("cron 表达式没有可执行时间")
-    return trigger
-
-
-def configure_account_pool_liveness_job(expression: str) -> None:
-    trigger = account_pool_liveness_trigger(expression)
-    if scheduler.get_job(ACCOUNT_POOL_LIVENESS_JOB_ID):
-        scheduler.reschedule_job(ACCOUNT_POOL_LIVENESS_JOB_ID, trigger=trigger)
-    else:
-        scheduler.add_job(
-            scheduled_account_pool_liveness,
-            trigger=trigger,
-            id=ACCOUNT_POOL_LIVENESS_JOB_ID,
-            max_instances=1,
-            replace_existing=True,
-        )
-    if not scheduler.running:
-        scheduler.start()
-
-
-async def configure_account_pool_liveness_job_from_settings() -> str:
-    from app.services.settings import settings_service
-
-    async with AsyncSessionLocal() as session:
-        expression = await settings_service.get_setting(
-            session, "account_pool_liveness_cron", DEFAULT_ACCOUNT_POOL_LIVENESS_CRON
-        )
-    configure_account_pool_liveness_job(expression)
-    return expression
-
-
-async def scheduled_account_pool_liveness() -> dict[str, int]:
+async def run_account_pool_liveness_check() -> dict[str, int]:
     from app.routes.admin import account_pool_liveness_service
 
     counts = await account_pool_liveness_service.check_all(AsyncSessionLocal)
@@ -495,13 +460,23 @@ async def scheduled_warranty_auto_kick():
         logger.error(f"后台邀请过期踢人任务执行失败: {e}")
 
 
+async def delete_due_team_member(team_id, user_id, db, *, email):
+    return await team_service.delete_team_member(
+        team_id, user_id, db, email=email,
+        member_exit=AccountPoolMemberExit(
+            authorization=admin.account_pool_authorization_service,
+            remote=team_service.chatgpt_service,
+        ),
+    )
+
+
 async def scheduled_member_auto_kick():
     """按成员计划下线时间自动移除已到期账号。"""
     try:
         async with AsyncSessionLocal() as session:
             stats = await member_auto_kick_service.run_due_members(
                 session,
-                team_service.delete_team_member,
+                delete_due_team_member,
                 seat_balance_provider=team_service.get_team_seat_balance,
                 invite_replacement=lambda team_id, db_session, seat_type: (
                     account_pool_service.invite_replacement(
@@ -612,9 +587,6 @@ async def lifespan(app: FastAPI):
         )
         configure_rotation_jobs()
 
-        liveness_cron = await configure_account_pool_liveness_job_from_settings()
-        logger.info("账号号池验活任务已启动: cron=%s timezone=%s", liveness_cron, settings.timezone)
-
         logger.info("数据库初始化完成")
     except Exception as exc:
         # 数据库、迁移或任务初始化失败时不能继续对外提供服务，否则会导致
@@ -666,6 +638,9 @@ app.add_middleware(
     same_site="lax",
     https_only=settings.session_cookie_secure,
 )
+
+# 压缩 CSS/JS/HTML 等较大的响应，降低首屏传输时间。
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # 配置静态文件
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")

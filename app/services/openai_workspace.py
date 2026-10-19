@@ -44,6 +44,20 @@ def inspect_workspace_claims(claims: Any) -> dict[str, Any]:
     }
 
 
+def merge_workspace_scans(scans):
+    workspaces = {}
+    current_id = ""
+    for scan in scans:
+        if scan.get("workspace_id"):
+            current_id = scan["workspace_id"]
+        for item in scan.get("available_workspaces", []):
+            workspaces[item["id"]] = item
+    return inspect_workspace_claims({
+        "workspace_id": current_id,
+        "workspaces": list(workspaces.values()),
+    })
+
+
 def token_workspace_id(token: str) -> str:
     claims = _jwt_claims(token)
     auth = claims.get("https://api.openai.com/auth")

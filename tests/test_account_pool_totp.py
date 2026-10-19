@@ -39,7 +39,9 @@ class AccountPoolTotpServiceTests(unittest.IsolatedAsyncioTestCase):
             _get_session=AsyncMock(return_value=self.session),
             clear_session=AsyncMock(),
         )
-        self.service = AccountPoolTotpService(self.authorization, self.credentials, self.remote)
+        self.save_name = AsyncMock()
+        self.service = AccountPoolTotpService(self.authorization, self.credentials, self.remote,
+                                              import_profile_saver=self.save_name)
 
     async def test_rotates_factor_and_saves_secret_after_remote_confirmation(self):
         self.session.get.side_effect = [
@@ -67,6 +69,7 @@ class AccountPoolTotpServiceTests(unittest.IsolatedAsyncioTestCase):
             unittest.mock.ANY, 7, two_factor_secret=NEW_SECRET
         )
         self.remote.clear_session.assert_awaited_once_with("account-pool-login-7")
+        self.save_name.assert_not_awaited()
 
     async def test_does_not_enroll_when_disable_is_unconfirmed(self):
         self.session.get.side_effect = [response(info("old-id", True)), response(info("old-id", True))]
@@ -77,6 +80,19 @@ class AccountPoolTotpServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.session.post.await_count, 1)
         self.credentials.update_credentials.assert_not_awaited()
+
+    async def test_import_reuses_rotation_login_to_save_name_once(self):
+        self.session.get.side_effect = [
+            response(info("old-id", True)), response(info()), response(info("new-id", True)),
+        ]
+        self.session.post.side_effect = [response({"success": True}),
+            response({"secret": NEW_SECRET, "session_id": "enroll-session"}),
+            response({"success": True})]
+        db = SimpleNamespace(commit=AsyncMock())
+        await self.service.rotate(db, 7, populate_name=True)
+        self.authorization.login_entry.assert_awaited_once_with(db, 7)
+        self.save_name.assert_awaited_once_with(db, 7, self.authorization.login_entry.return_value.payload)
+        db.commit.assert_awaited_once()
 
     async def test_does_not_disable_when_verified_factor_differs(self):
         self.session.get.return_value = response(info("old-id", True))

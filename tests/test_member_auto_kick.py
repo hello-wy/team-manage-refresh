@@ -73,6 +73,33 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIsNone(by_email["owner@example.com"].auto_kick_at)
 
+    async def test_replacement_uses_sync_time_instead_of_historical_created_time(self):
+        historical = get_now() - timedelta(days=20)
+        async with self.session_factory() as session:
+            await self._seed_team(session)
+            session.add(TeamEmailMapping(
+                team_id=1, email="replacement@example.com", status="invited",
+                source="auto_replacement", replacement_export_pending=True,
+            ))
+            await session.commit()
+
+            before_sync = get_now()
+            await TeamService()._reconcile_team_email_mappings(
+                1,
+                {"replacement@example.com"},
+                set(),
+                session,
+                joined_members={"replacement@example.com": {
+                    "id": "replacement-user", "role": "standard-user",
+                    "created_time": historical.isoformat(),
+                }},
+            )
+            await session.commit()
+
+            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
+            self.assertGreaterEqual(mapping.joined_at, before_sync)
+            self.assertGreater(mapping.auto_kick_at, get_now())
+
     async def test_update_hours_recalculates_existing_deadlines(self):
         joined_at = get_now() - timedelta(hours=1)
         async with self.session_factory() as session:

@@ -66,16 +66,20 @@ class MemberAuthorizationService:
             record.sub2api_account_id = None
             record.sub2api_exported_at = None
             record.sub2api_import_uncertain = False
+            record.workspace_id = None
+            record.workspace_status = None
+            record.workspace_name = None
         return record
 
     async def _membership(self, team, email, db):
-        """仅信任即时上游列表，不使用本地映射或 Token 的套餐声明判定入组。"""
+        """以实时成员列表确认在组，复用成员管理的身份解析补全隐藏邮箱。"""
         token = await self.teams.ensure_access_token(team, db)
         if not token:
             raise MemberAuthorizationError("Team 管理凭证失效，无法确认成员状态")
         result = await self.remote.get_members(token, team.account_id, db, identifier=team.email)
         if not result.get("success"):
             raise MemberAuthorizationError("成员列表读取失败，暂时无法确认入组结果")
+        result = await self.teams._normalize_member_profiles(team, result, db)
         if any(str(m.get("email") or "").strip().lower() == email for m in result.get("members", [])):
             return "joined"
         invites = await self.remote.get_invites(token, team.account_id, db, identifier=team.email)
@@ -113,9 +117,7 @@ class MemberAuthorizationService:
 
     async def _export_payload(self, team, email, credentials, db):
         claims, identity = self._identity(credentials, email)
-        payload = build_member_export_payload(
-            team, email, credentials, claims, identity
-        )
+        payload = build_member_export_payload(team, email, credentials, claims, identity)
         return await apply_export_settings(payload, db)
 
     async def _save_export_json(self, record, payload, db):
@@ -134,9 +136,15 @@ class MemberAuthorizationService:
         self._identity(credentials, email)
         if not credentials["refresh_token"]:
             raise MemberAuthorizationError("授权未返回 Refresh Token，请重新登录")
-        record.credentials_encrypted = encryption_service.encrypt_token(
-            json.dumps(credentials)
-        )
+        workspace = result.get("workspace") or {}
+        workspace_id = str(workspace.get("workspace_id") or "").strip()
+        if workspace_id and workspace_id != str(team.account_id):
+            raise MemberAuthorizationError("自动登录选择的 workspace 与目标 Team ID 不一致")
+        if workspace_id:
+            record.workspace_id = workspace_id
+            record.workspace_status = str(workspace.get("status") or "")
+            record.workspace_name = str(workspace.get("workspace_name") or "")
+        record.credentials_encrypted = encryption_service.encrypt_token(json.dumps(credentials))
         record.authorized_at = get_now()
         record.oauth_state = None
         record.verifier_encrypted = None
@@ -175,7 +183,11 @@ class MemberAuthorizationService:
             except OpenAIAutomaticLoginError as exc:
                 raise MemberAuthorizationError(str(exc)) from exc
             await self._store_credentials(record, team, email, result, db)
-        return await self.check(team_id, email, db)
+        status = await self.check(team_id, email, db)
+        workspace = result.get("workspace") or {}
+        workspace_id = str(workspace.get("workspace_id") or "").strip()
+        status["workspace_verified"] = workspace_id == str(team.account_id) and bool(workspace_id)
+        return status
 
     async def callback(self, team_id, email, callback_url, db):
         team = await self._team(team_id, db)
@@ -236,7 +248,7 @@ class MemberAuthorizationService:
             raise MemberAuthorizationError("缺少 Refresh Token，请重新授权")
         return credentials
 
-    async def _check(self, team, email, db):
+    async def _check(self, team, email, db, allow_invited=False):
         record = await self._record(team, email, db)
         data = {"email": email, "account_id": team.account_id,
                 "authorized": bool(record and record.credentials_encrypted),
@@ -245,6 +257,10 @@ class MemberAuthorizationService:
                 "sub2api_exported": bool(record and record.sub2api_exported_at),
                 "sub2api_exported_at": record.sub2api_exported_at.isoformat() if record and record.sub2api_exported_at else None,
                 "sub2api_account_id": record.sub2api_account_id if record else None,
+                "workspace_verified": bool(
+                    record and record.workspace_id == str(team.account_id)
+                    and record.workspace_status == "workspace_ok"
+                ),
                 "authorization_pending": bool(record and record.oauth_state and record.oauth_expires_at and record.oauth_expires_at > get_now()),
                 "membership": "unknown", "can_export": False}
         credentials = None
@@ -264,7 +280,9 @@ class MemberAuthorizationService:
                 data["membership"] = "absent"
             if not data["authorized"]:
                 data["message"] = "尚未授权，请先获取授权链接并完成回调解析"
-            elif data["membership"] != "joined":
+            elif data["membership"] != "joined" and not (
+                allow_invited and data["membership"] == "invited" and data["workspace_verified"]
+            ):
                 data["message"] = "已授权，等待成员接受邀请后重新判定" if data["membership"] == "invited" else "成员已不在当前 Team，无法导出"
             else:
                 credentials = await self._credentials(record, email, db)
@@ -280,10 +298,10 @@ class MemberAuthorizationService:
             data, _ = await self._check(team, email, db)
             return data
 
-    async def export(self, team_id, email, db):
+    async def export(self, team_id, email, db, allow_invited=False):
         team = await self._team(team_id, db)
         async with seat_account_lock(team.account_id):
-            data, credentials = await self._check(team, email, db)
+            data, credentials = await self._check(team, email, db, allow_invited=allow_invited)
             if not data["can_export"]:
                 raise MemberAuthorizationError(data["message"])
             payload = await self._export_payload(team, email, credentials, db)

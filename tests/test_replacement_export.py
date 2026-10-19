@@ -113,6 +113,25 @@ class ReplacementExportTests(unittest.IsolatedAsyncioTestCase):
             self.authorization.automatic_login.assert_not_awaited()
             self.assertEqual(self.sub2api.import_member.await_count, 2)
 
+    async def test_invited_member_with_verified_workspace_exports_immediately(self):
+        async with self.sessions() as session:
+            mapping = await self._pending(session)
+            self.authorization.check.return_value = {
+                "authorized": False, "sub2api_exported": False, "membership": "invited",
+            }
+            self.authorization.automatic_login.return_value = {
+                "authorized": True, "membership": "invited", "workspace_verified": True,
+            }
+
+            result = await self.exporter.complete(1, EMAIL, session)
+
+            self.assertEqual(result, "exported")
+            self.assertFalse(mapping.replacement_export_pending)
+            self.authorization.export.assert_awaited_once_with(
+                1, EMAIL, session, allow_invited=True
+            )
+            self.sub2api.import_member.assert_awaited_once()
+
     async def test_existing_export_is_not_created_again(self):
         async with self.sessions() as session:
             mapping = await self._pending(session)

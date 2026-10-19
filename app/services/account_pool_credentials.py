@@ -12,6 +12,8 @@ from app.services.account_pool_credential_input import (
     parse_export_names,
 )
 from app.services.account_pool_history import account_pool_history_service
+from app.services.account_pool_credential_target import resolve_credential_entry
+from app.services.account_pool_owners import owner_emails
 from app.services.encryption import encryption_service
 from app.services.sub2api_export_records import sub2api_export_record_service
 from app.utils.totp import TotpError, generate_totp, normalize_totp_secret
@@ -162,6 +164,8 @@ class AccountPoolCredentialService:
         )
         entry = result.scalar_one_or_none()
         if entry is None:
+            if normalized in await owner_emails(db_session, [normalized]):
+                return {"email": normalized, "password": "", "two_factor_secret": ""}
             return None
         return {
             "email": entry.email,
@@ -177,8 +181,8 @@ class AccountPoolCredentialService:
         password: Optional[str] = None,
         two_factor_secret: Optional[str] = None,
     ) -> Optional[dict[str, str]]:
-        entry = await db_session.get(AccountPoolEntry, entry_id)
-        if entry is None or entry.deleted_at is not None:
+        entry = await resolve_credential_entry(db_session, entry_id)
+        if entry is None:
             return None
         if password is None and two_factor_secret is None:
             raise AccountPoolCredentialError("请至少修改密码或 2FA")
@@ -191,13 +195,19 @@ class AccountPoolCredentialService:
         if two_factor_secret is not None:
             normalized_secret = self._normalize_valid_secret(two_factor_secret)
             encrypted_secret = self._cipher.encrypt_token(normalized_secret)
+        if entry.deleted_at is not None:
+            entry.password_encrypted = None
+            entry.two_factor_secret_encrypted = None
+        entry.deleted_at = None
+        db_session.add(entry)
         if encrypted_password is not None:
             entry.password_encrypted = encrypted_password
         if encrypted_secret is not None:
             entry.two_factor_secret_encrypted = encrypted_secret
         self._clear_derived_state(entry)
+        await db_session.flush()
         await db_session.execute(delete(AccountPoolWorkspace).where(
-            AccountPoolWorkspace.account_pool_id == entry_id
+            AccountPoolWorkspace.account_pool_id == entry.id
         ))
         await db_session.commit()
         return {

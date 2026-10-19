@@ -27,7 +27,7 @@ function runtime() {
         window: {}, Date, console,
         confirm() { throw new Error('Native confirm must never be called'); },
     });
-    for (const name of ['page-confirm.js', 'account-pool-confirm.js', 'account-pool.js']) {
+    for (const name of ['page-confirm.js', 'account-pool-confirm.js', 'account-pool.js', 'account-pool-quota.js']) {
         vm.runInContext(fs.readFileSync(`${__dirname}/../app/static/js/${name}`, 'utf8'), context);
     }
     return {context, dialog: () => dialog, focused: () => focused};
@@ -75,15 +75,13 @@ test('quota refresh updates only its cell and re-enables retry after an error', 
     const {context} = runtime();
     const content = {innerHTML: 'old quota'};
     const feedback = {};
-    let quotaVisible = true;
-    const button = {dataset: {entryId: '-1'}, disabled: false,
+    const button = {dataset: {entryId: '-1', workspaceId: 'team-a'}, disabled: false, isConnected: true,
         remove() { this.removed = true; },
-        closest: () => ({querySelector: key => key.includes('feedback') ? feedback
-            : key === '.quota-progress' ? (quotaVisible ? {} : null) : content})};
+        closest: () => ({querySelector: key => key.includes('feedback') ? feedback : content})};
     let posted;
     context.fetch = async (url, options) => {
         posted = {url, options};
-        return {ok: true, json: async () => ({success: true, status: 'ok', html: 'new quota'})};
+        return {ok: true, json: async () => ({success: true, status: 'ok', html: 'new quota', workspace_id: 'team-a'})};
     };
     context.formatQuotaResetTimes = () => {};
     context.refreshAccountPoolTable = () => { throw new Error('Must not refresh the whole list'); };
@@ -97,12 +95,12 @@ test('quota refresh updates only its cell and re-enables retry after an error', 
     assert.equal(button.disabled, false);
     assert.equal(feedback.textContent, '网络失败');
     assert.equal(content.innerHTML, 'new quota');
-    quotaVisible = false;
     context.fetch = async () => ({ok: true, json: async () => ({
-        success: true, status: 'unavailable', html: '待授权', error: '缺少授权',
+        success: true, status: 'unavailable', html: '待授权', error: '缺少授权', workspace_id: 'team-a',
     })});
     await context.refreshAccountPoolQuota(button);
-    assert.equal(button.removed, true);
+    assert.equal(button.removed, undefined);
+    assert.equal(button.disabled, false);
     assert.equal(feedback.textContent, '缺少授权');
 });
 

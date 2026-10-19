@@ -2,7 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
@@ -130,6 +130,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertIn("replacement_export_pending", mapping_columns)
             self.assertIn("last_invited_at", mapping_columns)
             self.assertIn("seat_type", mapping_columns)
+            self.assertIn("member_name", mapping_columns)
             self.assertNotIn("seat_type", pool_columns)
             self.assertIn("password_encrypted", pool_columns)
             self.assertIn("two_factor_secret_encrypted", pool_columns)
@@ -148,6 +149,21 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
 
 class StartupAndHealthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_never_schedules_pool_automatic_login(self):
+        scheduler = Mock(running=True)
+        with patch("app.main.init_db", new=AsyncMock()), \
+             patch("app.db_migrations.run_auto_migration"), \
+             patch("app.main.AsyncSessionLocal", return_value=_AsyncContext()), \
+             patch.object(main.auth_service, "initialize_admin_password", new=AsyncMock()), \
+             patch("app.main.configure_proactive_refresh_job_from_settings", new=AsyncMock(return_value=30)), \
+             patch("app.main.configure_periodic_team_sync_job_from_settings", new=AsyncMock(return_value=(True, 12, 7))), \
+             patch("app.main.configure_warranty_auto_kick_job_from_settings", new=AsyncMock(return_value=(False, 12))), \
+             patch("app.main.scheduler", scheduler), patch("app.main.close_db", new=AsyncMock()):
+            async with main.lifespan(main.app):
+                job_ids = [call.kwargs["id"] for call in scheduler.add_job.call_args_list]
+                self.assertNotIn("account_pool_liveness", job_ids)
+                self.assertIn("member_auto_kick", job_ids)
+
     async def test_lifespan_fails_fast_when_database_initialization_fails(self):
         with patch(
             "app.main.init_db",

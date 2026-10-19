@@ -24,9 +24,10 @@ class ReplacementExportService:
             )
         if not status["authorized"]:
             raise MemberAuthorizationError(status["message"])
-        if status["membership"] == "invited":
+        workspace_verified = bool(status.get("workspace_verified"))
+        if status["membership"] == "invited" and not workspace_verified:
             return "waiting"
-        if status["membership"] != "joined":
+        if status["membership"] != "joined" and not workspace_verified:
             raise MemberAuthorizationError(status["message"])
         record = (await db_session.execute(select(MemberAuthorization).where(
             MemberAuthorization.team_id == team_id,
@@ -34,7 +35,9 @@ class ReplacementExportService:
         ))).scalar_one()
         if record.sub2api_import_uncertain:
             raise Sub2apiImportUncertain("上次导入结果不确定，请先在 sub2api 核对")
-        payload = await self.authorization.export(team_id, email, db_session)
+        payload = await self.authorization.export(
+            team_id, email, db_session, allow_invited=workspace_verified
+        )
         record.sub2api_import_uncertain = True
         await db_session.commit()
         try:

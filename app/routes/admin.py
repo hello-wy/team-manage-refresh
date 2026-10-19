@@ -56,13 +56,14 @@ from app.services.member_auto_kick import (
 )
 from app.services.member_rotation import MemberRotationService
 from app.services.replacement_export import ReplacementExportService
-from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, RedemptionCode, RedemptionRecord, RenewalRequest, Team
+from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, QuotaSnapshot, RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool_export import AccountPoolExportService, selected_workspace
 from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.account_pool_rotation import attach_rotation_status
-from app.services.account_pool_team_usage import record_quota_observation
+from app.services.account_pool_quota import refresh_pool_quotas
+from app.services.rotation_read_model import snapshot_usage
 from app.services.sub2api_export_records import sub2api_export_record_service
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
@@ -91,6 +92,7 @@ account_pool_authorization_service = AccountPoolAuthorizationService(
     account_pool_credential_service,
     automatic_login_service,
     team_service.chatgpt_service,
+    team_service=team_service,
 )
 account_pool_liveness_service = AccountPoolLivenessService(
     account_pool_credential_service, account_pool_authorization_service, team_service
@@ -254,6 +256,10 @@ class AccountPoolAutomaticLoginRequest(BaseModel):
 
 class AccountPoolWorkspaceSelection(BaseModel):
     workspace_id: str = Field(..., min_length=1, max_length=100)
+
+
+class AccountPoolUsageRequest(BaseModel):
+    entry_ids: list[int] = Field(..., min_length=1)
 
 
 class AccountPoolInviteRequest(BaseModel):
@@ -422,42 +428,42 @@ async def admin_dashboard(
 
 
 async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    keys = [
+    return await refresh_pool_quotas(db, entries, usage_service=account_pool_usage_service)
+
+
+async def _attach_account_pool_cached_usage(
+    db: AsyncSession, entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Attach persisted quota snapshots without blocking the initial HTML response."""
+    if not entries:
+        return []
+    keys = {
         (entry["email"], entry.get("quota_workspace_id", entry.get("workspace_id")) or "")
         for entry in entries
+    }
+    emails = {email for email, _ in keys}
+    spaces = {space for _, space in keys}
+    snapshots = []
+    if emails and spaces:
+        snapshots = (await db.execute(select(QuotaSnapshot).where(
+            QuotaSnapshot.email.in_(emails),
+            QuotaSnapshot.team_space_id.in_(spaces),
+        ))).scalars().all()
+    usage_by_key = {
+        (snapshot.email, snapshot.team_space_id): snapshot_usage(snapshot)
+        for snapshot in snapshots
+    }
+    unavailable = {"status": "unknown", "error": "尚未获取额度"}
+    return [
+        {
+            **entry,
+            "usage": usage_by_key.get(
+                (entry["email"], entry.get("quota_workspace_id", entry.get("workspace_id")) or ""),
+                unavailable,
+            ),
+        }
+        for entry in entries
     ]
-    usage_by_account = await account_pool_usage_service.check_many(db, keys)
-    unavailable = {"status": "unavailable", "error": "账号池没有可用 JSON"}
-    attached = []
-    for entry in entries:
-        usage = usage_by_account.get(
-            (entry["email"], entry.get("quota_workspace_id", entry.get("workspace_id")) or ""), unavailable
-        )
-        team_space_id = entry.get("quota_workspace_id", entry.get("workspace_id")) or ""
-        if team_space_id and entry.get("quota_team_id", entry.get("workspace_team_id")):
-            tracked = await record_quota_observation(
-                db,
-                email=entry["email"],
-                team_space_id=team_space_id,
-                seat_type=entry.get("seat_type"),
-                usage=usage,
-                team_id=entry.get("workspace_team_id"),
-            )
-            if tracked:
-                entry["team_usage"] = {
-                    "seat_type": tracked.seat_type,
-                    "seat_switch_count": tracked.seat_switch_count,
-                    "seat_switched_at": tracked.seat_switched_at,
-                    "premium_used": tracked.premium_used,
-                    "premium_used_at": tracked.premium_used_at,
-                    "quota_checked_at": tracked.quota_checked_at,
-                    "short_reset_at": tracked.short_reset_at,
-                    "weekly_reset_at": tracked.weekly_reset_at,
-                }
-        attached.append({**entry, "usage": usage})
-    if any(entry.get("team_usage") for entry in attached):
-        await db.commit()
-    return attached
 
 
 @router.get("/account-pool", response_class=HTMLResponse)
@@ -483,7 +489,7 @@ async def account_pool_page(
         search=search,
         status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,
     )
-    listing["entries"] = await _attach_account_pool_usage(db, listing["entries"])
+    listing["entries"] = await _attach_account_pool_cached_usage(db, listing["entries"])
     listing["entries"] = await attach_rotation_status(db, listing["entries"])
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     from urllib.parse import urlencode
@@ -501,6 +507,31 @@ async def account_pool_page(
     return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
 
 
+def _account_pool_usage_response(row):
+    from app.main import templates
+
+    return {
+        "entry_id": row["id"], "workspace_id": row.get("quota_workspace_id") or "",
+        "status": row["usage"]["status"], "error": row["usage"].get("error"),
+        "html": templates.get_template("admin/account_pool/_quota.html").render(entry=row),
+    }
+
+
+@router.post("/account-pool/usage")
+async def refresh_account_pool_visible_usage(
+    payload: AccountPoolUsageRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    rows = await account_pool_service.rows_by_ids(db, payload.entry_ids)
+    if {row["id"] for row in rows} != set(payload.entry_ids):
+        raise HTTPException(status_code=404, detail="请求中包含不存在的账号")
+    refreshed = await _attach_account_pool_usage(db, rows)
+    return JSONResponse(content={
+        "success": True, "entries": [_account_pool_usage_response(row) for row in refreshed],
+    }, headers={"Cache-Control": "no-store"})
+
+
 @router.post("/account-pool/{entry_id}/usage")
 async def refresh_account_pool_usage(
     entry_id: int,
@@ -508,16 +539,12 @@ async def refresh_account_pool_usage(
     current_user: dict = Depends(require_admin),
 ):
     """Refresh only the selected account, resolving credentials on the server."""
-    from app.main import templates
-
     rows = await account_pool_service.rows_by_ids(db, [entry_id])
     if not rows:
         raise HTTPException(status_code=404, detail="账号不存在")
     row = (await _attach_account_pool_usage(db, rows))[0]
     return JSONResponse(content={
-        "success": True, "status": row["usage"]["status"],
-        "error": row["usage"].get("error"),
-        "html": templates.get_template("admin/account_pool/_quota.html").render(entry=row),
+        "success": True, **_account_pool_usage_response(row),
     }, headers={"Cache-Control": "no-store"})
 
 
@@ -554,23 +581,16 @@ async def add_account_pool_emails(
         content=payload.content,
         preserve_existing_credentials=payload.rotate_2fa,
     )
-    if result["success"] and payload.rotate_2fa:
-        # Import at request time because the shared batch service uses admin's
-        # authorization service during its initialization.
-        from app.routes.account_pool_batch import batch_service
+    from app.routes.account_pool_batch import batch_service
+    from app.services.account_pool_import import AccountPoolImportService
+    from app.services.account_pool_profile import save_import_account_name
 
-        try:
-            rotation = await batch_service.enqueue_import_rotations(
-                db, [*result.get("added", []), *result.get("restored", [])]
-            )
-        except Exception:
-            await db.rollback()
-            logger.exception("账号已加入号池，但自动 2FA 任务创建失败")
-            result["rotation_error"] = "账号已加入号池，但 2FA 任务创建失败，请在操作菜单中重试"
-        else:
-            result["rotation"] = rotation
-            if rotation["batch_id"]:
-                background_tasks.add_task(batch_service.run_rotations, rotation["batch_id"])
+    importer = AccountPoolImportService(
+        account_pool_authorization_service, batch_service, save_import_account_name
+    )
+    result = await importer.complete(
+        db, result, background_tasks=background_tasks, rotate_2fa=payload.rotate_2fa,
+    )
     return JSONResponse(status_code=200 if result["success"] else 400, content=result,
                         headers={"Cache-Control": "no-store"})
 
@@ -765,9 +785,9 @@ async def run_account_pool_liveness(
     current_user: dict = Depends(require_admin),
 ):
     """手动执行一次账号号池验活。"""
-    from app.main import scheduled_account_pool_liveness
+    from app.main import run_account_pool_liveness_check
 
-    counts = await scheduled_account_pool_liveness()
+    counts = await run_account_pool_liveness_check()
     return JSONResponse(content={
         "success": True,
         "message": (
@@ -811,6 +831,11 @@ async def invite_account_pool_entry(
         await require_non_owner(db, [entry])
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
+    if await account_pool_service.is_recently_joined(payload.team_id, entry.id, db):
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "该账号 7 天内加入过当前 Team，不能重复邀请"},
+        )
     result = await team_service.add_team_members(
         team_id=payload.team_id,
         emails=[entry.email],
@@ -1496,7 +1521,7 @@ async def team_members_list(
     try:
         # 获取成员列表
         result = await team_service.get_team_members(team_id, db)
-        return JSONResponse(content=result)
+        return JSONResponse(content=result, headers={"Cache-Control": "no-store"})
     except Exception as e:
         logger.exception("获取成员列表失败")
         return JSONResponse(
@@ -1506,6 +1531,23 @@ async def team_members_list(
                 "error": "获取成员列表失败，请稍后重试"
             }
         )
+
+
+class MemberSyncRequest(BaseModel):
+    cursor: Optional[str] = None
+
+
+@router.post("/teams/{team_id}/members/sync")
+async def sync_team_members_batch(
+    team_id: int,
+    payload: MemberSyncRequest,
+    *,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await team_service.get_team_members(team_id, db, pagination={"cursor": payload.cursor})
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK if result["success"] else status.HTTP_400_BAD_REQUEST,
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.post("/teams/{team_id}/members/auto-kick")
@@ -1567,6 +1609,7 @@ async def add_team_member(
             emails=member_data.emails,
             db_session=db,
             seat_type=member_data.seat_type,
+            allow_reinvite=True,
         )
 
         if not result.get("processed") and not result["success"]:
@@ -2892,8 +2935,7 @@ async def settings_page(
         系统设置页面 HTML
     """
     try:
-        from app.main import templates, DEFAULT_ACCOUNT_POOL_LIVENESS_CRON
-        from app.config import settings as app_settings
+        from app.main import templates
         from app.services.settings import settings_service
 
         logger.info("管理员访问系统设置页面")
@@ -2916,8 +2958,6 @@ async def settings_page(
             "periodic_team_sync_enabled": await settings_service.get_setting(db, "periodic_team_sync_enabled", "true"),
             "periodic_team_sync_interval_hours": await settings_service.get_setting(db, "periodic_team_sync_interval_hours", "12"),
             "periodic_team_sync_days": await settings_service.get_setting(db, "periodic_team_sync_days", "7"),
-            "account_pool_liveness_cron": await settings_service.get_setting(db, "account_pool_liveness_cron", DEFAULT_ACCOUNT_POOL_LIVENESS_CRON),
-            "account_pool_liveness_timezone": app_settings.timezone,
             "warranty_auto_kick_enabled": await settings_service.get_setting(db, "warranty_auto_kick_enabled", "false"),
             "warranty_auto_kick_enabled_since": await settings_service.get_setting(db, "warranty_auto_kick_enabled_since", ""),
             "warranty_auto_kick_interval_hours": await settings_service.get_setting(db, "warranty_auto_kick_interval_hours", "12"),
@@ -3025,10 +3065,6 @@ class TeamAutoRefreshSettingsRequest(BaseModel):
     enabled: bool = Field(True, description="是否启用 Team 周期状态自动刷新")
     interval_hours: int = Field(12, ge=1, le=168, description="检查间隔（小时）")
     refresh_interval_days: int = Field(7, ge=1, le=30, description="同步周期（天）")
-
-
-class AccountPoolLivenessSettingsRequest(BaseModel):
-    cron: str = Field(..., min_length=1, max_length=100)
 
 
 class WarrantyAutoKickSettingsRequest(BaseModel):
@@ -3710,25 +3746,6 @@ async def update_team_auto_refresh_settings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"success": False, "error": "更新失败，请稍后重试"}
         )
-
-
-@router.post("/settings/account-pool-liveness")
-async def update_account_pool_liveness_settings(
-    payload: AccountPoolLivenessSettingsRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin),
-):
-    from app.main import account_pool_liveness_trigger, configure_account_pool_liveness_job
-
-    expression = payload.cron.strip()
-    try:
-        account_pool_liveness_trigger(expression)
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"success": False, "error": f"无效的 cron 表达式：{exc}"})
-    if not await settings_service.update_setting(db, "account_pool_liveness_cron", expression):
-        return JSONResponse(status_code=500, content={"success": False, "error": "保存失败"})
-    configure_account_pool_liveness_job(expression)
-    return JSONResponse(content={"success": True, "message": "账号验活时间已保存", "cron": expression})
 
 
 @router.post("/settings/warranty")

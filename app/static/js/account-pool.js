@@ -19,57 +19,6 @@ async function copyAccountPoolCredential(email) {
     }
 }
 
-async function openAccountPoolCredentialEditor(entryId, email) {
-    const form = document.getElementById('accountPoolCredentialForm');
-    const passwordInput = document.getElementById('accountPoolCredentialPassword');
-    const secretInput = document.getElementById('accountPoolCredentialTwoFactor');
-    form.dataset.entryId = String(entryId);
-    document.getElementById('accountPoolCredentialEmail').textContent = email;
-    passwordInput.value = '';
-    secretInput.value = '';
-    showModal('accountPoolCredentialModal');
-    try {
-        const credentials = await window.accountPoolCredentialStore.load(email, {fresh: true});
-        passwordInput.value = credentials.password || '';
-        secretInput.value = credentials.two_factor_secret || '';
-        passwordInput.focus();
-    } catch (error) {
-        hideModal('accountPoolCredentialModal');
-        showToast(error.message || '读取账号凭据失败', 'error');
-    }
-}
-
-async function submitAccountPoolCredentialForm(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = document.getElementById('accountPoolCredentialSave');
-    const password = document.getElementById('accountPoolCredentialPassword').value;
-    const twoFactorSecret = document.getElementById('accountPoolCredentialTwoFactor').value.trim();
-    if (!password && !twoFactorSecret) return showToast('请至少填写密码或 2FA', 'warning');
-    const payload = {};
-    if (password) payload.password = password;
-    if (twoFactorSecret) payload.two_factor_secret = twoFactorSecret;
-    button.disabled = true;
-    try {
-        const response = await fetch(`/admin/account-pool/${form.dataset.entryId}/credentials`, {
-            method: 'PATCH',
-            credentials: 'same-origin',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.error || '保存失败');
-        window.accountPoolCredentialStore.clear(result.data.email);
-        showToast(result.message, 'success');
-        hideModal('accountPoolCredentialModal');
-        await refreshAccountPoolTable();
-    } catch (error) {
-        showToast(error.message || '保存账号凭据失败', 'error');
-    } finally {
-        button.disabled = false;
-    }
-}
-
 async function deleteAccountPoolEntry(entryId, email) {
     if (!await confirmAccountPoolAction(`确定永久删除 ${email} 吗？账号信息和加入历史都会从数据库删除，且无法恢复。`)) return;
     try {
@@ -307,6 +256,7 @@ let accountPoolDetailsTrigger = null;
 
 function closeAccountPoolDetails() {
     accountPoolHistoryRequest?.abort();
+    resetAccountPoolCredentialEditor();
     hideModal('accountPoolHistoryModal');
     document.getElementById('accountPoolDetailsContent').replaceChildren();
     accountPoolDetailsTrigger?.focus();
@@ -321,13 +271,14 @@ async function loadAccountPoolHistory(entryId, email) {
     const template = document.getElementById(`accountPoolDetails-${entryId}`);
     details.replaceChildren(...(template ? [template.content.cloneNode(true)] : []));
     document.getElementById('accountPoolHistoryEmail').textContent = email;
+    loadAccountPoolCredentialEditor({entryId, email, signal: controller.signal});
     content.textContent = '加载中...';
     initAccountPoolRowActions();
     window.initAccountPoolRotateButtons?.();
     window.initAccountPoolWorkspaceButtons?.();
     // Close this dialog before a detail action opens its own dialog.
     details.querySelector('.account-pool-detail-actions')?.addEventListener('click', event => {
-        if (event.target.closest('button')) hideModal('accountPoolHistoryModal');
+        if (event.target.closest('button:not(:disabled)')) closeAccountPoolDetails();
     }, {capture: true});
     showModal('accountPoolHistoryModal');
     if (window.lucide) lucide.createIcons();
@@ -373,6 +324,14 @@ async function submitAccountPoolForm(event) {
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || '添加失败');
         showToast(payload.message, 'success');
+        const profiles = payload.profiles;
+        if (profiles) {
+            const issues = [
+                ...profiles.failed.map(item => `${item.email}：补姓名失败 · ${item.error}`),
+                ...profiles.skipped.map(item => `${item.email}：未补姓名 · ${item.reason}`),
+            ];
+            issues.forEach(message => showToast(message, 'warning'));
+        }
         input.value = '';
         [...(payload.added || []), ...(payload.restored || []), ...(payload.updated || [])]
             .forEach(email => window.accountPoolCredentialStore.clear(email));
@@ -404,7 +363,7 @@ function initAccountPoolColumnToggler() {
         return;
     }
 
-    const storageKey = 'account_pool_list_columns_v4';
+    const storageKey = 'account_pool_list_columns_v5';
     const hiddenColumns = loadAccountPoolHiddenColumns(storageKey);
     container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
@@ -677,11 +636,7 @@ function initAccountPoolRowActions() {
         button.addEventListener('click', () => checkAccountPoolEntryLiveness(button));
     });
     updateAccountPoolCountdowns();
-    document.querySelectorAll('.account-pool-quota-refresh').forEach(button => {
-        if (button.dataset.bound === 'true') return;
-        button.dataset.bound = 'true';
-        button.addEventListener('click', () => refreshAccountPoolQuota(button));
-    });
+    window.initAccountPoolQuota?.();
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';
@@ -743,29 +698,6 @@ function updateAccountPoolCountdowns() {
     });
 }
 
-async function refreshAccountPoolQuota(button) {
-    if (button.disabled) return;
-    const cell = button.closest('td');
-    const feedback = cell.querySelector('.account-pool-quota-feedback');
-    button.disabled = true;
-    feedback.textContent = '正在读取…';
-    try {
-        const response = await fetch(`/admin/account-pool/${button.dataset.entryId}/usage`, {
-            method: 'POST', credentials: 'same-origin', cache: 'no-store',
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.detail || result.error || '刷新额度失败');
-        cell.querySelector('.account-pool-quota-content').innerHTML = result.html;
-        if (!cell.querySelector('.quota-progress')) button.remove();
-        formatQuotaResetTimes();
-        feedback.textContent = result.status === 'ok' ? '刚刚更新' : (result.error || '暂未获取额度');
-    } catch (error) {
-        feedback.textContent = error.message || '刷新额度失败，请重试';
-    } finally {
-        button.disabled = false;
-    }
-}
-
 function initAccountPoolExportJobs() {
     document.querySelectorAll('.account-pool-export-status').forEach(label => {
         if (label.dataset.status === 'pending' || label.dataset.status === 'running') {
@@ -819,10 +751,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-    document.getElementById('accountPoolCredentialForm')?.addEventListener(
-        'submit',
-        submitAccountPoolCredentialForm
-    );
     document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
     document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
     initAccountPoolRowActions();

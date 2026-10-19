@@ -129,6 +129,26 @@ class MemberAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.automatic_login.login.await_count, 2)
         self.assertEqual(len((await self.db.execute(select(MemberAuthorization))).scalars().all()), 1)
 
+    async def test_automatic_login_verifies_target_workspace_for_pending_invite(self):
+        self.automatic_login.login.return_value = {
+            **tokens(),
+            "workspace": {
+                "workspace_id": ACCOUNT,
+                "workspace_status": "workspace_ok",
+                "status": "workspace_ok",
+                "workspace_name": "Test Team",
+            },
+        }
+
+        result = await self.service.automatic_login(1, EMAIL, self.db)
+
+        self.assertTrue(result["workspace_verified"])
+        self.assertEqual(result["membership"], "invited")
+        with self.assertRaisesRegex(MemberAuthorizationError, "等待"):
+            await self.service.export(1, EMAIL, self.db)
+        payload = await self.service.export(1, EMAIL, self.db, allow_invited=True)
+        self.assertEqual(payload["accounts"][0]["credentials"]["chatgpt_account_id"], ACCOUNT)
+
     async def test_automatic_login_requires_saved_password_and_totp(self):
         self.credential_service.get_credentials.return_value = {"password": "", "two_factor_secret": ""}
         with self.assertRaisesRegex(MemberAuthorizationError, "登录密码"):

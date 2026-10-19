@@ -9,6 +9,7 @@ from app.dependencies.auth import require_admin
 from app.main import app
 from app.routes import admin
 from app.services.chatgpt import ChatGPTService
+from app.services.account_pool import account_pool_service
 from app.services.team import TeamService
 from app.utils.seats import calculate_seat_balance, normalize_seat_type, summarize_member_seats
 
@@ -107,7 +108,8 @@ class MemberSeatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.team.current_members = 1
         self.service.sync_team_info = AsyncMock(return_value={"success": True, "member_emails": []})
         self.service.add_team_member = AsyncMock(return_value={"success": True, "status": "invited"})
-        result = await self.service.add_team_members(1, ["one@example.com", "two@example.com"], self.db, seat_type="premium")
+        with patch.object(account_pool_service, "get_by_email", new=AsyncMock(return_value=None)):
+            result = await self.service.add_team_members(1, ["one@example.com", "two@example.com"], self.db, seat_type="premium")
         self.assertEqual(result["summary"]["invited"], 2)
         for call in self.service.add_team_member.await_args_list:
             self.assertEqual(call.kwargs["seat_type"], "premium")
@@ -191,6 +193,7 @@ class MemberSeatRouteTests(unittest.TestCase):
             response = self.client.post("/admin/teams/1/members/add", json={"emails": ["test@example.com"], "seat_type": "premium"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(invite.await_args.kwargs["seat_type"], "premium")
+        self.assertTrue(invite.await_args.kwargs["allow_reinvite"])
 
     def test_account_pool_options_route_returns_service_entries(self):
         app.dependency_overrides[require_admin] = lambda: {"is_admin": True}

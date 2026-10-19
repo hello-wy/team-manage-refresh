@@ -18,7 +18,12 @@ from app.services.openai_automatic_login import (
     OpenAIAutomaticLoginError,
 )
 from app.services.openai_workspace import token_claims, token_plan_type, token_workspace_id
+from app.services.member_identity import credential_identity
+from app.services.account_pool_profile import login_result_values
 from app.utils.time_utils import get_now
+from app.services.account_pool_workspace_sync import (
+    WorkspaceSyncError, persist_workspace_scan, synchronize_memberships,
+)
 
 
 class AccountPoolAuthorizationError(ValueError):
@@ -33,10 +38,11 @@ class AccountPoolLoginResult:
 
 
 class AccountPoolAuthorizationService:
-    def __init__(self, credential_service, login_service, auth_client):
+    def __init__(self, credential_service, login_service, auth_client, *, team_service):
         self._credentials = credential_service
         self._login = login_service
         self._auth_client = auth_client
+        self._teams = team_service
 
     async def login_entry(
         self,
@@ -77,43 +83,27 @@ class AccountPoolAuthorizationService:
             raise AccountPoolAuthorizationError("账号不存在")
         version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
         scan = await self.scan_entry(session, entry_id)
-        discovered = scan.get("available_workspaces") or []
-        discovered_options = self._team_options(discovered)
-        teams = [item for item in discovered_options if not item["is_personal"]]
-        options = teams or discovered_options
-        ids = {item["id"] for item in options}
-        selected = entry.workspace_id if entry.workspace_id in ids else next(
-            (item["id"] for item in options if not item["is_personal"]),
-            options[0]["id"] if options else None,
-        )
-        current = next((item for item in options if item["id"] == selected), None)
-        saved = (await session.execute(select(AccountPoolWorkspace).where(
-            AccountPoolWorkspace.account_pool_id == entry_id,
-            AccountPoolWorkspace.workspace_id == selected,
-        ))).scalar_one_or_none() if selected else None
-        state = {"available_workspaces": options}
-        now = get_now()
-        updated = await session.execute(update(AccountPoolEntry).where(
-            AccountPoolEntry.id == entry_id,
-            AccountPoolEntry.deleted_at.is_(None),
-            AccountPoolEntry.password_encrypted == version[0],
-            AccountPoolEntry.two_factor_secret_encrypted == version[1],
-        ).values(
-            workspace_id=selected,
-            workspace_name=current["name"] if current else None,
-            workspace_status=("personal_account" if current["is_personal"] else "workspace_ok")
-            if current else "no_workspace",
-            workspace_checked_at=now,
-            workspace_state_json=json.dumps(state, ensure_ascii=False),
-            export_json_encrypted=(saved.export_json_encrypted if saved else
-                                   entry.export_json_encrypted if selected == entry.workspace_id else None),
-            export_json_updated_at=(saved.json_updated_at if saved else
-                                    entry.export_json_updated_at if selected == entry.workspace_id else None),
-        ))
-        if not updated.rowcount:
-            raise AccountPoolAuthorizationError("账号凭据已变化，请重新刷新 Team")
-        await session.commit()
-        return state
+        discovered = self._team_options(scan.get("available_workspaces") or [])
+
+        async def authorize_identity(account_id):
+            result = await self.login_entry(session, entry_id, account_id)
+            if not credential_identity(result.payload, entry.email, account_id):
+                raise AccountPoolAuthorizationError("成员授权未返回所选 Team 的用户 ID，无法核对成员身份")
+            saved = await self.save_result(session, entry_id, result,
+                                           credential_version=version, update_current=False)
+            if not saved:
+                raise AccountPoolAuthorizationError("账号凭据已变化，请重新刷新 Team")
+
+        try:
+            options = await synchronize_memberships(
+                session, entry, discovered=discovered, team_service=self._teams,
+                authorize_identity=authorize_identity,
+            )
+            return await persist_workspace_scan(
+                session, entry, discovered=options, credential_version=version,
+            )
+        except WorkspaceSyncError as exc:
+            raise AccountPoolAuthorizationError(str(exc)) from exc
 
     @staticmethod
     def _team_options(discovered: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -144,23 +134,12 @@ class AccountPoolAuthorizationService:
     ) -> bool:
         now = get_now()
         entry = await session.get(AccountPoolEntry, entry_id)
-        previous = json.loads(entry.workspace_state_json) if entry and entry.workspace_state_json else {}
-        full_state = workspace_state or (
-            previous if previous.get("available_workspaces") else result.workspace
+        if entry is None or entry.deleted_at is not None:
+            return False
+        values = login_result_values(
+            entry, result, cipher=encryption_service, now=now,
+            update_current=update_current, workspace_state=workspace_state,
         )
-        values = {
-            "workspace_id": result.workspace.get("workspace_id") or None,
-            "workspace_name": result.workspace.get("workspace_name") or None,
-            "workspace_status": result.workspace.get("status") or "workspace_unknown",
-            "workspace_checked_at": now,
-            "workspace_state_json": json.dumps(full_state, ensure_ascii=False),
-            "export_json_encrypted": encryption_service.encrypt_token(
-                json.dumps(result.payload, ensure_ascii=False)
-            ),
-            "export_json_updated_at": now,
-        }
-        if not update_current:
-            values = {"workspace_checked_at": now}
         if liveness:
             values.update({
                 "liveness_status": liveness[0],

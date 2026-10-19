@@ -161,7 +161,7 @@ def _workspace_data(entry: AccountPoolEntry, team: Team | None, saved, teams) ->
     }
 
 
-def _team_usage_view(usage: AccountPoolTeamUsage | None) -> dict[str, Any] | None:
+def team_usage_view(usage: AccountPoolTeamUsage | None) -> dict[str, Any] | None:
     if usage is None:
         return None
     return {
@@ -195,15 +195,16 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
     row = {
         "id": entry.id,
         "email": entry.email,
+        "name": entry.name,
         "seat_type": seat_type,
         "status": status,
         "team_id": current[1].id if current[1] else None,
         "team_name": team_display_name(current[1]) if current[1] else None,
         "team_email": current[1].email if current[1] else None,
         "team_options": team_options,
-        "team_usage": _team_usage_view(current_usage),
+        "team_usage": team_usage_view(current_usage),
         "team_usages": {
-            team_id: _team_usage_view(usage) for team_id, usage in usages.items()
+            team_id: team_usage_view(usage) for team_id, usage in usages.items()
         },
         "joined_at": max((history.joined_at for history in histories), default=None),
         "history_count": len(histories),

@@ -1,61 +1,9 @@
 // Run with: node --test tests/test_member_status_sync.cjs
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {readFileSync} = require('node:fs');
-const {join} = require('node:path');
 const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../app/static/js/main.js'), 'utf8');
-function section(start, end) {
-    return source.slice(source.indexOf(start), source.indexOf(end));
-}
-
-function harness() {
-    const elements = new Map();
-    const element = id => {
-        if (!elements.has(id)) {
-            const classes = new Set();
-            elements.set(id, {
-                value: '', textContent: '', innerHTML: '', disabled: false,
-                classList: {contains: key => classes.has(key), toggle: (key, on) => on ? classes.add(key) : classes.delete(key)},
-            });
-        }
-        return elements.get(id);
-    };
-    const timers = new Map(), calls = [], toasts = [];
-    let timerId = 0;
-    const context = vm.createContext({
-        document: {getElementById: element, addEventListener() {}},
-        window: {currentTeamId: 1},
-        setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, {fn, delay}); return id; },
-        clearTimeout: id => timers.delete(id),
-        showToast: (...args) => toasts.push(args),
-        showModal() {},
-        hideModal() {},
-        updateMemberInviteAvailability() {},
-        loadMemberPoolOptions: async () => {},
-        renderMemberSeatSummary: () => '席位余额',
-        renderMemberSeatControl: () => '',
-        renderMemberSeatType: () => '',
-        renderMemberAutoKickTime: () => '',
-        renderMemberAutoKickControl: () => '',
-        renderMemberAuthorizationActions: () => '',
-        renderMemberAuthorizationStatus: () => '',
-        memberAccountCredentials: {reset() {}},
-        escapeHtml: value => String(value),
-        formatDateTime: () => '',
-        getFriendlyAdminErrorMessage: value => value,
-        apiCall: async url => { calls.push(url); return context.response; },
-    });
-    vm.runInContext(`
-        let memberListRequestId = 0, memberSeatBalance = null, memberExistingEmails = new Set(), renderedMemberTeamId = null;
-        ${section('let memberAuthorizationContext = null;', 'function generateMemberAuthorization()')}
-        ${section('async function viewMembers(', 'async function revokeInvite(')}
-        memberAuthorizationContext = {teamId: 1, email: 'member@example.com', busy: false, hasLink: true};
-    `, context);
-    return {context, element, calls, toasts, timers,
-        run: expression => vm.runInContext(expression, context)};
-}
+const {harness, section} = require('./helpers/member-status-harness.cjs');
 
 function response(membership) {
     return {success: true, data: {success: true, data: {
@@ -171,4 +119,29 @@ test('sub2api import starts immediately without confirmation', async () => {
 
     assert.equal(requests.length, 1);
     assert.equal(requests[0][0], '/admin/teams/7/members/authorization/import-sub2api');
+});
+
+test('member list renders name and profile sync errors as escaped text', async () => {
+    const h = harness();
+    h.context.escapeHtml = value => String(value).replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    h.context.response = {success: true, data: {
+        success: true, members: [{status: 'joined', email: 'member@example.com',
+            name: '<成员甲>', profile_sync_error: '<缺少加入时间>'}],
+    }};
+    await h.run('viewMembers(1)');
+    const html = h.element('modalJoinedMembersTableBody').innerHTML;
+    assert.match(html, /member-name.*&lt;成员甲&gt;/);
+    assert.match(html, /&lt;缺少加入时间&gt;/);
+    assert.doesNotMatch(html, /<成员甲>|<缺少加入时间>/);
+});
+
+test('missing exit schedule shows a reason while owners and exempt members remain exempt', () => {
+    const context = vm.createContext({escapeHtml: value => value, formatDateTime: value => value});
+    vm.runInContext(section('function renderMemberAutoKickTime(', 'function renderMemberAutoKickControl('), context);
+    const render = member => context.renderMemberAutoKickTime(member);
+    assert.match(render({profile_sync_error: '缺少成员邮箱'}), /缺少成员邮箱/);
+    assert.doesNotMatch(render({}), /待同步/);
+    assert.match(render({role: 'account-owner'}), /不会自动下线/);
+    assert.match(render({auto_kick_exempt: true}), /不会自动下线/);
+    assert.match(render({auto_kick_at: '2026-10-15T15:13:00'}), /2026-10-15T15:13:00/);
 });

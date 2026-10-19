@@ -6,7 +6,7 @@ import re
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
-from app.services.openai_workspace import inspect_workspace_claims
+from app.services.openai_workspace import inspect_workspace_claims, merge_workspace_scans
 
 AUTH_ORIGIN = "https://auth.openai.com"
 CALLBACK_HOST = "localhost:1455"
@@ -83,14 +83,9 @@ def is_mfa_challenge(payload: dict[str, Any], target_url: str) -> bool:
 
 
 def inspect_auth_page_workspace(html: str) -> dict[str, Any]:
-    empty = inspect_workspace_claims({})
-    for serialized in _serialized_documents(html):
-        document = _decode_document(serialized)
-        scan = inspect_workspace_claims(document)
-        if scan.get("available_workspaces"):
-            return scan
-        empty = scan
-    return empty
+    scans = [inspect_workspace_claims(_decode_document(serialized))
+             for serialized in _serialized_documents(html)]
+    return merge_workspace_scans(scans)
 
 
 def _serialized_documents(html: str) -> list[str]:

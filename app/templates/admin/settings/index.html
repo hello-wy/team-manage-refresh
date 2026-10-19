@@ -30,7 +30,6 @@
             <div class="settings-nav-group-title">自动化</div>
             <a href="#settings-refresh" class="settings-nav-pill settings-nav-link" data-target="settings-refresh">Token 预刷新</a>
             <a href="#settings-team-auto-refresh" class="settings-nav-pill settings-nav-link" data-target="settings-team-auto-refresh">Team 自动刷新</a>
-            <a href="#settings-account-pool-liveness" class="settings-nav-pill settings-nav-link" data-target="settings-account-pool-liveness">账号验活</a>
             <a href="#settings-warranty-auto-kick" class="settings-nav-pill settings-nav-link" data-target="settings-warranty-auto-kick">自动踢人</a>
         </div>
         <div class="settings-nav-group">
@@ -192,22 +191,6 @@
     </form>
 </div>
 
-
-<!-- 账号号池验活配置 -->
-<div class="content-section settings-panel" id="settings-account-pool-liveness">
-    <div class="section-header">
-        <h3>账号号池验活</h3>
-    </div>
-    <form id="accountPoolLivenessForm" class="settings-form">
-        <div class="form-group">
-            <label for="accountPoolLivenessCron">执行时间 (cron)</label>
-            <input type="text" id="accountPoolLivenessCron" name="cron" required
-                value="{{ account_pool_liveness_cron }}" placeholder="30 2 * * *" class="form-control">
-            <p class="form-help">五段 cron：分 时 日 月 周；默认每天 02:30，时区 {{ account_pool_liveness_timezone }}。星期数字 0 表示周一，6 表示周日。仅检测已录入的账号，不会修改 Team 成员状态。</p>
-        </div>
-        <button type="submit" class="btn btn-primary">保存验活时间</button>
-    </form>
-</div>
 
 <!-- 自动踢人配置 -->
 <div class="content-section settings-panel" id="settings-warranty-auto-kick">
@@ -770,23 +753,6 @@
             } else {
                 showToast(data.error || '保存失败', 'error');
             }
-        } catch (error) {
-            showToast('网络错误', 'error');
-        }
-    });
-
-    document.getElementById('accountPoolLivenessForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const cron = document.getElementById('accountPoolLivenessCron').value.trim();
-        try {
-            const response = await fetch('/admin/settings/account-pool-liveness', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({cron})
-            });
-            const data = await response.json();
-            showToast(response.ok && data.success ? data.message : (data.error || '保存失败'),
-                response.ok && data.success ? 'success' : 'error');
         } catch (error) {
             showToast('网络错误', 'error');
         }

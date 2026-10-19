@@ -23,11 +23,8 @@ from app.services.openai_automatic_login_models import (
     OpenAIAutomaticLoginError,
 )
 from app.services.openai_sentinel import OpenAISentinelError
-from app.services.openai_workspace import (
-    inspect_workspace_claims,
-    resolve_workspace_id,
-    token_workspace_id,
-)
+from app.services.openai_workspace_discovery import discover_workspaces
+from app.services.openai_workspace import inspect_workspace_claims, resolve_workspace_id, token_workspace_id
 from app.utils.totp import TotpError, generate_totp
 
 MAX_REDIRECTS = 20
@@ -86,20 +83,10 @@ class OpenAIAutomaticLoginService:
             current_url, _ = await self._submit_password_and_totp(
                 session, request, current_url, device_id, sentinel_token
             )
-            if not _is_callback(current_url) and not current_url.rstrip("/").endswith(
-                ("/consent", "/workspace")
-            ):
-                raise OpenAIAutomaticLoginError("登录后未到达授权步骤，无法确认账号验活")
-            if _is_callback(current_url):
-                state = (parse_qs(urlparse(current_url).query).get("state") or [""])[0]
-                if not secrets.compare_digest(state, request.oauth_draft["state"]):
-                    raise OpenAIAutomaticLoginError("账号验活 OAuth state 不匹配")
-            workspace = inspect_workspace_claims(auth_session_claims(session))
-            if not workspace["available_workspaces"] and not _is_callback(current_url):
-                workspace = await self._workspace_from_page(
-                    session, current_url, device_id, sentinel_token
-                )
-            return workspace
+            return await discover_workspaces(
+                session, current_url, device_id=device_id, sentinel_token=sentinel_token,
+                expected_state=request.oauth_draft["state"],
+            )
         finally:
             await self._dependencies.clear_session(request.identifier)
 

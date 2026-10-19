@@ -455,7 +455,7 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 [option["email"] for option in options],
-                ["available@example.com", "old@example.com", "recent@example.com"],
+                ["available@example.com", "old@example.com"],
             )
             self.assertEqual(
                 {
@@ -465,7 +465,6 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "available@example.com": False,
                     "old@example.com": False,
-                    "recent@example.com": True,
                 },
             )
 

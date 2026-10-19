@@ -32,8 +32,8 @@
     -webkit-overflow-scrolling: touch;
 }
 .rotation-page .rotation-table {
-    width: max-content;
-    min-width: 980px;
+    width: 100%;
+    min-width: max-content;
 }
 .rotation-member-email {
     display: inline-flex;
