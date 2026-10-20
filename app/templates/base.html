@@ -621,7 +621,7 @@
                         <div id="oauthQuickSection" class="import-mode-card oauth-quick-card">
                             <div class="oauth-quick-head">
                                 <label>一键获取 Token</label>
-                                <p class="oauth-quick-subtitle">三步完成：获取授权链接 → 粘贴回调 → 自动填充。</p>
+                                <p class="oauth-quick-subtitle">获取授权链接 → 粘贴回调 → 点击导入，自动解析并导入 Team。</p>
                             </div>
 
                             <div class="oauth-quick-action-row">
@@ -634,8 +634,7 @@
                             </div>
 
                             <div class="oauth-quick-btn-row">
-                                <button type="button" id="btnParseOAuthCallback" class="btn btn-primary">解析并自动填充</button>
-                                <button type="submit" id="btnQuickImportTeam" class="btn btn-primary">导入 Team</button>
+                                <button type="submit" id="btnQuickImportTeam" class="btn btn-primary">导入</button>
                             </div>
 
                             <div class="import-mode-toggle-wrap">
@@ -848,7 +847,8 @@ eyJ..."></textarea>
     <script src="/static/js/page-confirm.js?v=20260927-1"></script>
     <script src="/static/js/member-seat-summary.js?v=20261015-redesign"></script>
     <script src="/static/js/member-list.js?v=20261015-member-management"></script>
-    <script src="/static/js/main.js?v=20261015-member-management"></script>
+    <script src="/static/js/main.js?v=20261020-team-import"></script>
+    <script src="/static/js/team-import.js?v=20261020-team-import"></script>
     <script>window.initLucideIcons();</script>
     {% block extra_js %}{% endblock %}
 </body>

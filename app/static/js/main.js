@@ -874,13 +874,6 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    const btnParseOAuthCallback = document.getElementById('btnParseOAuthCallback');
-    if (btnParseOAuthCallback) {
-        btnParseOAuthCallback.addEventListener('click', () => {
-            parseOAuthCallbackAndFill();
-        });
-    }
-
     const switchToManualFill = document.getElementById('switchToManualFill');
     if (switchToManualFill) {
         switchToManualFill.addEventListener('click', () => setSingleImportMode('manual'));
@@ -1082,6 +1075,11 @@ let oauthDraft = {
 let oauthParsedCache = null;
 let oauthParsedCacheKey = '';
 
+function clearOAuthParsedCache() {
+    oauthParsedCache = null;
+    oauthParsedCacheKey = '';
+}
+
 async function generateOAuthAuthorizeLink() {
     const form = document.getElementById('singleImportForm');
     if (!form) return;
@@ -1110,8 +1108,7 @@ async function generateOAuthAuthorizeLink() {
         oauthDraft.codeVerifier = data.code_verifier || '';
         oauthDraft.state = data.state || '';
         oauthDraft.clientId = data.client_id || clientId;
-        oauthParsedCache = null;
-        oauthParsedCacheKey = '';
+        clearOAuthParsedCache();
 
         document.getElementById('oauthAuthorizeUrlOutput').value = data.authorize_url || '';
         if (form.clientId) form.clientId.value = oauthDraft.clientId;
@@ -1133,7 +1130,7 @@ async function generateOAuthAuthorizeLink() {
     }
 }
 
-async function parseOAuthCallbackData(forceRefresh = false) {
+async function parseOAuthCallbackData() {
     const callbackText = document.getElementById('oauthCallbackInput').value.trim();
     const form = document.getElementById('singleImportForm');
 
@@ -1141,7 +1138,7 @@ async function parseOAuthCallbackData(forceRefresh = false) {
         throw new Error('请先粘贴回调 URL');
     }
 
-    if (!forceRefresh && oauthParsedCache && oauthParsedCacheKey === callbackText) {
+    if (oauthParsedCache && oauthParsedCacheKey === callbackText) {
         return oauthParsedCache;
     }
 
@@ -1156,11 +1153,16 @@ async function parseOAuthCallbackData(forceRefresh = false) {
         })
     });
 
-    if (!result.success) {
-        throw new Error(getFriendlyAdminErrorMessage(result.error || '解析回调失败', 0, 'oauth'));
+    if (!result.success || result.data?.success === false) {
+        throw new Error(getFriendlyAdminErrorMessage(result.error || result.data?.error || '解析回调失败', 0, 'oauth'));
     }
 
     const parsed = unwrapApiPayload(result) || {};
+    const hasToken = [parsed.access_token, parsed.refresh_token]
+        .some(token => typeof token === 'string' && token.trim());
+    if (!hasToken) {
+        throw new Error('回调解析结果缺少 Token，请重新授权');
+    }
     oauthParsedCache = parsed;
     oauthParsedCacheKey = callbackText;
     return parsed;
@@ -1232,76 +1234,6 @@ function buildOAuthJsonTemplate(parsedData) {
         refresh_token: refreshToken,
         type: raw.type || parsedData.type || 'codex'
     };
-}
-
-async function parseOAuthCallbackAndFill() {
-    const form = document.getElementById('singleImportForm');
-
-    try {
-        const data = await parseOAuthCallbackData(true);
-        const normalized = buildOAuthJsonTemplate(data);
-        if (form.accessToken) form.accessToken.value = normalized.access_token || '';
-        if (form.idToken) form.idToken.value = normalized.id_token || '';
-        if (form.refreshToken) form.refreshToken.value = normalized.refresh_token || '';
-        if (form.clientId) form.clientId.value = data.client_id || normalized.client_id || '';
-        if (form.email) form.email.value = normalized.email || '';
-        if (form.accountId) form.accountId.value = normalized.account_id || '';
-
-        showToast('已自动填充 Token 信息，请确认后导入', 'success');
-    } catch (error) {
-        showToast(getFriendlyAdminErrorMessage(error.message || '解析回调失败', 0, 'oauth'), 'error');
-    }
-}
-
-
-async function handleSingleImport(event) {
-    event.preventDefault();
-    const form = event.target;
-    const accessToken = form.accessToken.value.trim();
-    const idToken = form.idToken ? form.idToken.value.trim() : null;
-    const refreshToken = form.refreshToken ? form.refreshToken.value.trim() : null;
-    const sessionToken = form.sessionToken ? form.sessionToken.value.trim() : null;
-    const clientId = form.clientId ? form.clientId.value.trim() : null;
-    const email = form.email.value.trim();
-    const accountId = form.accountId.value.trim();
-    const activeSection = document.getElementById('manualTokenSection')?.style.display !== 'none'
-        ? document.getElementById('manualTokenSection')
-        : document.getElementById('oauthQuickSection');
-    const submitButton = activeSection?.querySelector('button[type="submit"]')
-        || form.querySelector('button[type="submit"]');
-
-    submitButton.disabled = true;
-    submitButton.textContent = '导入中...';
-
-    try {
-        const result = await apiCall('/admin/teams/import', {
-            method: 'POST',
-            body: JSON.stringify({
-                import_type: 'single',
-                access_token: accessToken,
-                id_token: idToken || null,
-                refresh_token: refreshToken || null,
-                session_token: sessionToken || null,
-                client_id: clientId || null,
-                email: email || null,
-                account_id: accountId || null,
-                pool_type: getCurrentPoolType()
-            })
-        });
-
-        if (result.success) {
-            showToast('Team 导入成功！', 'success');
-            form.reset();
-            await refreshVisibleAdminData();
-        } else {
-            showToast(getFriendlyAdminErrorMessage(result.error || '导入失败', 0, 'import'), 'error');
-        }
-    } catch (error) {
-        showToast(getFriendlyAdminErrorMessage(error.message || '网络错误', 0, 'import'), 'error');
-    } finally {
-        submitButton.disabled = false;
-        submitButton.textContent = '导入';
-    }
 }
 
 async function handleBatchImport(event) {
@@ -2687,7 +2619,6 @@ async function rotateMember(teamId, userId, email) {
 // 确保内联 onclick 在任何加载模式下都可调用
 if (typeof window !== 'undefined') {
     window.generateOAuthAuthorizeLink = generateOAuthAuthorizeLink;
-    window.parseOAuthCallbackAndFill = parseOAuthCallbackAndFill;
     window.handleJsonFileImport = handleJsonFileImport;
     window.copyWelfareCode = copyWelfareCode;
     window.updateWelfareCodeTeamHint = updateWelfareCodeTeamHint;
