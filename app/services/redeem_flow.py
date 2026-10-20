@@ -26,6 +26,7 @@ from app.utils.time_utils import get_now
 logger = logging.getLogger(__name__)
 
 ALREADY_IN_TEAM_KEYWORDS = ["already in workspace", "already in team", "already a member"]
+SELF_SERVICE_SEAT_TYPE = "default"
 
 # 全局兑换锁: 针对 code 进行加锁，防止同一个码并发进入兑换
 # 使用引用计数管理，避免 defaultdict 永久持有每个见过的 key
@@ -475,7 +476,8 @@ class RedeemFlowService:
 
                         invite_res = await self.chatgpt_service.send_invite(
                             access_token, account_id_to_use, email, db_session,
-                            identifier=team_email_to_use
+                            identifier=team_email_to_use,
+                            seat_type=SELF_SERVICE_SEAT_TYPE,
                         )
 
                         # 4. 后置处理与状态持久化 (第二次短事务)

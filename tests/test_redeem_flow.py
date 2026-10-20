@@ -161,8 +161,17 @@ class StubTeamService:
 class StubChatGPTService:
     def __init__(self, invite_results):
         self.invite_results = invite_results
+        self.invite_calls = []
 
-    async def send_invite(self, access_token, account_id, email, db_session, identifier="default"):
+    async def send_invite(
+        self, access_token, account_id, email, db_session, identifier="default", seat_type=None
+    ):
+        self.invite_calls.append({
+            "account_id": account_id,
+            "email": email,
+            "identifier": identifier,
+            "seat_type": seat_type,
+        })
         team_results = self.invite_results.get(account_id, [])
         if team_results:
             result = team_results.pop(0)
@@ -2609,6 +2618,10 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(result["success"])
             self.assertEqual(result["team_info"]["id"], 2)
+            self.assertEqual(
+                [call["seat_type"] for call in service.chatgpt_service.invite_calls],
+                ["default", "default"],
+            )
 
             code = await session.get(RedemptionCode, 1)
             self.assertEqual(code.used_team_id, 2)
@@ -2616,6 +2629,26 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
             records = (await session.execute(select(RedemptionRecord))).scalars().all()
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].team_id, 2)
+
+    async def test_self_service_invitation_forces_standard_seat(self):
+        await self._seed_basic_data()
+        service = RedeemFlowService()
+        service.redemption_service = StubRedemptionService()
+        service.team_service = StubTeamService()
+        service.chatgpt_service = StubChatGPTService({})
+
+        async with self.session_factory() as session:
+            with patch("app.services.redeem_flow.asyncio.create_task", side_effect=self._close_coro):
+                result = await service.redeem_and_join_team(
+                    email="user@example.com",
+                    code="TEST-CODE-0001",
+                    team_id=1,
+                    db_session=session,
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(len(service.chatgpt_service.invite_calls), 1)
+        self.assertEqual(service.chatgpt_service.invite_calls[0]["seat_type"], "default")
 
     async def test_auto_retry_when_invite_api_reports_team_banned(self):
         await self._seed_basic_data()
