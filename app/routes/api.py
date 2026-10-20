@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.services.team import TeamService
+from app.services.account_pool_credentials import account_pool_credential_service
+from app.services.encryption import encryption_service
+from app.services.openai_automatic_login import AutomaticLoginDependencies, OpenAIAutomaticLoginService
+from app.services.team_refresh import TeamRefreshDependencies, TeamRefreshService
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,15 @@ router = APIRouter(
 
 # 服务实例
 team_service = TeamService()
+team_refresh_service = TeamRefreshService(TeamRefreshDependencies(
+    teams=team_service, credentials=account_pool_credential_service,
+    login=OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+        get_session=team_service.chatgpt_service._get_session,
+        clear_session=team_service.chatgpt_service.clear_session,
+        exchange_code=team_service.chatgpt_service.exchange_oauth_code,
+    )),
+    cipher=encryption_service, jwt=team_service.jwt_parser,
+))
 
 
 @router.get("/teams/{team_id}/refresh")
@@ -31,7 +44,7 @@ async def refresh_team(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    刷新 Team 信息
+    刷新 Team 信息；异常登录状态使用账号号池密码和 2FA 重新登录一次。
 
     Args:
         team_id: Team ID
@@ -45,7 +58,7 @@ async def refresh_team(
     try:
         logger.info(f"刷新 Team {team_id} 信息, force={force}")
 
-        result = await team_service.sync_team_info(team_id, db, force_refresh=force)
+        result = await team_refresh_service.refresh(team_id, db, force_refresh=force)
 
         if not result["success"]:
             return JSONResponse(

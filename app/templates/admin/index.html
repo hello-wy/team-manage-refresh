@@ -1337,7 +1337,7 @@
             if (button.matches('.btn-view-members')) {
                 viewMembers(teamId, button.getAttribute('data-email'));
             } else if (button.matches('.btn-refresh-team')) {
-                refreshTeam(teamId);
+                refreshTeam(teamId, button);
             } else if (button.matches('.btn-edit-team')) {
                 editTeam(teamId);
             } else if (button.matches('.btn-enable-device-auth')) {
@@ -1511,13 +1511,12 @@
         }
     }
 
-    async function refreshTeam(teamId) {
-        if (!await confirmPageAction('确定要刷新此 Team 的信息吗?')) {
-            return;
-        }
-
+    async function refreshTeam(teamId, button) {
+        if (button?.disabled) return;
+        if (button) button.disabled = true;
         try {
-            showToast('正在刷新...', 'info');
+            if (!await confirmPageAction('刷新将检测账号状态；异常时使用账号号池密码和 2FA 重新登录一次并回填登录状态，是否继续？')) return;
+            showToast('正在检测账号状态，异常账号将自动重新登录...', 'info');
             const response = await fetch(`/api/teams/${teamId}/refresh`, {
                 method: 'GET'
             });
@@ -1525,7 +1524,7 @@
             const data = await response.json();
 
             if (response.ok && data.success) {
-                showToast('刷新成功', 'success');
+                showToast(data.message || '刷新成功', 'success');
                 await refreshAdminTeamTable();
             } else {
                 showToast(data.error || '刷新失败（状态可能已更新）', 'error');
@@ -1534,6 +1533,8 @@
             }
         } catch (error) {
             showToast('网络错误', 'error');
+        } finally {
+            if (button) button.disabled = false;
         }
     }
 
