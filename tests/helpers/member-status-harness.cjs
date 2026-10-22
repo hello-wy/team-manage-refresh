@@ -48,6 +48,7 @@ function harness() {
         let memberListRequestId = 0, memberSeatBalance = null, memberExistingEmails = new Set(), renderedMemberTeamId = null;
         ${section('let memberAuthorizationContext = null;', 'function generateMemberAuthorization()')}
         ${section('async function viewMembers(', 'async function revokeInvite(')}
+        ${readFileSync(join(__dirname, '../../app/static/js/invited-member-credentials.js'), 'utf8')}
         ${readFileSync(join(__dirname, '../../app/static/js/member-list.js'), 'utf8')}
         memberAuthorizationContext = {teamId: 1, email: 'member@example.com', busy: false, hasLink: true};
     `, context);

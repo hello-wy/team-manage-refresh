@@ -24,6 +24,7 @@ function setMemberListTableMessage(message, failed = false) {
 }
 
 function prepareMemberList(teamId) {
+    window.invitedMemberCredentials.reset();
     memberSeatBalance = null;
     updateMemberInviteAvailability();
     setMemberSyncStatus('正在同步最新成员信息，每批读取 10 页...');
@@ -135,6 +136,7 @@ function renderInvitedMemberRow(teamId, member) {
 }
 
 function renderInvitedMemberList(teamId, members, data) {
+    window.invitedMemberCredentials.update(teamId, members, data);
     const body = document.getElementById('modalInvitedMembersTableBody');
     if (!body) return;
     if (data.seat_summary?.invites_complete === false) {

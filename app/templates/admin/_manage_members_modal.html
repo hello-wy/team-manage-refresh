@@ -113,7 +113,14 @@
 
                 <!-- 待加入成员 -->
                 <div class="content-section" style="margin: 0;">
-                    <h4 style="margin-bottom: 1rem; color: var(--warning);">待加入成员 (邀请中)</h4>
+                    <div class="member-invited-header">
+                        <h4>待加入成员 (邀请中)</h4>
+                        <button id="copyInvitedMemberCredentialsBtn" type="button" class="btn btn-sm btn-secondary"
+                            onclick="window.invitedMemberCredentials.copy()" title="每行复制账号----密码----2fa（密钥）" disabled>
+                            <i data-lucide="copy" aria-hidden="true"></i>
+                            <span id="copyInvitedMemberCredentialsLabel">批量复制账号</span>
+                        </button>
+                    </div>
                     <div class="table-container" style="max-height: 250px; overflow-y: auto; margin: 0;">
                         <table class="data-table">
                             <thead>
