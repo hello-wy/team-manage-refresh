@@ -26,6 +26,7 @@ from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS, account_pool_
 from app.services.account_pool_team_usage import record_seat_switch
 from app.services.sub2api_cleanup import enqueue_member_cleanup
 from app.services.member_profile import normalize_member_profiles
+from app.services.member_auto_kick_policy import calculate_deadline
 from app.services.member_listing import MemberListingService
 from app.services.member_identity import load_member_identities
 from app.services.member_name_identity import resolve_pool_member_emails
@@ -726,13 +727,7 @@ class TeamService:
             joined_at = max(mapping.joined_at, joined_at)
         mapping.joined_at = joined_at or mapping.joined_at
         hours = int((team.member_auto_kick_hours if team else None) or 2)
-        mapping.auto_kick_at = self._member_auto_kick_at(mapping, hours)
-
-    @staticmethod
-    def _member_auto_kick_at(mapping, hours):
-        if mapping.auto_kick_exempt or mapping.member_role == "account-owner" or not mapping.joined_at:
-            return None
-        return mapping.joined_at + timedelta(hours=hours)
+        mapping.auto_kick_at = calculate_deadline(mapping, hours)
 
     @staticmethod
     def _apply_invited_mapping(mapping, seen_at) -> None:

@@ -2,6 +2,7 @@
 from sqlalchemy import case, func, literal, select, union_all
 
 from app.models import AccountPoolEntry, Team, TeamEmailMapping
+from app.services.member_auto_kick_policy import auto_kick_enabled_condition
 from app.utils.team_names import team_display_name
 
 SORT_OPTIONS = {
@@ -43,7 +44,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
                     TeamEmailMapping.seat_type,
                     case(((_normalized(TeamEmailMapping.email) != owner_email)
                            & (Team.rotation_mode == "off")
-                           & TeamEmailMapping.auto_kick_exempt.is_(False)
+                           & auto_kick_enabled_condition()
                            & (func.coalesce(TeamEmailMapping.member_role, "") != "account-owner"),
                            TeamEmailMapping.auto_kick_at), else_=None).label("deadline"),
                     case((_normalized(TeamEmailMapping.email) == owner_email, 0),

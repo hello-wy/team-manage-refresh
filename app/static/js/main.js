@@ -2151,11 +2151,12 @@ let memberPoolOptionsRequestId = 0;
 let renderedMemberTeamId = null;
 
 function renderMemberAutoKickTime(member) {
-    if (member.role === 'account-owner') return '<span class="text-muted">不会自动下线</span>';
-    if (member.auto_kick_exempt) return '<span class="text-muted">不会自动下线</span>';
+    if (member.role === 'account-owner' || member.auto_kick_exempt) {
+        return '<span class="member-auto-kick-time text-muted">不会自动下线</span>';
+    }
     if (!member.auto_kick_at) {
         const reason = member.profile_sync_error || '下线计划未生成，请刷新成员信息';
-        return `<span class="text-danger">${escapeHtml(reason)}</span>`;
+        return `<span class="member-auto-kick-time text-danger">${escapeHtml(reason)}</span>`;
     }
     const overdue = new Date(member.auto_kick_at).getTime() <= Date.now();
     return `<span class="member-auto-kick-time${overdue ? ' is-overdue' : ''}">${formatDateTime(member.auto_kick_at)}</span>`;
@@ -2244,7 +2245,10 @@ function applyMemberAutoKickRow(button, data) {
     if (icon) icon.setAttribute('data-lucide', exempt ? 'clock-3' : 'shield-off');
     const time = row.querySelector('.member-auto-kick-time');
     if (!time) return;
-    time.textContent = data.auto_kick_at ? formatDateTime(data.auto_kick_at) : '不会自动下线';
+    time.textContent = data.auto_kick_at ? formatDateTime(data.auto_kick_at)
+        : exempt ? '不会自动下线' : '下线计划未生成，请刷新成员信息';
+    time.classList.toggle('text-muted', exempt);
+    time.classList.toggle('text-danger', !exempt && !data.auto_kick_at);
     time.classList.toggle(
         'is-overdue',
         Boolean(data.auto_kick_at && new Date(data.auto_kick_at).getTime() <= Date.now())

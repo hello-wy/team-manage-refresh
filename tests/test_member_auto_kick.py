@@ -329,6 +329,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                         team_id=team_id, email=due_email, status="joined",
                         upstream_user_id=f"user-{team_id}", member_role="standard-user",
                         seat_type=seat_type, joined_at=get_now() - timedelta(hours=3),
+                        standard_auto_kick_enabled=(seat_type == "standard"),
                         auto_kick_at=get_now() - timedelta(hours=1),
                     ))
                     session.add(AccountPoolEntry(email=candidate_email))

@@ -70,6 +70,7 @@ def _cached_fields(member, cached):
         ("name", cached.member_name, "姓名"),
         ("created_time", cached.joined_at, "加入时间"),
         ("role", cached.member_role, "角色"),
+        ("seat_type", cached.seat_type, "席位类型"),
     )
     return [label for key, saved, label in fields
             if saved and (not member.get(key) or (key == "email" and member.get("profile_cached_email")))]
@@ -90,6 +91,7 @@ def _normalize_profile(member, mappings, by_user_id, *, timezone):
         "email": email or None,
         "name": member.get("name") or (cached.member_name if cached else None),
         "role": member.get("role") or (cached.member_role if cached else None),
+        "seat_type": member.get("seat_type") or (cached.seat_type if cached else None),
         "created_time": joined_at.isoformat() if joined_at else None,
         "profile_sync_error": "；".join(errors) or None,
         "profile_cached_fields": _cached_fields(member, cached),

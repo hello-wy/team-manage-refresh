@@ -2,12 +2,15 @@
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Awaitable, Callable, Dict, Optional
+from typing import Awaitable, Callable, Dict
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Team, TeamEmailMapping, TeamReplacementQueue
+from app.services.member_auto_kick_policy import (
+    auto_kick_enabled_condition, calculate_deadline, is_auto_kick_exempt,
+)
 from app.utils.time_utils import get_now
 
 logger = logging.getLogger(__name__)
@@ -44,17 +47,6 @@ class MemberAutoKickService:
             )
         return value
 
-    @staticmethod
-    def calculate_deadline(
-        joined_at,
-        role: Optional[str],
-        hours: int,
-        exempt: bool = False,
-    ):
-        if exempt or not joined_at or role == OWNER_ROLE:
-            return None
-        return joined_at + timedelta(hours=hours)
-
     async def update_team_hours(
         self,
         team_id: int,
@@ -69,16 +61,11 @@ class MemberAutoKickService:
         team.member_auto_kick_hours = normalized_hours
         mappings = await self._joined_mappings(team_id, db_session)
         for mapping in mappings:
-            mapping.auto_kick_at = self.calculate_deadline(
-                mapping.joined_at,
-                mapping.member_role,
-                normalized_hours,
-                mapping.auto_kick_exempt,
-            )
+            mapping.auto_kick_at = calculate_deadline(mapping, normalized_hours)
         await db_session.commit()
         return {
             "success": True,
-            "message": f"已设置为成员加入 {normalized_hours} 小时后自动踢出",
+            "message": f"已设置为加入 {normalized_hours} 小时后自动下线；标准席位默认不自动下线",
             "hours": normalized_hours,
         }
 
@@ -107,17 +94,13 @@ class MemberAutoKickService:
             return {"success": False, "error": "Team 所有者不会自动下线，无需设置"}
 
         mapping.auto_kick_exempt = bool(exempt)
+        mapping.standard_auto_kick_enabled = not exempt
         hours = int(team.member_auto_kick_hours or DEFAULT_MEMBER_AUTO_KICK_HOURS)
-        mapping.auto_kick_at = self.calculate_deadline(
-            mapping.joined_at,
-            mapping.member_role,
-            hours,
-            mapping.auto_kick_exempt,
-        )
+        mapping.auto_kick_at = calculate_deadline(mapping, hours)
         await db_session.commit()
         return {
             "success": True,
-            "exempt": mapping.auto_kick_exempt,
+            "exempt": is_auto_kick_exempt(mapping),
             "auto_kick_at": mapping.auto_kick_at.isoformat() if mapping.auto_kick_at else None,
             "message": "已设置该成员不会自动下线" if mapping.auto_kick_exempt else "已恢复该成员的自动下线计划",
         }
@@ -457,7 +440,7 @@ class MemberAutoKickService:
                 TeamEmailMapping.status == JOINED_STATUS,
                 TeamEmailMapping.auto_kick_at.is_not(None),
                 TeamEmailMapping.auto_kick_at <= get_now(),
-                TeamEmailMapping.auto_kick_exempt.is_(False),
+                auto_kick_enabled_condition(),
                 TeamEmailMapping.upstream_user_id.is_not(None),
                 TeamEmailMapping.member_role != OWNER_ROLE,
             )

@@ -269,6 +269,7 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             deadline = self.now + timedelta(minutes=25)
             db.add_all([
                 TeamEmailMapping(team_id=1, email="leaving@example.com", status="joined",
+                                 standard_auto_kick_enabled=True,
                                  seat_type="standard", upstream_user_id="user-1", member_role="standard-user", auto_kick_at=deadline),
                 TeamEmailMapping(team_id=1, email="owner-1@example.com", status="joined",
                                  seat_type="premium", upstream_user_id="owner", auto_kick_at=self.now,

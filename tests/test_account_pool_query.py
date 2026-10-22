@@ -25,12 +25,14 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
                                          updated_at=self.now + timedelta(seconds=i), workspace_status='personal_account'))
             db.add_all([
                 TeamEmailMapping(team_id=1, email='standard@example.com', status='joined', seat_type='standard',
+                                 standard_auto_kick_enabled=True,
                                  auto_kick_at=self.now + timedelta(hours=1)),
                 TeamEmailMapping(team_id=1, email='premium@example.com', status='joined', seat_type='premium',
                                  auto_kick_at=self.now + timedelta(hours=3)),
                 TeamEmailMapping(team_id=1, email='owner1@example.com', status='joined', seat_type='standard',
                                  auto_kick_at=self.now - timedelta(days=1)),
                 TeamEmailMapping(team_id=1, email='conflict@example.com', status='joined', seat_type='standard',
+                                 standard_auto_kick_enabled=True,
                                  auto_kick_at=self.now + timedelta(hours=2)),
                 TeamEmailMapping(team_id=2, email='conflict@example.com', status='joined', seat_type='premium'),
                 TeamEmailMapping(team_id=2, email='invited@example.com', status='invited'),
@@ -102,6 +104,17 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             listing = await account_pool_service.list_entries(db, sort_by='deadline')
             # No scheduled exits remain: fall back to Team/email ordering, including its owner.
             self.assertLess(self.emails(listing).index('owner1@example.com'), self.emails(listing).index('premium@example.com'))
+
+    async def test_deadline_sort_ignores_standard_seats_without_manual_opt_in(self):
+        from sqlalchemy import select
+        async with self.sessions() as db:
+            mappings = (await db.scalars(select(TeamEmailMapping).where(
+                TeamEmailMapping.seat_type == 'standard'))).all()
+            for mapping in mappings:
+                mapping.standard_auto_kick_enabled = False
+            await db.commit()
+            listing = await account_pool_service.list_entries(db, sort_by='deadline')
+            self.assertEqual(self.emails(listing)[0], 'premium@example.com')
 
     async def test_normalizes_invalid_options_and_loads_details_for_one_page_only(self):
         async with self.sessions() as db:

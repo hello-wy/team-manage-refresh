@@ -55,11 +55,12 @@ class MemberNameIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw[0]["email"], email)
         return result["members"]
 
-    async def test_unique_name_resolves_email_and_persists_real_join_time_and_deadline(self):
+    async def test_unique_name_resolves_email_and_preserves_standard_seat_exemption(self):
         member, = await self.snapshot(names=("  Ｋｏｈｅｉ  BOOKER ",))
         self.assertEqual(member["email"], EMAIL)
         self.assertIsNone(member["profile_sync_error"])
-        self.assertEqual(member["auto_kick_at"], "2026-10-15T19:49:00")
+        self.assertIsNone(member["auto_kick_at"])
+        self.assertTrue(member["auto_kick_exempt"])
         async with self.sessions() as verification:
             mapping = (await verification.execute(select(TeamEmailMapping))).scalar_one()
             self.assertEqual(mapping.email, EMAIL)

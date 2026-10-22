@@ -131,6 +131,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertIn("last_invited_at", mapping_columns)
             self.assertIn("seat_type", mapping_columns)
             self.assertIn("member_name", mapping_columns)
+            self.assertIn("standard_auto_kick_enabled", mapping_columns)
             self.assertNotIn("seat_type", pool_columns)
             self.assertIn("password_encrypted", pool_columns)
             self.assertIn("two_factor_secret_encrypted", pool_columns)

@@ -112,7 +112,10 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         personal = await account_pool_service.list_entries(self.db, team_filter="personal", search="member-")
         self.assertEqual(personal["total"], 0)
         mappings = (await self.db.execute(select(TeamEmailMapping))).scalars().all()
-        self.assertTrue(all(mapping.joined_at and mapping.auto_kick_at for mapping in mappings))
+        self.assertTrue(all(mapping.joined_at for mapping in mappings))
+        by_seat = {mapping.seat_type: mapping for mapping in mappings}
+        self.assertIsNone(by_seat["standard"].auto_kick_at)
+        self.assertIsNotNone(by_seat["premium"].auto_kick_at)
         self.login.login.assert_not_awaited()
 
     async def test_discovered_managed_team_synchronizes_previously_unknown_member(self):
@@ -156,8 +159,12 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         snapshot = await self.teams.get_team_members(self.team.id, self.db)
         self.assertEqual({member["email"] for member in snapshot["members"]},
                          {member["email"] for member in MEMBERS})
-        self.assertTrue(all(member["name"] and member["auto_kick_at"]
+        self.assertTrue(all(member["name"]
                             and not member["profile_sync_error"] for member in snapshot["members"]))
+        by_seat = {member["seat_type"]: member for member in snapshot["members"]}
+        self.assertIsNone(by_seat["default"]["auto_kick_at"])
+        self.assertTrue(by_seat["default"]["auto_kick_exempt"])
+        self.assertIsNotNone(by_seat["prolite"]["auto_kick_at"])
         self.login.login.reset_mock()
         await self.authorization.refresh_team_list(self.db, entries[0].id)
         self.login.login.assert_not_awaited()

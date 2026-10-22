@@ -14,6 +14,7 @@ from app.models import (
     Team, TeamEmailMapping, TeamReplacementQueue,
 )
 from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS
+from app.services.member_auto_kick_policy import is_auto_kick_exempt
 from app.services.quota_rotation_policy import ADMIN_ROLES, MAX_SNAPSHOT_AGE, next_action, quota_ready
 from app.services.rotation_candidates import rotation_candidate_block_reason
 from app.utils.time_utils import get_now
@@ -68,7 +69,7 @@ def _member_view(mapping, team, snapshot, state, exported, now):
     if mapping.status == "invited":
         return _view("待接受邀请", "已邀请至此 Team，接受后继续授权导出", team)
     if team.rotation_mode == "off":
-        if mapping.member_role == "account-owner" or mapping.auto_kick_exempt:
+        if is_auto_kick_exempt(mapping):
             return _view("保留当前 Team", "已免除定时下线", team, kind="idle")
         if not mapping.auto_kick_at or not mapping.upstream_user_id:
             return _view("待确认下线计划", "退出当前 Team 后再匹配下一站", team)
@@ -151,7 +152,7 @@ async def attach_rotation_status(db, rows):
         team = teams.get(mapping.team_id)
         if (team and team.rotation_mode == "off" and mapping.status == "joined"
                 and mapping.auto_kick_at and mapping.upstream_user_id
-                and not mapping.auto_kick_exempt and mapping.member_role is not None
+                and not is_auto_kick_exempt(mapping) and mapping.member_role is not None
                 and mapping.member_role != "account-owner"
                 and mapping.email.strip().lower() not in owners):
             deadlines[team.id].append(mapping)

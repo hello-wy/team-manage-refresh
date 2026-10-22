@@ -176,6 +176,29 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self.remote.delete_workspace_user.assert_not_awaited()
         self.remote.delete_member.assert_not_awaited()
 
+    async def test_default_standard_member_cancels_both_removal_methods(self):
+        self.mapping.seat_type = "standard"
+        await self.db.commit()
+
+        result = await self.remove()
+
+        self.assertFalse(result["success"])
+        self.assertEqual(self.mapping.status, "joined")
+        self.login.login.assert_not_awaited()
+        self.remote.delete_workspace_user.assert_not_awaited()
+        self.remote.delete_member.assert_not_awaited()
+
+    async def test_standard_member_can_depart_after_manual_enable(self):
+        self.mapping.seat_type = "standard"
+        self.mapping.standard_auto_kick_enabled = True
+        await self.db.commit()
+
+        result = await self.remove()
+
+        self.assertTrue(result["success"])
+        self.assertEqual(self.mapping.status, "removed")
+        self.remote.delete_workspace_user.assert_awaited_once()
+
     async def test_admin_failure_and_unconfirmed_snapshot_keep_member_joined(self):
         self.login.login.side_effect = OpenAIAutomaticLoginError("account_deactivated")
         self.remote.delete_member.return_value = {"success": False, "status_code": 403, "error": "forbidden"}

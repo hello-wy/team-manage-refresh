@@ -187,6 +187,10 @@ class TeamEmailMapping(Base):
         nullable=False,
         comment="是否免除成员自动下线",
     )
+    standard_auto_kick_enabled = Column(
+        Boolean, default=False, nullable=False,
+        comment="是否手动开启标准席位定时下线；默认不开启",
+    )
     auto_kick_at = Column(DateTime, comment="成员计划自动踢出时间")
     last_invited_at = Column(DateTime, comment="最近一次向该 Team 发送邀请的时间")
     last_seen_at = Column(DateTime, default=get_now, comment="最后一次确认该状态的时间")

@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.models import MemberAuthorization, Team
 from app.services.member_auto_kick import DEFAULT_MEMBER_AUTO_KICK_HOURS
+from app.services.member_auto_kick_policy import is_auto_kick_exempt
 from app.services.member_sync_cursor import fetch_sync_members
 from app.utils.seats import summarize_member_seats
 from app.utils.time_utils import get_now
@@ -129,8 +130,9 @@ class MemberListingService:
             **member, "authorized": authorization is not None,
             "json_saved": bool(authorization and authorization.export_json_encrypted),
             "sub2api_exported": bool(authorization and authorization.sub2api_exported_at),
-            "auto_kick_at": mapping.auto_kick_at.isoformat() if mapping and mapping.auto_kick_at else None,
-            "auto_kick_exempt": bool(mapping and mapping.auto_kick_exempt),
+            "auto_kick_at": (mapping.auto_kick_at.isoformat()
+                             if mapping and mapping.auto_kick_at and not is_auto_kick_exempt(mapping) else None),
+            "auto_kick_exempt": bool(mapping and is_auto_kick_exempt(mapping)),
         }
 
     async def _snapshot(self, context):

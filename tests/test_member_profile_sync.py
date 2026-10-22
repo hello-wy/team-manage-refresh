@@ -50,7 +50,7 @@ class MemberProfileSyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def fetch(self, **fields):
         member = {"id": "user-1", "email": EMAIL, "name": "成员甲",
-                  "role": "standard-user", "seat_type": "default",
+                  "role": "standard-user", "seat_type": "prolite",
                   "created_time": JOINED_AT, **fields}
         self.remote.get_members.return_value = {
             "success": True, "members": [member], "total": 1,

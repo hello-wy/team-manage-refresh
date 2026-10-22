@@ -275,6 +275,7 @@ def run_auto_migration():
             "seat_type": "VARCHAR(20)",
             "joined_at": "DATETIME",
             "auto_kick_exempt": "BOOLEAN NOT NULL DEFAULT 0",
+            "standard_auto_kick_enabled": "BOOLEAN NOT NULL DEFAULT 0",
             "auto_kick_at": "DATETIME",
             "last_invited_at": "DATETIME",
             "replacement_export_pending": "BOOLEAN NOT NULL DEFAULT 0",
