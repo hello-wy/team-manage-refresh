@@ -15,6 +15,7 @@ class AutomaticLoginDependencies:
     clear_session: Callable[[str], Awaitable[None]]
     exchange_code: Callable[..., Awaitable[dict[str, Any]]]
     issue_sentinel: Callable[[Any, str], Awaitable[str]] = issue_sentinel_token
+    complete_phone_verification: Callable[..., Awaitable[dict[str, Any]]] | None = None
 
 
 @dataclass(frozen=True)
@@ -26,3 +27,4 @@ class AutomaticLoginRequest:
     oauth_draft: dict[str, str]
     db_session: Any
     identifier: str
+    phone_verification: bool = False

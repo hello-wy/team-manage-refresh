@@ -293,6 +293,8 @@ class AccountPoolEntry(Base):
     name_key = Column(String(255), comment="用于成员姓名匹配的规范化账号名称")
     password_encrypted = Column(Text, comment="加密存储的 ChatGPT 登录密码")
     two_factor_secret_encrypted = Column(Text, comment="加密存储的 2FA 密钥")
+    phone_number_encrypted = Column(Text, comment="加密存储的已验证手机号")
+    phone_verified_at = Column(DateTime, comment="最近一次手机号验证时间")
     liveness_status = Column(String(20), comment="验活结果: alive/invalid/error/missing")
     liveness_checked_at = Column(DateTime, comment="最近一次验活时间")
     liveness_message = Column(String(255), comment="最近一次验活结果说明")

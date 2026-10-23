@@ -51,6 +51,21 @@ class OpenAIAutomaticLoginService:
         current_url, verified_totp_factor_id = await self._submit_password_and_totp(
             session, request, current_url, device_id, sentinel_token
         )
+        phone_number = ""
+        phone_rental_error = ""
+        if "add-phone" in current_url.lower() or "add_phone" in current_url.lower():
+            if not request.phone_verification:
+                raise OpenAIAutomaticLoginError("该账号要求添加手机号，请从手机号接码页面发起")
+            if self._dependencies.complete_phone_verification is None:
+                raise OpenAIAutomaticLoginError("手机号接码服务未配置")
+            phone_result = await self._dependencies.complete_phone_verification(
+                request, session, device_id, sentinel_token, current_url
+            )
+            phone_number = str(phone_result["phone_number"])
+            phone_rental_error = str(phone_result.get("rental_cleanup_error") or "")
+            _, current_url = await self._follow(
+                session, phone_result["continue_url"], device_id, sentinel_token
+            )
         current_url, workspace = await self._select_workspace(
             session, current_url, request.account_id, device_id, sentinel_token
         )
@@ -64,6 +79,8 @@ class OpenAIAutomaticLoginService:
             workspace["status"] = "workspace_ok"
         result["workspace"] = workspace
         result["verified_totp_factor_id"] = verified_totp_factor_id
+        result["phone_number"] = phone_number
+        result["phone_rental_error"] = phone_rental_error
         return result
 
     async def verify_credentials(self, request: AutomaticLoginRequest) -> dict[str, Any]:

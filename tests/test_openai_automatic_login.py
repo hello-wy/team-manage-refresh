@@ -61,7 +61,7 @@ class FakeSession:
 
 
 class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
-    def request(self, account_id="team-account"):
+    def request(self, account_id="team-account", *, phone_verification=False):
         return AutomaticLoginRequest(
             email="member@example.com",
             password="member-password",
@@ -76,7 +76,44 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             },
             db_session=object(),
             identifier="member-auto-login-1",
+            phone_verification=phone_verification,
         )
+
+    async def test_phone_verification_runs_only_when_explicitly_requested(self):
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(302, headers={"location": "/log-in"}),
+                FakeResponse(200),
+                FakeResponse(200),
+                FakeResponse(200),
+                FakeResponse(200),
+                FakeResponse(200),
+            ],
+            post_responses=[
+                FakeResponse(200, payload={"continue_url": "/log-in/password"}),
+                FakeResponse(200, payload={"continue_url": "/add-phone"}),
+                FakeResponse(200, payload={
+                    "continue_url": "http://localhost:1455/auth/callback?code=code&state=test-state"
+                }),
+            ],
+        )
+        complete_phone = AsyncMock(return_value={
+            "phone_number": "+233123456789",
+            "continue_url": "/workspace",
+        })
+        service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+            get_session=AsyncMock(return_value=session),
+            clear_session=AsyncMock(),
+            exchange_code=AsyncMock(return_value={"success": True}),
+            issue_sentinel=AsyncMock(return_value="sentinel-token"),
+            complete_phone_verification=complete_phone,
+        ))
+
+        result = await service.login(self.request(phone_verification=True))
+
+        self.assertEqual(result["phone_number"], "+233123456789")
+        complete_phone.assert_awaited_once()
+        self.assertEqual(complete_phone.await_args.args[4], "https://auth.openai.com/add-phone")
 
     async def test_password_totp_flow_exchanges_callback_code(self):
         session = FakeSession(

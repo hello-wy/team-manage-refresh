@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}手机号接码 - GPT Team 管理系统{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/phone-verification.css?v=20261023-1">
+{% endblock %}
+{% block content %}
+<div class="phone-workspace">
+    <header class="page-header phone-page-header">
+        <div>
+            <div class="page-header-kicker"><i data-lucide="smartphone"></i><span>Account Phone</span></div>
+            <h2>手机号接码</h2>
+        </div>
+        <span class="phone-provider-state {{ 'is-ready' if herosms_configured else '' }}" id="phoneProviderState">
+            <i data-lucide="{{ 'check-circle-2' if herosms_configured else 'circle-alert' }}"></i>
+            {{ 'HeroSMS 已配置' if herosms_configured else '需要配置 HeroSMS' }}
+        </span>
+    </header>
+
+    <section class="content-section phone-config-section">
+        <div class="phone-section-heading"><div><h3>HeroSMS 接码设置</h3><p>号码只在 OpenAI 登录流程要求添加手机号时购买。</p></div></div>
+        <form id="phoneSettingsForm" class="phone-settings-form">
+            <label class="phone-field phone-key-field"><span>API Key</span><input type="password" name="api_key" autocomplete="new-password" placeholder="{{ '已配置；留空保留当前密钥' if herosms_configured else '输入 HeroSMS API Key' }}"></label>
+            <label class="phone-field"><span>国家编号</span><input type="text" name="country" inputmode="numeric" value="{{ herosms_country }}" required></label>
+            <label class="phone-field"><span>最高单价</span><input type="number" name="max_price" min="0" step="0.000001" value="{{ herosms_max_price }}"></label>
+            <button class="btn btn-secondary" type="submit" id="phoneSettingsSave"><i data-lucide="save"></i> 保存设置</button>
+        </form>
+        <p id="phoneSettingsStatus" class="phone-feedback" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="content-section phone-action-section">
+        <div class="phone-section-heading"><div><h3>号池账号</h3><p>成功验证后，手机号会加密保存到选中账号。</p></div><span class="phone-entry-count">{{ phone_entries|length }} 个账号</span></div>
+        <div class="phone-action-row">
+            <label class="phone-field phone-account-field"><span>选择账号</span><select id="phoneAccountSelect" {% if not phone_entries %}disabled{% endif %}>
+                {% for entry in phone_entries %}<option value="{{ entry.id }}">{{ entry.email }}{% if entry.phone %} · {{ entry.phone }}{% endif %}</option>{% endfor %}
+            </select></label>
+            <button type="button" class="btn btn-primary" id="phoneStartButton" {% if not phone_entries or not herosms_configured %}disabled{% endif %}><i data-lucide="message-square-code"></i> 添加手机号并接码</button>
+        </div>
+        <p class="phone-action-hint">执行时会使用账号号池中保存的登录密码和 2FA。HeroSMS 会按国家编号和最高单价租用号码；只有远端验证成功并完成 OAuth 后才保存。</p>
+        <div class="phone-result" id="phoneResult" role="status" aria-live="polite" hidden></div>
+        {% if not phone_entries %}<div class="phone-empty">账号号池中暂无账号。</div>{% endif %}
+    </section>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/phone-verification.js?v=20261023-1"></script>
+{% endblock %}

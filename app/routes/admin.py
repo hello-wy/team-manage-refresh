@@ -38,6 +38,7 @@ from app.services.openai_automatic_login import (
     AutomaticLoginDependencies,
     OpenAIAutomaticLoginService,
 )
+from app.services.phone_verification import complete_herosms_phone_verification
 from app.services.sub2api import (
     DEFAULT_BASE_URL,
     DEFAULT_CONCURRENCY,
@@ -83,6 +84,7 @@ automatic_login_service = OpenAIAutomaticLoginService(
         get_session=team_service.chatgpt_service._get_session,
         clear_session=team_service.chatgpt_service.clear_session,
         exchange_code=team_service.chatgpt_service.exchange_oauth_code,
+        complete_phone_verification=complete_herosms_phone_verification,
     )
 )
 member_authorization_service = MemberAuthorizationService(

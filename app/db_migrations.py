@@ -337,6 +337,8 @@ def run_auto_migration():
             "name_key": "VARCHAR(255)",
             "password_encrypted": "TEXT",
             "two_factor_secret_encrypted": "TEXT",
+            "phone_number_encrypted": "TEXT",
+            "phone_verified_at": "DATETIME",
             "liveness_status": "VARCHAR(20)",
             "liveness_checked_at": "DATETIME",
             "liveness_message": "VARCHAR(255)",

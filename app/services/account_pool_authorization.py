@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy import select, update
@@ -35,6 +35,8 @@ class AccountPoolLoginResult:
     payload: dict[str, Any]
     workspace: dict[str, Any]
     verified_totp_factor_id: str = ""
+    phone_number: str = ""
+    phone_rental_error: str = ""
 
 
 class AccountPoolAuthorizationService:
@@ -49,6 +51,8 @@ class AccountPoolAuthorizationService:
         session,
         entry_id: int,
         workspace_id: str = "",
+        *,
+        phone_verification: bool = False,
     ) -> AccountPoolLoginResult:
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
@@ -58,12 +62,22 @@ class AccountPoolAuthorizationService:
         except AccountPoolCredentialError as exc:
             raise AccountPoolAuthorizationError(str(exc)) from exc
         self._validate_credentials(credentials)
-        request = self._request(entry, credentials, workspace_id, session)
+        request = replace(
+            self._request(entry, credentials, workspace_id, session),
+            phone_verification=phone_verification,
+        )
         try:
             result = await self._login.login(request)
         except OpenAIAutomaticLoginError as exc:
             raise AccountPoolAuthorizationError(str(exc)) from exc
-        return self._result(entry.email, result, request.account_id)
+        login_result = self._result(entry.email, result, request.account_id)
+        return AccountPoolLoginResult(
+            login_result.payload,
+            login_result.workspace,
+            login_result.verified_totp_factor_id,
+            str(result.get("phone_number") or ""),
+            str(result.get("phone_rental_error") or ""),
+        )
 
     async def scan_entry(self, session, entry_id: int) -> dict[str, Any]:
         entry = await session.get(AccountPoolEntry, entry_id)
@@ -157,6 +171,9 @@ class AccountPoolAuthorizationService:
             )
         saved = await session.execute(statement.values(**values))
         if saved.rowcount:
+            if result.phone_number:
+                entry.phone_number_encrypted = encryption_service.encrypt_token(result.phone_number)
+                entry.phone_verified_at = now
             await self._save_workspace(session, entry_id, result, now)
         await session.commit()
         return bool(saved.rowcount)
@@ -251,6 +268,8 @@ class AccountPoolAuthorizationService:
             payload=payload,
             workspace=workspace,
             verified_totp_factor_id=str(result.get("verified_totp_factor_id") or ""),
+            phone_number=str(result.get("phone_number") or ""),
+            phone_rental_error=str(result.get("phone_rental_error") or ""),
         )
 
     @staticmethod
