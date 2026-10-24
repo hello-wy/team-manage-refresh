@@ -70,3 +70,4 @@ function initAccountPoolQuota() {
 }
 
 window.initAccountPoolQuota = initAccountPoolQuota;
+window.refreshAccountPoolQuota = refreshAccountPoolQuota;

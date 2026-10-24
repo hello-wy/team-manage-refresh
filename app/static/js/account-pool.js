@@ -107,7 +107,7 @@ async function checkAccountPoolLivenessById(entryId, {fromQueue = false, quiet =
     const pending = accountPoolLivenessChecks.get(entryId);
     if (pending && !(fromQueue && pending.status === 'queued')) return 'skipped';
     const previous = pending?.previous || accountPoolLivenessPrevious(entryId);
-    const state = {status: 'checking', message: '正在验证此账号，请稍候…'};
+    const state = {status: 'checking', message: fromQueue ? '正在验证密码、2FA 与 OAuth…' : '正在验证并同步 Team…'};
     accountPoolLivenessChecks.set(entryId, state);
     updateAccountPoolLiveness(entryId, state);
     try {
@@ -125,9 +125,15 @@ async function checkAccountPoolLivenessById(entryId, {fromQueue = false, quiet =
             }
             throw new Error(result.error || result.detail || '验活失败');
         }
-        updateAccountPoolLiveness(entryId, {status: result.status, message: result.message, checkedAt: result.checked_at});
+        const completed = {status: result.status, message: result.message, checkedAt: result.checked_at};
+        accountPoolLivenessChecks.set(entryId, completed);
+        updateAccountPoolLiveness(entryId, completed);
         if (!fromQueue) {
-            await refreshAccountPoolTable();
+            await refreshAccountPoolTable({refreshQuotas: false});
+            const refreshedRow = [...document.querySelectorAll('[data-account-pool-row]')]
+                .find(row => row.dataset.accountPoolRow === entryId);
+            const quotaButton = refreshedRow?.querySelector('.account-pool-quota-refresh');
+            if (quotaButton) await window.refreshAccountPoolQuota?.(quotaButton);
             if (result.workspace_error) {
                 showToast(`验活成功，但 Team 刷新失败：${result.workspace_error}`, 'error');
             } else {
@@ -746,7 +752,7 @@ async function refreshAccountPoolTable(options = {}) {
         const currentCount = document.querySelector('.account-pool-page-header .page-meta-pill');
         if (count && currentCount) currentCount.replaceWith(count);
         window.history.replaceState({}, '', url);
-        initAccountPoolRowActions();
+        initAccountPoolRowActions({refreshQuotas: options.refreshQuotas !== false});
         initAccountPoolExportJobs();
         initAccountPoolPageSizeControl();
         initAccountPoolColumnToggler();
@@ -813,7 +819,7 @@ function initAccountPoolActionTooltips() {
     window.addEventListener('resize', hide);
 }
 
-function initAccountPoolRowActions() {
+function initAccountPoolRowActions({refreshQuotas = true} = {}) {
     document.querySelectorAll('.account-pool-16688-button').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';
@@ -826,7 +832,7 @@ function initAccountPoolRowActions() {
     });
     for (const [entryId, state] of accountPoolLivenessChecks) updateAccountPoolLiveness(entryId, state);
     updateAccountPoolCountdowns();
-    window.initAccountPoolQuota?.();
+    if (refreshQuotas) window.initAccountPoolQuota?.();
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';

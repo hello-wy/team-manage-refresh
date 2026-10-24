@@ -1,6 +1,7 @@
 """Verify a single account without logging in to every workspace or exporting JSON."""
 import asyncio
 import logging
+import time
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -56,8 +57,11 @@ class AccountPoolLivenessService:
         if entry is None or entry.deleted_at is not None:
             return None
         version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
+        started = time.monotonic()
         try:
             credentials = await self._credentials.get_credentials(session, entry.email)
+            logger.info("账号验活阶段完成: email=%s stage=credentials elapsed=%.3fs",
+                        entry.email, time.monotonic() - started)
             if not credentials or not credentials["password"]:
                 if self._owners:
                     owner_team_id = (await session.execute(select(Team.id).where(
@@ -70,12 +74,16 @@ class AccountPoolLivenessService:
                 self._authorization.scan_entry(session, entry_id, identifier=f"account-pool-liveness-{entry_id}"),
                 timeout=self._timeout_seconds,
             )
+            logger.info("账号验活阶段完成: email=%s stage=oauth elapsed=%.3fs",
+                        entry.email, time.monotonic() - started)
             status = await self._save_status(session, entry_id, version, "alive", "密码、2FA 与 OAuth 登录验证通过")
             if status is None:
                 return None
             if refresh_team:
                 try:
                     workspace = await self._authorization.refresh_team_list(session, entry_id, scan=scan)
+                    logger.info("账号验活阶段完成: email=%s stage=team-sync elapsed=%.3fs",
+                                entry.email, time.monotonic() - started)
                     return {"status": status, "workspace": workspace, "workspace_error": ""}
                 except AccountPoolAuthorizationError as exc:
                     return {"status": status, "workspace": None, "workspace_error": str(exc)}

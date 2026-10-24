@@ -206,6 +206,24 @@ test('premium seat previews include join and exit times and opt-out has no stale
     assert.doesNotMatch(html, /退出 2026-10-24 15:00|保留成员|本轮剩余|按使用时长下线/);
 });
 
+test('premium seat cards show account rotation count and configured limit', () => {
+    const env = seatsHarness();
+    env.seats.update({seat_layout: [{kind: 'premium', label: '高级席位', paid: 1, remaining: 0, slots: [
+        {state: 'joined', label: 'rotated@example.com', rotation_round: 3, rotation_rounds: 5},
+    ]}]});
+    const html = env.element('memberSeatsBoard').innerHTML;
+    assert.match(html, /已轮转 3\/5 个账号/);
+});
+
+test('pending premium invitation is not counted until it is accepted', () => {
+    const env = seatsHarness();
+    env.seats.update({seat_layout: [{kind: 'premium', label: '高级席位', paid: 1, remaining: 0, slots: [
+        {state: 'invited', label: 'pending@example.com', rotation_round: 3, rotation_rounds: 5},
+    ]}]});
+    const html = env.element('memberSeatsBoard').innerHTML;
+    assert.match(html, /已轮转 2\/5 个账号/);
+});
+
 test('standard warranty and legacy retention labels all render as a single occupied state', () => {
     const env = seatsHarness();
     const states = ['warranty', 'protected', 'retained', 'timed'];

@@ -51,6 +51,17 @@ class TeamSeatLayoutTests(unittest.TestCase):
         self.assertEqual(len(layout[0]["slots"]), 3)
         self.assertFalse(any(slot["state"] == "available" for slot in layout[0]["slots"]))
 
+    def test_premium_seat_carries_rotation_count_and_limit_but_standard_does_not(self):
+        layout = build_seat_layout([
+            {"email": "premium@example.com", "status": "joined", "seat_type": "premium",
+             "rotation_round": 3, "rotation_rounds": 5},
+            {"email": "standard@example.com", "status": "joined", "seat_type": "standard",
+             "rotation_round": 1, "rotation_rounds": 5},
+        ])
+        premium, standard = layout[1]["slots"][0], layout[0]["slots"][0]
+        self.assertEqual((premium["rotation_round"], premium["rotation_rounds"]), (3, 5))
+        self.assertNotIn("rotation_round", standard)
+
     def test_unknown_capacity_and_unknown_member_types_never_create_empty_seats(self):
         layout = build_seat_layout([
             {"email": "unknown@example.com", "status": "joined", "seat_type": "usage_based"},
