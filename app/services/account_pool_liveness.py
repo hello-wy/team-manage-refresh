@@ -31,7 +31,9 @@ class AccountPoolLivenessService:
         self._owners = AccountPoolOwnerLivenessService(team_service, timeout_seconds=timeout_seconds) if team_service else None
         self._checking = set()
 
-    async def check_entry(self, session: AsyncSession, entry_id: int) -> str | None:
+    async def check_entry(
+        self, session: AsyncSession, entry_id: int, *, refresh_team: bool = False,
+    ) -> str | dict | None:
         model = Team if entry_id < 0 else AccountPoolEntry
         record = await session.get(model, abs(entry_id))
         if record is None or (entry_id > 0 and record.deleted_at is not None):
@@ -41,11 +43,13 @@ class AccountPoolLivenessService:
             raise LivenessCheckInProgressError("该账号正在验活，请等待本次检查完成")
         self._checking.add(email)
         try:
-            return await self._check_entry(session, entry_id)
+            return await self._check_entry(session, entry_id, refresh_team=refresh_team)
         finally:
             self._checking.discard(email)
 
-    async def _check_entry(self, session: AsyncSession, entry_id: int) -> str | None:
+    async def _check_entry(
+        self, session: AsyncSession, entry_id: int, *, refresh_team: bool = False,
+    ) -> str | dict | None:
         if entry_id < 0:
             return await self._owners.check(session, -entry_id) if self._owners else None
         entry = await session.get(AccountPoolEntry, entry_id)
@@ -62,11 +66,23 @@ class AccountPoolLivenessService:
                     if owner_team_id:
                         return await self._owners.check(session, owner_team_id)
                 return await self._save_status(session, entry_id, version, "missing", "未保存登录密码")
-            await asyncio.wait_for(
+            scan = await asyncio.wait_for(
                 self._authorization.scan_entry(session, entry_id, identifier=f"account-pool-liveness-{entry_id}"),
                 timeout=self._timeout_seconds,
             )
-            return await self._save_status(session, entry_id, version, "alive", "密码、2FA 登录验证通过")
+            status = await self._save_status(session, entry_id, version, "alive", "密码、2FA 与 OAuth 登录验证通过")
+            if status is None:
+                return None
+            if refresh_team:
+                try:
+                    workspace = await self._authorization.refresh_team_list(session, entry_id, scan=scan)
+                    return {"status": status, "workspace": workspace, "workspace_error": ""}
+                except AccountPoolAuthorizationError as exc:
+                    return {"status": status, "workspace": None, "workspace_error": str(exc)}
+                except Exception as exc:
+                    logger.exception("账号 Team 刷新异常: entry_id=%s", entry_id)
+                    return {"status": status, "workspace": None, "workspace_error": f"刷新 Team 失败：{exc}"}
+            return status
         except asyncio.TimeoutError:
             return await self._save_status(session, entry_id, version, "error", "验活超时，请检查网络或代理后重试")
         except AccountPoolAuthorizationError as exc:

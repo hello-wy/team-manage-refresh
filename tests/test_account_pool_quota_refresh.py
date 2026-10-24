@@ -123,6 +123,34 @@ class AccountPoolQuotaRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("account-pool-quota-refresh", html)
         self.assertIn("登录已失效", html)
 
+    async def test_invalid_member_token_is_refreshed_and_retried_once(self):
+        self.entry.workspace_id = SPACE_ID
+        self.entry.password_encrypted = "saved-password"
+        self.entry.two_factor_secret_encrypted = "saved-2fa"
+        self.entry.export_json_encrypted = encryption_service.encrypt_token(json.dumps({"accounts": [{
+            "credentials": {"chatgpt_account_id": SPACE_ID, "access_token": "old-token"},
+        }]}))
+        await self.db.commit()
+        invalid = {"status": "invalid", "error": "Token 无效"}
+        network = AsyncMock(side_effect=[
+            {(EMAIL, SPACE_ID): invalid},
+            {(EMAIL, SPACE_ID): USAGE},
+        ])
+        login = object()
+        authorization = type("Authorization", (), {
+            "login_entry": AsyncMock(return_value=login),
+            "save_result": AsyncMock(return_value=True),
+        })()
+        with patch.object(admin.account_pool_usage_service, "check_many", new=network), \
+             patch.object(admin, "account_pool_authorization_service", authorization):
+            response = await self.post(f"/admin/account-pool/{self.entry.id}/usage")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(network.await_count, 2)
+        authorization.login_entry.assert_awaited_once_with(self.db, self.entry.id, SPACE_ID)
+        authorization.save_result.assert_awaited_once()
+        self.assertEqual((await self.snapshot()).status, "ok")
+
     async def test_batch_rejects_missing_accounts_and_requires_admin(self):
         response = await self.post("/admin/account-pool/usage", {"entry_ids": [self.entry.id, 999]})
         self.assertEqual(response.status_code, 404)

@@ -1,7 +1,7 @@
 """Refresh displayed quota windows and persist the same results for page reloads."""
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models import AccountPoolEntry, AccountPoolTeamUsage
+from app.models import AccountPoolEntry, AccountPoolTeamUsage, Team
 from app.services.account_pool_listing import team_usage_view
 from app.services.quota_sync import store_quota
 from app.services.rotation_read_model import snapshot_usage
@@ -18,8 +18,40 @@ async def _usage_details(db, entries):
     return {(email, usage.team_space_id): team_usage_view(usage) for email, usage in rows}
 
 
-async def refresh_pool_quotas(db, entries, *, usage_service):
+async def refresh_pool_quotas(db, entries, *, usage_service, authorization_service=None):
     usages = await usage_service.check_many(db, [_quota_key(entry) for entry in entries])
+    if authorization_service:
+        for entry in entries:
+            key = _quota_key(entry)
+            email, space_id = key
+            if not space_id or usages.get(key, {}).get("status") != "invalid":
+                continue
+            # Team owners use the Team token and must not be re-authenticated as pool members.
+            is_owner = (await db.execute(select(Team.id).where(
+                Team.account_id == space_id,
+                func.lower(func.trim(Team.email)) == email.lower(),
+            ))).first()
+            if is_owner:
+                continue
+            account = (await db.execute(select(AccountPoolEntry).where(
+                func.lower(func.trim(AccountPoolEntry.email)) == email.lower(),
+                AccountPoolEntry.deleted_at.is_(None),
+            ))).scalar_one_or_none()
+            if account is None or not account.password_encrypted or not account.two_factor_secret_encrypted:
+                continue
+            version = (account.password_encrypted, account.two_factor_secret_encrypted)
+            try:
+                login = await authorization_service.login_entry(db, account.id, space_id)
+                saved = await authorization_service.save_result(
+                    db, account.id, login, credential_version=version,
+                    liveness=("alive", "密码、2FA 与 OAuth 登录验证通过"),
+                    update_current=account.workspace_id == space_id,
+                )
+                if not saved:
+                    continue
+                usages.update(await usage_service.check_many(db, [key]))
+            except Exception as exc:
+                usages[key] = {"status": "invalid", "error": f"授权刷新失败：{exc}"}
     refreshed = []
     for entry in entries:
         email, space_id = _quota_key(entry)

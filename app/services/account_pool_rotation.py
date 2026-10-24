@@ -20,7 +20,7 @@ ROTATION_FILTER_OPTIONS = {
     "invited": "待接受邀请",
     "waiting_exit": "待下线",
     "idle": "空闲",
-    "excluded": "不参与轮转",
+    "excluded": "所有者",
 }
 # Internal checks retain their precise reasons; list badges and filters use a
 # small set of lifecycle groups instead of exposing every implementation step.

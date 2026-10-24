@@ -18,6 +18,7 @@ from app.models import AccountPoolEntry, Team, TeamEmailMapping
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_authorization import AccountPoolAuthorizationError, AccountPoolAuthorizationService
 from app.services.account_pool_credentials import account_pool_credential_service
+from app.services.account_pool_liveness import AccountPoolLivenessService
 from app.services.team import TeamService
 
 MEMBERS = (
@@ -118,6 +119,18 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_seat["standard"].departure_policy, "standard_expiry")
         self.assertIsNotNone(by_seat["premium"].auto_kick_at)
         self.login.login.assert_not_awaited()
+
+    async def test_combined_refresh_reuses_the_liveness_scan(self):
+        entry = await self.add_member(MEMBERS[0]["email"])
+        liveness = AccountPoolLivenessService(
+            account_pool_credential_service, self.authorization, self.teams,
+        )
+        result = await liveness.check_entry(self.db, entry.id, refresh_team=True)
+        self.assertEqual(result["status"], "alive")
+        self.assertFalse(result["workspace_error"])
+        self.login.verify_credentials.assert_awaited_once()
+        self.assertEqual(entry.liveness_status, "alive")
+        self.assertEqual(entry.workspace_id, "team-space")
 
     async def test_discovered_managed_team_synchronizes_previously_unknown_member(self):
         entry = await self.add_member(MEMBERS[0]["email"], linked=False)

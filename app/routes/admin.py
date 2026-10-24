@@ -424,7 +424,10 @@ async def admin_dashboard(
 
 
 async def _attach_account_pool_usage(db: AsyncSession, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return await refresh_pool_quotas(db, entries, usage_service=account_pool_usage_service)
+    return await refresh_pool_quotas(
+        db, entries, usage_service=account_pool_usage_service,
+        authorization_service=account_pool_authorization_service,
+    )
 
 
 async def _attach_account_pool_cached_usage(
@@ -516,6 +519,8 @@ async def account_pool_liveness_targets(
 ):
     """固定当前列表的全部验活目标，包含其他分页及所有者，不读取账号凭据。"""
     from app.services.account_pool_query import query_pool_ids
+    from app.services.account_pool_owners import ensure_team_owners_in_pool
+    await ensure_team_owners_in_pool(db)
     listing = await query_pool_ids(
         db, page=1, per_page=100, search=search, status_filter=status_filter,
         team_filter=team_filter, seat_filter=seat_filter, rotation_filter=rotation_filter,
@@ -800,6 +805,34 @@ async def check_account_pool_entry_liveness(
         "success": True, "status": result,
         "message": row.get("liveness_message") or "检测请求异常，请重试",
         "checked_at": row["liveness_checked_at"].isoformat() if row.get("liveness_checked_at") else None,
+    }, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/account-pool/{entry_id}/refresh")
+async def refresh_account_pool_entry(
+    entry_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Verify one account and reuse that scan to refresh its joined-Team view."""
+    record = await db.get(Team if entry_id < 0 else AccountPoolEntry, abs(entry_id))
+    if record is None or (entry_id > 0 and record.deleted_at is not None):
+        raise HTTPException(status_code=404, detail="账号不存在")
+    try:
+        result = await account_pool_liveness_service.check_entry(db, entry_id, refresh_team=True)
+    except LivenessCheckInProgressError as exc:
+        return JSONResponse(status_code=409, content={"success": False, "error": str(exc), "code": "checking"})
+    if result is None:
+        return JSONResponse(status_code=409, content={"success": False, "error": "账号或凭据已变更，请刷新后重试"})
+    if isinstance(result, str):
+        result = {"status": result, "workspace": None, "workspace_error": ""}
+    rows = await account_pool_service.rows_by_ids(db, [entry_id]) if entry_id > 0 else []
+    row = rows[0] if rows else {}
+    return JSONResponse(content={
+        "success": True, "status": result["status"],
+        "message": row.get("liveness_message") or ("密码、2FA 与 OAuth 登录验证通过" if result["status"] == "alive" else "检测请求异常，请重试"),
+        "checked_at": row["liveness_checked_at"].isoformat() if row.get("liveness_checked_at") else None,
+        "workspace": result.get("workspace"), "workspace_error": result.get("workspace_error") or "",
     }, headers={"Cache-Control": "no-store"})
 
 

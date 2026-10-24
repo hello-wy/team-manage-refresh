@@ -57,9 +57,15 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         whole = await self.listing()
         self.assertEqual(whole['total'], 7)
         emails = self.emails(whole)
-        self.assertEqual(emails[:5], ['owner1@example.com', 'premium@example.com', 'standard@example.com', 'conflict@example.com', 'owner2@example.com'])
+        self.assertEqual(emails[:5], ['owner1@example.com', 'premium@example.com', 'conflict@example.com', 'standard@example.com', 'owner2@example.com'])
         self.assertLess(emails.index('premium@example.com'), emails.index('standard@example.com'))
         self.assertLess(emails.index('owner2@example.com'), emails.index('personal@example.com'))
+        async with self.sessions() as db:
+            entries = (await db.execute(select(AccountPoolEntry))).scalars().all()
+            for index, entry in enumerate(reversed(entries)):
+                entry.updated_at = self.now + timedelta(days=index + 1)
+            await db.commit()
+        self.assertEqual(self.emails(await self.listing()), emails)
         pages = [await self.listing(page=i, per_page=2) for i in range(1, 5)]
         self.assertEqual([email for page in pages for email in self.emails(page)], emails)
         self.assertEqual((await self.listing(page=999, per_page=2))['current_page'], 4)
@@ -349,7 +355,12 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['total'], 112)
         self.assertEqual(len(result['ids']), 112)
         self.assertEqual(len(set(result['ids'])), 112)
-        self.assertIn(-2, result['ids'])
+        self.assertTrue(all(entry_id > 0 for entry_id in result['ids']))
+        async with self.sessions() as db:
+            owner2_id = await db.scalar(select(AccountPoolEntry.id).where(
+                AccountPoolEntry.email == 'owner2@example.com',
+            ))
+        self.assertIn(owner2_id, result['ids'])
         self.assertNotIn(-3, result['ids'])
         self.assertEqual(response.headers['cache-control'], 'no-store')
 

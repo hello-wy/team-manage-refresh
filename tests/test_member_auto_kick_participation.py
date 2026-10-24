@@ -214,7 +214,7 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
         team.rotation_mode = "off"
         await self.participate(False)
         await attach_rotation_status(self.db, [row])
-        self.assertEqual(row["rotation"]["label"], "不参与轮转")
+        self.assertEqual(row["rotation"]["label"], "所有者")
         self.assertEqual(row["rotation"]["detail"], "保留当前 Team")
         self.assertIn("未参与自动下线", row["rotation"]["reason"])
 

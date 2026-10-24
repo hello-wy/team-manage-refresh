@@ -395,6 +395,7 @@ class AccountPoolManualLivenessPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(b'accountPoolLivenessBtn', pool_response.body)
         self.assertIn('列设置'.encode(), pool_response.body)
         self.assertIn(b'accountPoolColumnToggleDropdown', pool_response.body)
-        self.assertIn(b'account-pool-workspace-scan-button', pool_response.body)
+        self.assertNotIn(b'account-pool-workspace-scan-button', pool_response.body)
+        self.assertIn('aria-label="刷新并验活'.encode(), pool_response.body)
         self.assertIn(b'account-pool-json-export-button', pool_response.body)
         self.assertIn(b'account-pool-auto-login-button', pool_response.body)

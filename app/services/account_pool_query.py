@@ -25,6 +25,8 @@ def _normalized(column):
 
 async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filter, seat_filter, sort_by,
                          rotation_filter="", liveness_filter="", sort_order="asc", all_ids=False):
+    from app.services.account_pool_owners import ensure_team_owners_in_pool
+    await ensure_team_owners_in_pool(db)
     rotation_filter = rotation_filter if rotation_filter in ROTATION_FILTER_OPTIONS else ""
     liveness_filter = liveness_filter if liveness_filter in LIVENESS_FILTER_OPTIONS else ""
     sort_by = sort_by if sort_by in SORT_OPTIONS else "team"
@@ -147,7 +149,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
 
     orders = {
         "team": [groups.c.team_id.is_(None), direction(groups.c.team_id), direction(primary_seat_rank),
-                 groups.c.deadline.is_(None), direction(groups.c.deadline), direction(identities.c.updated_at)],
+                 groups.c.deadline.is_(None), direction(groups.c.deadline)],
         "deadline": [groups.c.deadline.is_(None), direction(groups.c.deadline), direction(groups.c.team_id)],
         "newest": [identities.c.created_at.desc(), identities.c.id.desc()],
         "oldest": [identities.c.created_at, identities.c.id],

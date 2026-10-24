@@ -141,7 +141,7 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(views[conflict.email]["label"], "")
             self.assertIn("归属冲突", views[conflict.email]["reason"])
             self.assertIsNone(views[conflict.email]["team_id"])
-            self.assertEqual(views[exempt.email]["label"], "不参与轮转")
+            self.assertEqual(views[exempt.email]["label"], "所有者")
             self.assertIn("未参与自动下线", views[exempt.email]["reason"])
             self.assertEqual(views[kept.email]["label"], "")
             self.assertIn("席位待确认", views[kept.email]["reason"])

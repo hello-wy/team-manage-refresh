@@ -21,7 +21,7 @@ function runtime() {
         fetch: (url, options) => new Promise(resolve => requests.push({url, options, resolve})),
     });
     vm.runInContext(fs.readFileSync(`${__dirname}/../app/static/js/account-pool.js`, 'utf8'), context);
-    context.refreshAccountPoolTable = () => {throw Error('Must update only the liveness column');};
+    context.refreshAccountPoolTable = async () => {};
     function addCell(id) {
         const badge = {textContent: '未检测'}, message = {}, time = {}, detail = {}, checked = {};
         const button = {disabled: false, dataset: {entryId: id, email: `${id}@example.com`},
@@ -49,7 +49,7 @@ test('click immediately shows checking in the chosen column and prevents duplica
     assert.equal(other.badge.textContent, '未检测');
     await env.context.checkAccountPoolEntryLiveness(first.button);
     assert.equal(env.requests.length, 1);
-    assert.equal(env.requests[0].url, '/admin/account-pool/1/liveness');
+    assert.equal(env.requests[0].url, '/admin/account-pool/1/refresh');
     assert.equal(env.requests[0].options.method, 'POST');
     assert.equal(env.requests[0].options.cache, 'no-store');
     assert.ok(env.requests[0].options.signal instanceof AbortSignal);

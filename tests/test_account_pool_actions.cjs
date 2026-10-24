@@ -66,7 +66,7 @@ test('exit countdown reaches waiting state and respects timezone', () => {
     assert.equal(label('2030-01-01T09:02:03+08:00'), '下线倒计时 01:02:03');
     assert.equal(label('2030-01-01T08:00:00+08:00'), '等待下线执行');
     assert.equal(label('2029-12-31T08:00:00+08:00'), '等待下线执行');
-    assert.equal(label(''), '下线时间待确认');
+    assert.equal(label(''), '下线倒计时待确认');
 });
 
 test('quota refresh updates only its cell and re-enables retry after an error', async () => {
@@ -115,7 +115,7 @@ test('single account liveness posts only the chosen owner and restores retry aft
     };
     const button = {disabled: false, dataset: {entryId: '-2', email: 'owner@example.com'}, closest: () => null};
     await context.checkAccountPoolEntryLiveness(button);
-    assert.deepEqual(calls, [['/admin/account-pool/-2/liveness', 'POST']]);
+    assert.deepEqual(calls, [['/admin/account-pool/-2/refresh', 'POST'], 'refresh']);
     assert.equal(button.disabled, false);
     context.fetch = async () => {throw new Error('network unavailable');};
     await context.checkAccountPoolEntryLiveness(button);

@@ -171,9 +171,9 @@
                             <div class="account-pool-liveness" data-entry-id="{{ entry.id }}" data-status="{{ entry.liveness_status or '' }}" data-checked-at="{{ entry.liveness_checked_at.isoformat() if entry.liveness_checked_at else '' }}" title="{{ '正常' if entry.liveness_status == 'alive' else entry.liveness_message or '尚未验活' }}" aria-busy="false">
                                 <div class="account-pool-liveness-actions">
                                     <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status %}status-error{% else %}status-banned{% endif %}" role="status" aria-live="polite">{{ '正常' if entry.liveness_status == 'alive' else '异常' if entry.liveness_status else '未检测' }}</span>
-                                    <button type="button" class="account-pool-entry-liveness" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="验活 {{ entry.email }}">验活</button>
+                                    <button type="button" class="account-pool-entry-liveness" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="刷新并验活 {{ entry.email }}">刷新</button>
                                 </div>
-                                <small class="account-pool-liveness-message"{% if entry.liveness_status == 'alive' %} hidden{% endif %}>{{ '' if entry.liveness_status == 'alive' else entry.liveness_message or '点击验活检查此账号' }}</small>
+                                <small class="account-pool-liveness-message"{% if entry.liveness_status == 'alive' %} hidden{% endif %}>{{ '' if entry.liveness_status == 'alive' else entry.liveness_message or '点击刷新检查此账号' }}</small>
                                 <small class="account-pool-liveness-time"{% if not entry.liveness_checked_at %} hidden{% endif %}>{{ entry.liveness_checked_at|format_datetime }}</small>
                             </div>
                         </td>
@@ -189,29 +189,18 @@
                             <div class="account-pool-rotation" data-kind="{{ rotation.kind }}"{% if rotation.reason %} title="{{ rotation.reason }}"{% endif %}>
                                 {% if rotation.label %}<span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label }}</span>{% endif %}
                                 {% if rotation.exit_at %}
-                                <small class="account-pool-replacement-countdown" data-exit-at="{{ rotation.exit_at }}">下线时间 {{ rotation.exit_at|format_datetime }}</small>
+                                <small class="account-pool-replacement-countdown" data-exit-at="{{ rotation.exit_at }}">下线倒计时 {{ rotation.exit_at|format_datetime }}</small>
                                 {% else %}
                                 {% if rotation.team_id %}<small>{{ rotation.team_name }} #{{ rotation.team_id }}</small>{% endif %}
-                                <small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>
+                                {% if rotation.label not in ['空闲', '所有者'] %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
                                 {% endif %}
                             </div>
                         </td>
                         <td data-label="操作">
                             {% include "admin/account_pool/_details.html" %}
                             <div class="account-pool-row-actions">
-                                <span class="account-pool-action" data-pool-tooltip="{{ '所有者未保存号池凭据' if entry.is_virtual_owner else '复制邮箱----密码----2FA 密钥' }}" tabindex="0">
-                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" onclick='copyAccountPoolCredential({{ entry.email|tojson }})' aria-label="复制 {{ entry.email }} 的邮箱、密码和 2FA 密钥" {% if entry.is_virtual_owner %}disabled{% endif %}><i data-lucide="copy" aria-hidden="true"></i></button>
-                                </span>
-                                <span class="account-pool-action" data-pool-tooltip="{{ '请在工作台刷新所有者 Team' if entry.is_virtual_owner else '刷新已加入的 Team' }}" tabindex="0">
-                                    <button
-                                    type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-workspace-scan-button"
-                                    aria-label="刷新已加入的 Team" {% if entry.is_virtual_owner %}disabled{% endif %}
-                                    data-entry-id="{{ entry.id }}"
-                                    data-email="{{ entry.email }}"
-                                >
-                                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
-                                </button>
+                                <span class="account-pool-action" data-pool-tooltip="{{ '所有者未保存号池凭据' if not entry.has_login_credentials else '复制邮箱----密码----2FA 密钥' }}" tabindex="0">
+                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" onclick='copyAccountPoolCredential({{ entry.email|tojson }})' aria-label="复制 {{ entry.email }} 的邮箱、密码和 2FA 密钥" {% if not entry.has_login_credentials %}disabled{% endif %}><i data-lucide="copy" aria-hidden="true"></i></button>
                                 </span>
                                 <span class="account-pool-action" data-pool-tooltip="{% if entry.is_owner %}所有者不可加入其他 Team{% elif entry.status == 'unassigned' %}加入 Team{% elif entry.status == 'joined' %}已加入 Team，无需重复加入{% elif entry.status == 'invited' %}等待接受邀请，暂不可再次加入{% else %}当前状态不可加入 Team{% endif %}"{% if entry.status != 'unassigned' %} tabindex="0"{% endif %}>
                                     <button

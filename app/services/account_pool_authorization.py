@@ -93,12 +93,14 @@ class AccountPoolAuthorizationService:
         except OpenAIAutomaticLoginError as exc:
             raise AccountPoolAuthorizationError(str(exc)) from exc
 
-    async def refresh_team_list(self, session, entry_id: int) -> dict[str, Any]:
+    async def refresh_team_list(
+        self, session, entry_id: int, *, scan: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             raise AccountPoolAuthorizationError("账号不存在")
         version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
-        scan = await self.scan_entry(session, entry_id)
+        scan = scan or await self.scan_entry(session, entry_id)
         discovered = self._team_options(scan.get("available_workspaces") or [])
 
         async def authorize_identity(account_id):

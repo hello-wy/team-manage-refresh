@@ -7,6 +7,7 @@ from app.models import MemberAuthorization
 from app.services.encryption import encryption_service
 from app.services.member_authorization_payload import build_member_export_payload
 from app.services.sub2api import apply_export_settings
+from app.services.account_pool_owners import ensure_owner_entry
 from app.utils.jwt_parser import JWTParser
 from app.utils.time_utils import get_now
 
@@ -20,7 +21,10 @@ async def sync_team_owner_authorization(team, access_token, members, db):
     owner = next((member for member in members
                   if str(member.get("email") or "").strip().lower() == email
                   and member.get("role") == "account-owner"), None)
-    if owner is None or not team.refresh_token_encrypted:
+    if owner is None:
+        return
+    await ensure_owner_entry(db, email, name=owner.get("name"))
+    if not team.refresh_token_encrypted:
         return
 
     jwt = JWTParser()

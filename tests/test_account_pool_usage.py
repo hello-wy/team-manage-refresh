@@ -284,8 +284,9 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("account-pool-status status-badge", response.body.decode())
                 response = await admin.account_pool_page(request, 1, 20, "owner@", "", db, {"username": "admin"})
                 self.assertNotIn("account-pool-owner-badge", response.body.decode())
-                self.assertIn(">不参与轮转</span>", response.body.decode())
-                self.assertIn('account-pool-rotation-reason">所有者</small>', response.body.decode())
+                self.assertIn(">所有者</span>", response.body.decode())
+                self.assertNotIn('account-pool-rotation-reason">所有者</small>', response.body.decode())
+                self.assertNotIn('account-pool-rotation-reason">未加入 Team；不会自动邀请', response.body.decode())
 
                 from app.models import TeamReplacementQueue
                 db.add_all([AccountPoolEntry(email="candidate@example.com"),

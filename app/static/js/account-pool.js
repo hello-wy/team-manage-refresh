@@ -82,7 +82,7 @@ function updateAccountPoolLiveness(entryId, state) {
         time.hidden = !state.checkedAt;
         const button = cell.querySelector('.account-pool-entry-liveness');
         button.disabled = busy;
-        button.textContent = queued ? '已排队' : checking ? '检查中' : '验活';
+        button.textContent = queued ? '已排队' : checking ? '刷新中' : '刷新';
         const row = cell.closest('[data-account-pool-row]');
         const detail = row?.querySelector('[data-liveness-message]');
         const checked = row?.querySelector('[data-liveness-checked]');
@@ -111,7 +111,8 @@ async function checkAccountPoolLivenessById(entryId, {fromQueue = false, quiet =
     accountPoolLivenessChecks.set(entryId, state);
     updateAccountPoolLiveness(entryId, state);
     try {
-        const response = await fetch(`/admin/account-pool/${entryId}/liveness`, {
+        const endpoint = fromQueue ? 'liveness' : 'refresh';
+        const response = await fetch(`/admin/account-pool/${entryId}/${endpoint}`, {
             method: 'POST', credentials: 'same-origin', cache: 'no-store',
             signal: AbortSignal.timeout(75000),
         });
@@ -125,6 +126,14 @@ async function checkAccountPoolLivenessById(entryId, {fromQueue = false, quiet =
             throw new Error(result.error || result.detail || '验活失败');
         }
         updateAccountPoolLiveness(entryId, {status: result.status, message: result.message, checkedAt: result.checked_at});
+        if (!fromQueue) {
+            await refreshAccountPoolTable();
+            if (result.workspace_error) {
+                showToast(`验活成功，但 Team 刷新失败：${result.workspace_error}`, 'error');
+            } else {
+                showToast('账号、Team 与额度授权已刷新', 'success');
+            }
+        }
         return result.status === 'alive' ? 'alive' : 'abnormal';
     } catch (error) {
         const message = error.name === 'TimeoutError' ? '验活请求超时，请稍后重试' : error.message || '验活失败，请重试';
@@ -861,7 +870,7 @@ function initAccountPoolRowActions() {
 
 function accountPoolCountdownLabel(value, now = Date.now()) {
     const deadline = Date.parse(value);
-    if (!Number.isFinite(deadline)) return '下线时间待确认';
+    if (!Number.isFinite(deadline)) return '下线倒计时待确认';
     if (deadline <= now) return '等待下线执行';
     const seconds = Math.ceil((deadline - now) / 1000);
     const hours = Math.floor(seconds / 3600);

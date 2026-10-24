@@ -34,7 +34,7 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
         return Team(id=id, email=email, team_name=name, account_id=space,
                     access_token_encrypted=encryption_service.encrypt_token("owner-token"))
 
-    async def test_owners_are_deduplicated_searchable_paginated_and_never_inserted(self):
+    async def test_owners_are_deduplicated_searchable_paginated_and_saved_in_pool(self):
         async with self.sessions() as db:
             db.add_all([self.team(email=" Owner@Example.com "), self.team(2, space="space-2"),
                         AccountPoolEntry(email="member@example.com")])
@@ -44,14 +44,10 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(listing["total_pages"], 2)
             owner = (await account_pool_service.list_entries(db, search="OWNER"))["entries"][0]
             self.assertTrue(owner["is_owner"])
-            self.assertTrue(owner["is_virtual_owner"])
+            self.assertFalse(owner["is_virtual_owner"])
             self.assertEqual(len(owner["owner_teams"]), 2)
             self.assertEqual((await account_pool_service.list_entries(db, search="owner", status_filter="joined"))["total"], 1)
-            self.assertEqual((await db.execute(select(func.count(AccountPoolEntry.id)))).scalar(), 1)
-            db.add(AccountPoolEntry(email="owner@example.com"))
-            await db.commit()
-            owner = (await account_pool_service.list_entries(db, search="owner"))["entries"][0]
-            self.assertFalse(owner["is_virtual_owner"])
+            self.assertEqual((await db.execute(select(func.count(AccountPoolEntry.id)))).scalar(), 2)
             self.assertEqual((await account_pool_service.list_entries(db))["total"], 2)
 
     async def test_owner_cannot_be_deleted_rotated_invited_or_selected_as_replacement(self):
@@ -83,7 +79,7 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([item["id"] for item in options], [member.id])
             rows = await account_pool_service.rows_by_ids(db, [owner.id])
             rotation = (await attach_rotation_status(db, rows))[0]["rotation"]
-            self.assertEqual(rotation["label"], "不参与轮转")
+            self.assertEqual(rotation["label"], "所有者")
             self.assertEqual(rotation["detail"], "所有者")
             self.assertIsNotNone(await db.get(AccountPoolEntry, owner.id))
 
