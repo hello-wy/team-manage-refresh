@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}手机号接码 - GPT Team 管理系统{% endblock %}
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/phone-verification.css?v=20261024-progress">
+<link rel="stylesheet" href="/static/css/phone-verification.css?v=20261024-selector">
 {% endblock %}
 {% block content %}
 <div class="phone-workspace">
@@ -20,11 +20,14 @@
         <div class="phone-section-heading"><div><h3>HeroSMS 接码设置</h3><p>号码只在 OpenAI 登录流程要求添加手机号时购买。</p></div></div>
         <form id="phoneSettingsForm" class="phone-settings-form">
             <label class="phone-field phone-key-field"><span>API Key</span><input type="password" name="api_key" autocomplete="new-password" placeholder="{{ '已配置；留空保留当前密钥' if herosms_configured else '输入 HeroSMS API Key' }}"></label>
-            <label class="phone-field"><span>国家编号</span><input type="text" name="country" inputmode="numeric" value="{{ herosms_country }}" required></label>
+            <label class="phone-field"><span>国家编号</span><select name="country" id="phoneCountrySelect" required>
+                <option value="{{ herosms_country }}" selected>当前国家（{{ herosms_country }}）</option>
+            </select></label>
             <label class="phone-field"><span>最高单价</span><input type="number" name="max_price" min="0" step="0.000001" value="{{ herosms_max_price }}"></label>
             <button class="btn btn-secondary" type="submit" id="phoneSettingsSave"><i data-lucide="save"></i> 保存设置</button>
         </form>
         <p id="phoneSettingsStatus" class="phone-feedback" role="status" aria-live="polite"></p>
+        <p id="phoneCountriesStatus" class="phone-feedback" role="status" aria-live="polite">正在加载国家列表…</p>
     </section>
 
     <section class="content-section phone-action-section">
@@ -47,5 +50,6 @@
 {% endblock %}
 {% block extra_js %}
 <script src="/static/js/phone-verification-stream.js?v=20261024-progress"></script>
-<script src="/static/js/phone-verification.js?v=20261024-progress"></script>
+<script src="/static/js/phone-verification-countries.js?v=20261024-selector"></script>
+<script src="/static/js/phone-verification.js?v=20261024-selector"></script>
 {% endblock %}

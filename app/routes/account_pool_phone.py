@@ -17,6 +17,7 @@ from app.routes.admin import account_pool_authorization_service, build_admin_bas
 from app.services.encryption import encryption_service
 from app.services.settings import settings_service
 from app.services.operation_progress import stream_operation
+from app.services.phone_verification import HTTP_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/phone-verification", tags=["admin-phone-verification"])
@@ -42,6 +43,45 @@ class PhoneVerificationSettings(BaseModel):
         if value and not re.fullmatch(r"\d+(\.\d{1,6})?", value):
             raise ValueError("价格上限格式无效")
         return value
+
+
+class HeroSMSCountry(BaseModel):
+    id: int = Field(ge=0)
+    chn: str
+    eng: str
+    visible: int
+
+
+def _country_options(payload):
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("HeroSMS 国家列表格式无效")
+    countries = [HeroSMSCountry.model_validate(item) for item in payload.values()]
+    options = []
+    for country in countries:
+        if not country.visible:
+            continue
+        name = country.chn.strip() or country.eng.strip()
+        if not name:
+            raise ValueError(f"HeroSMS 国家 {country.id} 缺少名称")
+        options.append({"id": str(country.id), "name": name})
+    if not options:
+        raise ValueError("HeroSMS 未返回可用国家")
+    return sorted(options, key=lambda item: int(item["id"]))
+
+
+@router.get("/countries")
+async def phone_verification_countries(current_user: dict = Depends(require_admin)):
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.get(DEFAULT_ENDPOINT, params={"action": "getCountries"})
+        response.raise_for_status()
+        countries = _country_options(response.json())
+    except (httpx.HTTPError, ValueError):
+        logger.exception("读取 HeroSMS 国家列表失败")
+        return JSONResponse(status_code=502, content={
+            "success": False, "error": "读取 HeroSMS 国家列表失败，请刷新页面重试",
+        }, headers=NO_STORE)
+    return JSONResponse(content={"success": True, "countries": countries}, headers=NO_STORE)
 
 
 @router.get("", response_class=HTMLResponse)
