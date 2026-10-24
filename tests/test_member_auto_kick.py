@@ -67,10 +67,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
 
             mappings = (await session.execute(select(TeamEmailMapping))).scalars().all()
             by_email = {mapping.email: mapping for mapping in mappings}
-            self.assertEqual(
-                by_email["member@example.com"].auto_kick_at,
-                joined_at + timedelta(hours=2),
-            )
+            self.assertEqual(by_email["member@example.com"].auto_kick_at, joined_at + timedelta(hours=2))
             self.assertIsNone(by_email["owner@example.com"].auto_kick_at)
 
     async def test_replacement_uses_sync_time_instead_of_historical_created_time(self):
@@ -99,89 +96,6 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
             self.assertGreaterEqual(mapping.joined_at, before_sync)
             self.assertGreater(mapping.auto_kick_at, get_now())
-
-    async def test_update_hours_recalculates_existing_deadlines(self):
-        joined_at = get_now() - timedelta(hours=1)
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            session.add(TeamEmailMapping(
-                team_id=team.id,
-                email="member@example.com",
-                status="joined",
-                source="sync",
-                upstream_user_id="user-member",
-                member_role="standard-user",
-                joined_at=joined_at,
-                auto_kick_at=joined_at + timedelta(hours=2),
-            ))
-            await session.commit()
-
-            result = await self.service.update_team_hours(team.id, 6, session)
-            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
-
-            self.assertTrue(result["success"])
-            self.assertEqual(team.member_auto_kick_hours, 6)
-            self.assertEqual(mapping.auto_kick_at, joined_at + timedelta(hours=6))
-
-    async def test_member_exemption_clears_deadline_and_restores_it(self):
-        joined_at = get_now() - timedelta(hours=1)
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            session.add(TeamEmailMapping(
-                team_id=team.id,
-                email="member@example.com",
-                status="joined",
-                source="sync",
-                upstream_user_id="user-member",
-                member_role="standard-user",
-                joined_at=joined_at,
-                auto_kick_at=joined_at + timedelta(hours=2),
-            ))
-            await session.commit()
-
-            exempted = await self.service.update_member_exemption(
-                team.id, "user-member", True, session
-            )
-            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
-            self.assertTrue(exempted["success"])
-            self.assertTrue(mapping.auto_kick_exempt)
-            self.assertIsNone(mapping.auto_kick_at)
-
-            restored = await self.service.update_member_exemption(
-                team.id, "user-member", False, session
-            )
-            mapping = (await session.execute(select(TeamEmailMapping))).scalar_one()
-            self.assertTrue(restored["success"])
-            self.assertFalse(mapping.auto_kick_exempt)
-            self.assertEqual(mapping.auto_kick_at, joined_at + timedelta(hours=2))
-
-    async def test_due_scan_skips_exempt_member(self):
-        now = get_now()
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            session.add(TeamEmailMapping(
-                team_id=team.id,
-                email="protected@example.com",
-                status="joined",
-                source="sync",
-                upstream_user_id="user-protected",
-                member_role="standard-user",
-                joined_at=now - timedelta(hours=3),
-                auto_kick_at=now - timedelta(hours=1),
-                auto_kick_exempt=True,
-            ))
-            await session.commit()
-
-            stats = await self.service.run_due_members(
-                session,
-                AsyncMock(return_value={"success": True}),
-                invite_replacement=AsyncMock(
-                    return_value={"success": True, "status": "invited"}
-                ),
-            )
-
-            self.assertEqual(stats["scanned"], 0)
-            self.assertEqual(stats["kicked"], 0)
 
     async def test_due_scan_kicks_only_due_non_owner(self):
         now = get_now()
@@ -221,25 +135,14 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             ])
             await session.commit()
             delete_member = AsyncMock(return_value={"success": True})
-            invite_replacement = AsyncMock(
-                return_value={"success": True, "status": "invited"}
-            )
 
-            stats = await self.service.run_due_members(
-                session,
-                delete_member,
-                invite_replacement=invite_replacement,
-            )
+            stats = await self.service.run_due_members(session, delete_member)
 
             self.assertEqual(stats, {
                 "success": True,
                 "scanned": 1,
                 "kicked": 1,
                 "failed": 0,
-                "replacement_invited": 1,
-                "replacement_unavailable": 0,
-                "replacement_failed": 0,
-                "replacement_pending": 0,
             })
             delete_member.assert_awaited_once_with(
                 team.id,
@@ -247,7 +150,9 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 email="due@example.com",
             )
-            invite_replacement.assert_awaited_once_with(team.id, session, "standard")
+            queued = (await session.execute(select(TeamReplacementQueue))).scalars().all()
+            self.assertEqual(queued, [])
+            self.assertEqual(team.pending_replacements, 0)
 
     async def test_due_scan_reports_delete_failure(self):
         now = get_now()
@@ -267,10 +172,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
 
             stats = await self.service.run_due_members(
                 session,
-                AsyncMock(return_value={"success": False, "error": "upstream failed"}),
-                invite_replacement=AsyncMock(
-                    return_value={"success": True, "status": "invited"}
-                ),
+                AsyncMock(return_value={"success": False, "error": "upstream failed"})
             )
 
             self.assertEqual(stats, {
@@ -278,332 +180,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                 "scanned": 1,
                 "kicked": 0,
                 "failed": 1,
-                "replacement_invited": 0,
-                "replacement_unavailable": 0,
-                "replacement_failed": 0,
-                "replacement_pending": 0,
             })
-
-    async def test_replacement_keeps_kicked_member_seat_type(self):
-        now = get_now()
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            session.add(TeamEmailMapping(
-                team_id=team.id,
-                email="premium@example.com",
-                status="joined",
-                source="sync",
-                upstream_user_id="user-premium",
-                member_role="standard-user",
-                seat_type="premium",
-                joined_at=now - timedelta(hours=3),
-                auto_kick_at=now - timedelta(hours=1),
-            ))
-            await session.commit()
-            invite_replacement = AsyncMock(
-                return_value={"success": True, "status": "invited"}
-            )
-
-            await self.service.run_due_members(
-                session,
-                AsyncMock(return_value={"success": True}),
-                invite_replacement=invite_replacement,
-            )
-
-            invite_replacement.assert_awaited_once_with(team.id, session, "premium")
-            queue = (await session.execute(select(TeamReplacementQueue))).scalars().all()
-            self.assertEqual(queue, [])
-
-    async def test_due_replacement_reaches_upstream_with_original_seat_type(self):
-        # 使用真实的扫描、候选选择、邀请、席位预留和 HTTP payload 构造链路。
-        # 只替换外部读取、删除和实际 HTTP 请求，避免邀请 mock 掩盖类型不兼容。
-        for team_id, (seat_type, upstream_type) in enumerate(
-            [("standard", "default"), ("premium", "prolite")], start=1
-        ):
-            with self.subTest(seat_type=seat_type):
-                async with self.session_factory() as session:
-                    team = await self._seed_team(session, team_id)
-                    due_email = f"due-{team_id}@example.com"
-                    candidate_email = f"candidate-{team_id}@example.com"
-                    session.add(TeamEmailMapping(
-                        team_id=team_id, email=due_email, status="joined",
-                        upstream_user_id=f"user-{team_id}", member_role="standard-user",
-                        seat_type=seat_type, joined_at=get_now() - timedelta(hours=3),
-                        standard_auto_kick_enabled=(seat_type == "standard"),
-                        auto_kick_at=get_now() - timedelta(hours=1),
-                    ))
-                    session.add(AccountPoolEntry(email=candidate_email))
-                    await session.commit()
-                    teams = TeamService()
-                    teams.chatgpt_service = ChatGPTService()
-                    teams.chatgpt_service._make_request = AsyncMock(return_value={
-                        "success": True, "data": {"account_invites": [{"id": "invite"}]},
-                    })
-                    teams.ensure_access_token = AsyncMock(return_value="test-token")
-                    teams.sync_team_info = AsyncMock(return_value={
-                        "success": True, "member_emails": [],
-                    })
-                    teams.get_team_seat_balance = AsyncMock(return_value={
-                        "success": True, "balance": {
-                            seat_type: {"known": True, "remaining": 1},
-                        },
-                    })
-                    teams._background_verify_admin_invite = AsyncMock()
-
-                    async def removed(tid, user_id, db, *, email):
-                        await teams.mark_team_email_mapping_removed(tid, email, db, source="api")
-                        await db.commit()
-                        return {"success": True}
-
-                    stats = await self.service.run_due_members(
-                        session, removed,
-                        invite_replacement=lambda tid, db, kind: account_pool_service.invite_replacement(
-                            tid, db, invite_member=teams.add_team_member, seat_type=kind,
-                        ),
-                    )
-                    self.assertTrue(stats["success"], stats)
-                    self.assertEqual(stats["kicked"], 1)
-                    self.assertEqual(stats["replacement_invited"], 1)
-                    self.assertEqual(stats["replacement_pending"], 0)
-                    request = teams.chatgpt_service._make_request
-                    request.assert_awaited_once()
-                    payload = request.await_args.args[3]
-                    self.assertEqual(payload["seat_type"], upstream_type)
-                    self.assertEqual(payload["email_addresses"], [candidate_email])
-                    mapping = (await session.execute(select(TeamEmailMapping).where(
-                        TeamEmailMapping.team_id == team_id,
-                        TeamEmailMapping.email == candidate_email,
-                    ))).scalar_one()
-                    self.assertEqual(mapping.status, "invited")
-                    self.assertTrue(mapping.replacement_export_pending)
-
-    async def test_due_scan_reports_replacement_failure(self):
-        now = get_now()
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            session.add(TeamEmailMapping(
-                team_id=team.id,
-                email="due@example.com",
-                status="joined",
-                upstream_user_id="user-due",
-                member_role="standard-user",
-                joined_at=now - timedelta(hours=3),
-                auto_kick_at=now - timedelta(hours=1),
-            ))
-            await session.commit()
-
-            with self.assertLogs("app.services.member_auto_kick", "WARNING") as logs:
-                stats = await self.service.run_due_members(
-                    session,
-                    AsyncMock(return_value={"success": True}),
-                    invite_replacement=AsyncMock(return_value={
-                        "success": False,
-                        "status": "failed",
-                        "email": "candidate@example.com",
-                        "error_code": "seat_operation_pending",
-                        "status_code": 409,
-                        "error": "已有未确认邀请",
-                    }),
-                )
-
-            self.assertFalse(stats["success"])
-            self.assertEqual(stats["kicked"], 1)
-            self.assertEqual(stats["replacement_failed"], 1)
-            self.assertEqual(stats["replacement_pending"], 1)
-            self.assertIn("email=candidate@example.com", logs.output[0])
-            self.assertIn("error_code=seat_operation_pending", logs.output[0])
-            self.assertIn("status_code=409", logs.output[0])
-            queued = (await session.execute(select(TeamReplacementQueue))).scalar_one()
-            self.assertEqual(queued.last_error_code, "seat_operation_pending")
-            self.assertIsNotNone(queued.last_attempt_at)
-            await session.rollback()
-            await session.refresh(queued)
-            self.assertEqual(queued.last_error_code, "seat_operation_pending")
-
-    async def test_pending_replacement_retries_on_next_scan(self):
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            team.pending_replacements = 1
-            session.add(TeamReplacementQueue(team_id=team.id, seat_type="premium"))
-            await session.commit()
-
-            unavailable = await self.service.run_due_members(
-                session,
-                AsyncMock(),
-                invite_replacement=AsyncMock(
-                    return_value={"success": True, "status": "no_candidate"}
-                ),
-            )
-            self.assertEqual(unavailable["replacement_pending"], 1)
-            self.assertEqual(unavailable["replacement_unavailable"], 1)
-
-            invited = await self.service.run_due_members(
-                session,
-                AsyncMock(),
-                invite_replacement=AsyncMock(
-                    return_value={"success": True, "status": "invited"}
-                ),
-            )
-            self.assertEqual(invited["replacement_invited"], 1)
-            self.assertEqual(invited["replacement_pending"], 0)
-
-    async def test_invite_rollback_does_not_block_other_teams(self):
-        async with self.session_factory() as session:
-            for team_id in (1, 2):
-                team = await self._seed_team(session, team_id)
-                team.pending_replacements = 1
-                session.add(TeamReplacementQueue(team_id=team_id, seat_type="standard"))
-            session.add(AccountPoolEntry(email="candidate@example.com"))
-            await session.commit()
-
-            async def invite(tid, email, db, *, seat_type):
-                if tid == 1:
-                    await db.rollback()
-                    return {"success": False, "error_code": "upstream_failed", "error": "连接失败"}
-                return {"success": True, "status": "invited"}
-
-            with self.assertLogs("app.services.member_auto_kick", "WARNING") as logs:
-                stats = await self.service.run_due_members(
-                    session, AsyncMock(),
-                    invite_replacement=lambda tid, db, kind: account_pool_service.invite_replacement(
-                        tid, db, invite_member=invite, seat_type=kind,
-                    ),
-                )
-            self.assertEqual(stats["replacement_failed"], 1)
-            self.assertEqual(stats["replacement_invited"], 1)
-            self.assertEqual(stats["replacement_pending"], 1)
-            self.assertIn("error_code=upstream_failed", logs.output[0])
-            self.assertIn("email=candidate@example.com", logs.output[0])
-
-    async def test_invite_exception_preserves_queue_for_retry(self):
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            team.pending_replacements = 1
-            session.add(TeamReplacementQueue(team_id=1, seat_type="standard"))
-            await session.commit()
-            with self.assertLogs("app.services.member_auto_kick", "WARNING"):
-                stats = await self.service.run_due_members(
-                    session, AsyncMock(), invite_replacement=AsyncMock(side_effect=RuntimeError("断线")),
-                )
-            self.assertEqual(stats["replacement_failed"], 1)
-            self.assertEqual(stats["replacement_pending"], 1)
-
-    async def test_pending_count_is_repaired_from_replacement_queue(self):
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            team.pending_replacements = 2
-            session.add(TeamReplacementQueue(team_id=team.id, seat_type="premium"))
-            await session.commit()
-
-            with self.assertLogs("app.services.member_auto_kick", "ERROR") as logs:
-                stats = await self.service.run_due_members(
-                    session,
-                    AsyncMock(),
-                    invite_replacement=AsyncMock(
-                        return_value={"success": True, "status": "no_candidate"}
-                    ),
-                )
-
-            self.assertEqual(team.pending_replacements, 1)
-            self.assertEqual(stats["replacement_pending"], 1)
-            self.assertEqual(stats["replacement_unavailable"], 1)
-            self.assertIn("自动补位队列不一致", logs.output[0])
-
-    async def test_missing_queue_is_not_invited_as_standard(self):
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            team.pending_replacements = 1
-            await session.commit()
-            invite_replacement = AsyncMock()
-
-            stats = await self.service.run_due_members(
-                session,
-                AsyncMock(),
-                invite_replacement=invite_replacement,
-            )
-
-            self.assertEqual(team.pending_replacements, 0)
-            self.assertEqual(stats["replacement_pending"], 0)
-            invite_replacement.assert_not_awaited()
-
-    async def test_blocked_standard_does_not_block_premium_and_preserves_seat_fifo(self):
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            team.pending_replacements = 4
-            for kind in ("standard", "standard", "premium", "premium"):
-                session.add(TeamReplacementQueue(team_id=team.id, seat_type=kind))
-            await session.commit()
-            async def invite(tid, db, kind):
-                if kind == "standard":
-                    await db.rollback()
-                    return {"status": "failed", "error_code": "seat_limit_exceeded"}
-                return {"status": "invited"}
-            inviter = AsyncMock(side_effect=invite)
-            stats = await self.service.run_due_members(session, AsyncMock(), invite_replacement=inviter)
-            self.assertEqual([c.args[2] for c in inviter.await_args_list],
-                             ["standard", "premium", "premium"])
-            self.assertEqual(stats["replacement_invited"], 2)
-            self.assertEqual(stats["replacement_pending"], 2)
-            self.assertEqual(team.pending_replacements, 2)
-
-    async def test_live_occupancy_prunes_only_obsolete_old_queue(self):
-        cases = [
-            # Full Team, one vacancy, invitation already occupies vacancy.
-            ({"paid": 2, "joined": 2}, 0),
-            ({"paid": 2, "joined": 1}, 1),
-            ({"paid": 2, "joined": 1, "invited": 1}, 0),
-            # Official available=0 can lag after departure; do not erase the vacancy.
-            ({"paid": 2, "joined": 1, "available": 0}, 1),
-            ({"known": False}, 3),
-            ({"reserved": 1}, 3),
-            ({"pending": 1}, 3),
-            ({"paid": None}, 3),
-        ]
-        for overrides, expected in cases:
-            with self.subTest(overrides=overrides):
-                async with self.session_factory() as session:
-                    team = await self._seed_team(session)
-                    team.pending_replacements = 3
-                    old = get_now() - timedelta(days=1)
-                    items = [TeamReplacementQueue(team_id=team.id, seat_type="standard", created_at=old)
-                             for _ in range(3)]
-                    session.add_all(items)
-                    await session.commit()
-                    first_id = items[0].id
-                    seat = {"known": True, "paid": 2, "joined": 2, "invited": 0,
-                            "pending": 0, "reserved": 0, "available": 0, "remaining": 0, **overrides}
-                    stats = await self.service.run_due_members(
-                        session, AsyncMock(),
-                        invite_replacement=AsyncMock(return_value={"status": "no_candidate"}),
-                        seat_balance_provider=AsyncMock(return_value={"success": True,
-                                                                      "balance": {"standard": seat}}),
-                    )
-                    self.assertEqual(stats["replacement_pending"], expected)
-                    self.assertEqual(team.pending_replacements, expected)
-                    remaining = (await session.execute(select(TeamReplacementQueue).order_by(
-                        TeamReplacementQueue.id))).scalars().all()
-                    if expected:
-                        self.assertEqual(remaining[0].id, first_id)
-                    for item in remaining:
-                        await session.delete(item)
-                    await session.delete(team)
-                    await session.commit()
-
-    async def test_recent_departure_and_unavailable_balance_preserve_queue(self):
-        async with self.session_factory() as session:
-            team = await self._seed_team(session)
-            session.add(TeamReplacementQueue(team_id=team.id, seat_type="standard"))
-            team.pending_replacements = 1
-            await session.commit()
-            for balance in ({"success": False}, {"success": True, "balance": {"standard": {
-                "known": True, "paid": 2, "joined": 2, "invited": 0, "pending": 0, "reserved": 0,
-            }}}):
-                stats = await self.service.run_due_members(
-                    session, AsyncMock(),
-                    invite_replacement=AsyncMock(return_value={"status": "no_candidate"}),
-                    seat_balance_provider=AsyncMock(return_value=balance),
-                )
-                self.assertEqual(stats["replacement_pending"], 1)
 
 
 if __name__ == "__main__":

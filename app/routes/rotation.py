@@ -7,14 +7,12 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.dependencies.auth import require_admin
-from app.models import RotationAction, Team, TeamEmailMapping, TeamReplacementQueue
+from app.models import RotationAction, Team, TeamEmailMapping
 from app.routes.admin import build_admin_base_context, team_service
-from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
 from app.services.quota_sync import refresh_team, store_quota
 from app.services.rotation_read_model import load_team_rotation, snapshot_usage
-from app.services.rotation_candidates import find_rotation_candidate
 
 router = APIRouter(prefix="/admin", tags=["rotation"])
 
@@ -35,16 +33,7 @@ async def _team_view(db, team):
     balance = live.get("seat_balance") if live.get("success") else None
     if balance is None:
         balance = {"success": False, "error": live.get("error") or "席位余额未知"}
-    view = await load_team_rotation(db, team, balance)
-    standard = ((balance or {}).get("balance") or {}).get("standard", {}).get("remaining")
-    if not view["next_action"] and standard and not any(
-        row.get("status") == "invited" for row in live.get("members", [])
-    ):
-        candidate = await find_rotation_candidate(db, team, account_pool_service)
-        if candidate:
-            view["next_action"] = {"email": candidate.email, "action": "invite",
-                                   "reason": "标准席位空缺"}
-    return view
+    return await load_team_rotation(db, team, balance)
 
 
 @router.get("/rotation", response_class=HTMLResponse)
@@ -69,11 +58,6 @@ async def rotation_config(team_id: int, payload: RotationConfig, db=Depends(get_
     if payload.mode not in {"off", "dry_run", "auto"}:
         raise HTTPException(422, "无效的轮转模式")
     team = await _team(db, team_id)
-    if payload.mode != "off":
-        queued = (await db.execute(select(TeamReplacementQueue.id).where(
-            TeamReplacementQueue.team_id == team_id).limit(1))).scalar_one_or_none()
-        if queued or team.pending_replacements:
-            raise HTTPException(409, "请先处理原自动补位队列，再开启轮转")
     team.rotation_mode = payload.mode
     await db.commit()
     return {"team_id": team_id, "mode": team.rotation_mode}
@@ -135,7 +119,7 @@ async def rotation_run(team_id: int, db=Depends(get_db), user=Depends(require_ad
     if team.rotation_mode == "off":
         raise HTTPException(409, "请先开启轮转")
     return await run_team(db, team, RotationDependencies(
-        team_service, account_pool_usage_service, account_pool_service))
+        team_service, account_pool_usage_service))
 
 
 @router.get("/teams/{team_id}/rotation/actions")

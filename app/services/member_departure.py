@@ -7,7 +7,6 @@ from sqlalchemy import select
 from app.models import AccountPoolEntry, TeamEmailMapping
 from app.services.account_pool_authorization import AccountPoolAuthorizationError
 from app.services.member_identity import credential_identity
-from app.services.member_auto_kick_policy import is_auto_kick_exempt
 from app.utils.time_utils import get_now
 
 logger = logging.getLogger(__name__)
@@ -59,7 +58,8 @@ class AccountPoolMemberExit:
         return bool(mapping and mapping.status == "joined"
                     and mapping.upstream_user_id == user_id
                     and mapping.member_role != "account-owner"
-                    and not is_auto_kick_exempt(mapping) and mapping.auto_kick_at
+                    and mapping.auto_kick_enabled is not False
+                    and mapping.auto_kick_at
                     and mapping.auto_kick_at <= get_now())
 
     async def _login(self, target):

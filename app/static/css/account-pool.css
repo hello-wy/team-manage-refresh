@@ -553,10 +553,6 @@ body.admin-theme .account-pool-invite-button:disabled {
         white-space: normal;
     }
 }
-body.admin-theme .account-pool-page .account-pool-candidate-badge {
-    color: #1d4ed8 !important;
-    background: #dbeafe !important;
-}
 
 .account-pool-quota-layout { display: flex; align-items: center; gap: .4rem; }
 .account-pool-quota-content { min-width: 0; }

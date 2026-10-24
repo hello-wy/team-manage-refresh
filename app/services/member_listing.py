@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.models import MemberAuthorization, Team
-from app.services.member_auto_kick import DEFAULT_MEMBER_AUTO_KICK_HOURS
-from app.services.member_auto_kick_policy import is_auto_kick_exempt
+from app.services.member_auto_kick import schedule_payload
+from app.services.member_auto_kick_policy import team_auto_kick_hours
 from app.services.member_sync_cursor import fetch_sync_members
+from app.services.seat_snapshot import complete_balance, store_seat_snapshot
 from app.utils.seats import summarize_member_seats
 from app.utils.time_utils import get_now
 
@@ -109,7 +110,12 @@ class MemberListingService:
             await self.teams._refresh_member_display(team, context.members, token, db)
             await db.commit()
             return {"success": False, "error": "成员同步中，完整读取后更新席位余额"}
-        return await self.teams.get_team_seat_balance(team, db, token, context.members, context.invites)
+        result = await self.teams.get_team_seat_balance(team, db, token, context.members, context.invites)
+        balance = complete_balance(result)
+        if balance is not None:
+            await store_seat_snapshot(db, team.id, balance)
+            await db.commit()
+        return result
 
     async def _decorate(self, context, members):
         team, db = context.team, context.db
@@ -130,9 +136,9 @@ class MemberListingService:
             **member, "authorized": authorization is not None,
             "json_saved": bool(authorization and authorization.export_json_encrypted),
             "sub2api_exported": bool(authorization and authorization.sub2api_exported_at),
-            "auto_kick_at": (mapping.auto_kick_at.isoformat()
-                             if mapping and mapping.auto_kick_at and not is_auto_kick_exempt(mapping) else None),
-            "auto_kick_exempt": bool(mapping and is_auto_kick_exempt(mapping)),
+            **(schedule_payload(mapping) if mapping
+               else {"auto_kick_enabled": True, "auto_kick_at": None, "auto_kick_failures": 0,
+                     "auto_kick_last_error": None, "auto_kick_retry_at": None}),
         }
 
     async def _snapshot(self, context):
@@ -147,7 +153,7 @@ class MemberListingService:
             "seat_balance": balance, "joined_members": team.joined_members,
             "total_seats": team.total_seats, "team_status": team.effective_status,
             "total": effective,
-            "member_auto_kick_hours": int(team.member_auto_kick_hours or DEFAULT_MEMBER_AUTO_KICK_HOURS),
+            "member_auto_kick_hours": team_auto_kick_hours(team),
             "error": None,
         }
         if "pagination" in context.members:

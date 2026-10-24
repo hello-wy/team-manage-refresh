@@ -2145,75 +2145,79 @@ let memberSeatUpdateInProgress = false;
 let memberListRequestId = 0;
 let memberSeatBalance = null;
 let memberInviteInProgress = false;
-let memberAutoKickUpdateInProgress = false;
 let memberExistingEmails = new Set();
 let memberPoolOptionsRequestId = 0;
 let renderedMemberTeamId = null;
 
 function renderMemberAutoKickTime(member) {
-    if (member.role === 'account-owner' || member.auto_kick_exempt) {
+    if (member.role === 'account-owner') {
         return '<span class="member-auto-kick-time text-muted">不会自动下线</span>';
     }
+    if (member.auto_kick_enabled === false) {
+        return '<span class="member-auto-kick-time text-muted">不参与</span>';
+    }
     if (!member.auto_kick_at) {
-        const reason = member.profile_sync_error || '下线计划未生成，请刷新成员信息';
-        return `<span class="member-auto-kick-time text-danger">${escapeHtml(reason)}</span>`;
+        return '<span class="member-auto-kick-time text-muted">等待同步加入时间</span>';
     }
     const overdue = new Date(member.auto_kick_at).getTime() <= Date.now();
-    return `<span class="member-auto-kick-time${overdue ? ' is-overdue' : ''}">${formatDateTime(member.auto_kick_at)}</span>`;
+    const failure = member.auto_kick_last_error
+        ? `<small class="member-auto-kick-error" title="${escapeHtml(member.auto_kick_last_error)}">`
+            + `第 ${Number(member.auto_kick_failures) || 1} 次踢出失败：${escapeHtml(member.auto_kick_last_error)}`
+            + `${member.auto_kick_retry_at ? `，${formatDateTime(member.auto_kick_retry_at)} 重试` : ''}</small>`
+        : '';
+    return `<span class="member-auto-kick-time${overdue ? ' is-overdue' : ''}">${formatDateTime(member.auto_kick_at)}${failure}</span>`;
 }
 
 function renderMemberAutoKickControl(teamId, member) {
     if (member.role === 'account-owner' || !member.user_id) return '';
-    const nextExempt = !member.auto_kick_exempt;
-    const label = nextExempt ? '设置为不会自动下线' : '恢复自动下线';
-    const icon = nextExempt ? 'shield-off' : 'clock-3';
+    const enabled = member.auto_kick_enabled !== false;
+    const label = enabled ? '不参与自动下线' : '参与自动下线';
     return `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary member-auto-kick-toggle"
         data-team-id="${Number(teamId)}" data-user-id="${escapeHtml(member.user_id)}" data-email="${escapeHtml(member.email)}"
-        data-exempt="${nextExempt}" title="${label}" aria-label="${label}"
-        onclick="toggleMemberAutoKickExemption(this)"><i data-lucide="${icon}" aria-hidden="true"></i></button>`;
+        data-enabled="${enabled}" aria-pressed="${enabled}" title="${label}" aria-label="${label}：${escapeHtml(member.email)}"
+        onclick="toggleMemberAutoKickParticipation(this)"><i data-lucide="${enabled ? 'clock-3' : 'shield-off'}" aria-hidden="true"></i></button>`;
 }
 
-async function toggleMemberAutoKickExemption(button) {
+async function toggleMemberAutoKickParticipation(button) {
     if (!button || button.disabled) return;
-    const teamId = Number(button.dataset.teamId);
-    const userId = button.dataset.userId;
-    const email = button.dataset.email;
-    const exempt = button.dataset.exempt === 'true';
-    const action = exempt ? '设置为不会自动下线' : '恢复自动下线';
-    if (!await confirmPageAction(`确定要将 ${email} ${action}吗？`)) return;
-
+    const enabled = button.dataset.enabled !== 'true';
+    const action = enabled ? '参与自动下线（按 Team 时长从加入时间开始计算）' : '不参与自动下线';
+    if (!await confirmPageAction(`确定要将 ${button.dataset.email} 设置为${action}吗？`)) return;
     button.disabled = true;
     try {
-        const result = await apiCall(`/admin/teams/${teamId}/members/${encodeURIComponent(userId)}/auto-kick`, {
+        const teamId = Number(button.dataset.teamId);
+        const result = await apiCall(`/admin/teams/${teamId}/members/${encodeURIComponent(button.dataset.userId)}/auto-kick`, {
             method: 'POST',
-            body: JSON.stringify({exempt}),
+            body: JSON.stringify({enabled}),
         });
         if (!result.success || !result.data?.success) {
             showToast(result.error || result.data?.error || '自动下线设置失败', 'error');
             return;
         }
         showToast(result.data.message, 'success');
-        applyMemberAutoKickRow(button, result.data);
+        const cell = button.closest('.member-auto-kick-cell');
+        const member = {user_id: button.dataset.userId, email: button.dataset.email, ...result.data};
+        if (cell) {
+            cell.innerHTML = renderMemberAutoKickTime(member) + renderMemberAutoKickControl(teamId, member);
+            cell.querySelector('.member-auto-kick-toggle')?.focus();
+        }
     } finally {
         button.disabled = false;
         if (window.lucide) lucide.createIcons();
     }
 }
 
-async function saveMemberAutoKickSettings() {
+async function saveMemberAutoKickHours() {
     const input = document.getElementById('memberAutoKickHours');
     const button = document.getElementById('memberAutoKickSaveBtn');
     const teamId = Number(window.currentTeamId);
-    const hours = Number.parseInt(input?.value, 10);
+    const hours = Number(input?.value);
     if (!teamId || !Number.isInteger(hours) || hours < 1 || hours > 8760) {
         showToast('请输入 1 到 8760 之间的整数小时', 'error');
         return;
     }
-    if (memberAutoKickUpdateInProgress) return;
-    memberAutoKickUpdateInProgress = true;
+    if (!await confirmPageAction(`所有参与自动下线的成员将改为加入后 ${hours} 小时下线，已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
     button.disabled = true;
-    const original = button.innerHTML;
-    button.textContent = '保存中...';
     try {
         const result = await apiCall(`/admin/teams/${teamId}/members/auto-kick`, {
             method: 'POST',
@@ -2224,47 +2228,10 @@ async function saveMemberAutoKickSettings() {
             return;
         }
         showToast(result.data.message, 'success');
-        updateMemberAutoKickTimes(hours);
+        loadModalMemberList(teamId);
     } finally {
-        memberAutoKickUpdateInProgress = false;
-        button.innerHTML = original;
         button.disabled = false;
-        if (window.lucide) lucide.createIcons();
     }
-}
-
-function applyMemberAutoKickRow(button, data) {
-    const row = button.closest('tr');
-    if (!row) return;
-    const exempt = Boolean(data.exempt);
-    const action = exempt ? '恢复自动下线' : '设置为不会自动下线';
-    button.dataset.exempt = String(!exempt);
-    button.title = action;
-    button.setAttribute('aria-label', action);
-    const icon = button.querySelector('[data-lucide]');
-    if (icon) icon.setAttribute('data-lucide', exempt ? 'clock-3' : 'shield-off');
-    const time = row.querySelector('.member-auto-kick-time');
-    if (!time) return;
-    time.textContent = data.auto_kick_at ? formatDateTime(data.auto_kick_at)
-        : exempt ? '不会自动下线' : '下线计划未生成，请刷新成员信息';
-    time.classList.toggle('text-muted', exempt);
-    time.classList.toggle('text-danger', !exempt && !data.auto_kick_at);
-    time.classList.toggle(
-        'is-overdue',
-        Boolean(data.auto_kick_at && new Date(data.auto_kick_at).getTime() <= Date.now())
-    );
-    if (window.lucide) lucide.createIcons();
-}
-
-function updateMemberAutoKickTimes(hours) {
-    const durationMs = Number(hours) * 60 * 60 * 1000;
-    document.querySelectorAll('#modalJoinedMembersTableBody tr[data-joined-at]').forEach(row => {
-        const time = row.querySelector('.member-auto-kick-time');
-        const joinedAt = new Date(row.dataset.joinedAt).getTime();
-        if (!time || !Number.isFinite(joinedAt) || time.textContent.includes('不会自动下线')) return;
-        time.textContent = formatDateTime(new Date(joinedAt + durationMs).toISOString());
-        time.classList.toggle('is-overdue', joinedAt + durationMs <= Date.now());
-    });
 }
 
 function memberSeatQuota(seatType) {
@@ -2432,6 +2399,7 @@ async function viewMembers(teamId, teamEmail = '') {
 
     // 设置基本信息
     document.getElementById('modalTeamEmail').textContent = teamEmail;
+    selectMemberTab('joined');
 
     // 打开模态框
     showModal('manageMembersModal');
@@ -2444,9 +2412,34 @@ async function viewMembers(teamId, teamEmail = '') {
     await loadMemberPoolOptions(teamId);
 }
 
+function renderTeamSeatKinds(balance) {
+    const rows = [['标准', balance.standard], ['高级', balance.premium]].map(([label, seat]) => {
+        const paid = Number(seat.paid) || 0;
+        const remaining = Number(seat.remaining) || 0;
+        if (!paid) {
+            return `<div class="team-seat-row"><span class="team-seat-kind">${label}</span>
+                <span class="team-seat-left is-empty">未购买</span></div>`;
+        }
+        return `<div class="team-seat-row${remaining ? '' : ' is-full'}"><span class="team-seat-kind">${label}</span>
+            <progress class="team-seat-progress" max="${paid}" value="${paid - remaining}" aria-label="${label}席位已用"></progress>
+            <span class="team-seat-left">剩 ${remaining}/${paid}</span></div>`;
+    }).join('');
+    return `<div class="team-seat-kinds" title="最近一次读取：刚刚">${rows}</div>`;
+}
+
+function updateTeamSeatKinds(teamId, seatBalance) {
+    const balance = seatBalance?.success ? seatBalance.balance : null;
+    if (!balance?.standard?.known || !balance?.premium?.known) return;
+    const usage = document.getElementById(`team-seat-usage-${teamId}`);
+    if (!usage) return;
+    usage.querySelector('.team-seat-kinds, .team-seat-hint')?.remove();
+    usage.insertAdjacentHTML('beforeend', renderTeamSeatKinds(balance));
+}
+
 function updateTeamMemberCount(teamId, data) {
     const memberCount = document.getElementById(`team-member-count-${teamId}`);
     if (memberCount) memberCount.textContent = `${data.joined_members ?? '—'}/${data.total_seats ?? '—'}`;
+    updateTeamSeatKinds(teamId, data.seat_balance);
     const statusBadge = document.getElementById(`team-status-${teamId}`);
     const statusLabels = {active: '可用', full: '已满', expired: '已过期', banned: '已封禁', error: '异常'};
     if (statusBadge && Object.hasOwn(statusLabels, data.team_status)) {

@@ -43,7 +43,6 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     joined = select(_normalized(TeamEmailMapping.email).label("email"), TeamEmailMapping.team_id,
                     TeamEmailMapping.seat_type,
                     case(((_normalized(TeamEmailMapping.email) != owner_email)
-                           & (Team.rotation_mode == "off")
                            & auto_kick_enabled_condition()
                            & (func.coalesce(TeamEmailMapping.member_role, "") != "account-owner"),
                            TeamEmailMapping.auto_kick_at), else_=None).label("deadline"),

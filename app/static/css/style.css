@@ -976,6 +976,19 @@ body.admin-theme .toast {
     min-width: 0;
 }
 
+.member-auto-kick-time small {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 400;
+    white-space: normal;
+}
+
+.member-auto-kick-time small.member-auto-kick-error {
+    max-width: 240px;
+    color: var(--danger);
+}
+
 #manageMembersModal .member-auto-kick-toggle {
     width: 32px;
     height: 32px;

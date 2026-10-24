@@ -135,13 +135,12 @@ test('member list renders name and profile sync errors as escaped text', async (
     assert.doesNotMatch(html, /<成员甲>|<缺少加入时间>/);
 });
 
-test('missing exit schedule shows a reason while owners and exempt members remain exempt', () => {
-    const context = vm.createContext({escapeHtml: value => value, formatDateTime: value => value});
+test('exit schedule cell distinguishes owner, non-participating, pending and scheduled members', () => {
+    const context = vm.createContext({escapeHtml: value => value, formatDateTime: value => value, Date});
     vm.runInContext(section('function renderMemberAutoKickTime(', 'function renderMemberAutoKickControl('), context);
     const render = member => context.renderMemberAutoKickTime(member);
-    assert.match(render({profile_sync_error: '缺少成员邮箱'}), /缺少成员邮箱/);
-    assert.doesNotMatch(render({}), /待同步/);
     assert.match(render({role: 'account-owner'}), /不会自动下线/);
-    assert.match(render({auto_kick_exempt: true}), /不会自动下线/);
-    assert.match(render({auto_kick_at: '2026-10-15T15:13:00'}), /2026-10-15T15:13:00/);
+    assert.match(render({auto_kick_enabled: false, auto_kick_at: '2026-10-15T15:13:00'}), /不参与/);
+    assert.match(render({auto_kick_enabled: true}), /等待同步加入时间/);
+    assert.match(render({auto_kick_enabled: true, auto_kick_at: '2026-10-15T15:13:00'}), /2026-10-15T15:13:00/);
 });

@@ -63,10 +63,20 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self._configure_services()
 
     def _configure_services(self):
+        self.member_present = True
+
+        def removed(*args, **kwargs):
+            self.member_present = False
+            return {"success": True, "status_code": 204}
+
+        def members(*args, **kwargs):
+            listed = [{"id": USER, "email": EMAIL}] if self.member_present else []
+            return {"success": True, "members": listed, "total": len(listed)}
+
         self.remote = SimpleNamespace(
-            delete_workspace_user=AsyncMock(return_value={"success": True, "status_code": 204}),
-            delete_member=AsyncMock(return_value={"success": True, "status_code": 204}),
-            get_members=AsyncMock(return_value={"success": True, "members": [], "total": 0}),
+            delete_workspace_user=AsyncMock(side_effect=removed),
+            delete_member=AsyncMock(side_effect=removed),
+            get_members=AsyncMock(side_effect=members),
             create_oauth_authorize_url=Mock(return_value={"state": "state", "code_verifier": "verifier"}),
         )
         self.teams = TeamService()
@@ -95,14 +105,13 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_due_rotation_member_logs_in_with_pool_password_and_2fa_then_exits(self):
         scanner = MemberAutoKickService()
-        invite = AsyncMock()
 
         async def remove(team_id, user_id, db, *, email):
             return await self.teams.delete_team_member(
                 team_id, user_id, db, email=email, member_exit=self.exit,
             )
 
-        stats = await scanner.run_due_members(self.db, remove, invite_replacement=invite)
+        stats = await scanner.run_due_members(self.db, remove)
         self.assertEqual((stats["scanned"], stats["kicked"], stats["failed"]), (1, 1, 0))
         request = self.login.login.await_args.args[0]
         self.assertEqual((request.email, request.password, request.totp_secret, request.account_id),
@@ -118,7 +127,25 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         workspace = (await self.db.scalars(select(AccountPoolWorkspace))).one()
         self.assertEqual(workspace.workspace_id, SPACE)
         self.assertTrue(workspace.export_json_encrypted)
-        invite.assert_not_awaited()
+
+    async def test_member_who_already_left_is_marked_removed_without_login_or_delete(self):
+        self.member_present = False
+        result = await self.remove()
+        self.assertTrue(result["success"])
+        self.assertEqual(result["removal_method"], "already_left")
+        self.assertEqual(self.mapping.status, "removed")
+        self.login.login.assert_not_awaited()
+        self.remote.delete_workspace_user.assert_not_awaited()
+        self.remote.delete_member.assert_not_awaited()
+        self.assertEqual(self.remote.get_members.await_count, 1)
+
+    async def test_unreadable_member_list_does_not_count_as_already_left(self):
+        self.remote.get_members.side_effect = [{"success": False, "error": "snapshot failed"},
+                                               {"success": True, "members": [], "total": 0}]
+        result = await self.remove()
+        self.assertTrue(result["success"])
+        self.assertEqual(result["removal_method"], "self")
+        self.login.login.assert_awaited_once()
 
     async def test_deactivated_member_login_uses_admin_removal(self):
         self.login.login.side_effect = OpenAIAutomaticLoginError("account_deactivated")
@@ -132,6 +159,7 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.mapping.status, "removed")
 
     async def test_member_self_exit_forbidden_uses_admin_removal(self):
+        self.remote.delete_workspace_user.side_effect = None
         self.remote.delete_workspace_user.return_value = {
             "success": False, "status_code": 403, "error": "self exit forbidden",
         }
@@ -159,11 +187,10 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self.remote.delete_workspace_user.assert_not_awaited()
         self.remote.delete_member.assert_awaited_once()
 
-    async def test_changed_deadline_or_exemption_cancels_deletion(self):
-        for changes in ({"auto_kick_exempt": True}, {"auto_kick_at": get_now() + timedelta(hours=1)},
+    async def test_changed_or_cleared_schedule_cancels_deletion(self):
+        for changes in ({"auto_kick_at": None}, {"auto_kick_at": get_now() + timedelta(hours=1)},
                         {"status": "removed"}, {"upstream_user_id": "other-user"}):
             with self.subTest(changes=changes):
-                self.mapping.auto_kick_exempt = False
                 self.mapping.auto_kick_at = get_now() - timedelta(hours=1)
                 self.mapping.status = "joined"
                 self.mapping.upstream_user_id = USER
@@ -176,8 +203,9 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self.remote.delete_workspace_user.assert_not_awaited()
         self.remote.delete_member.assert_not_awaited()
 
-    async def test_default_standard_member_cancels_both_removal_methods(self):
+    async def test_standard_member_without_a_schedule_cancels_removal(self):
         self.mapping.seat_type = "standard"
+        self.mapping.auto_kick_at = None
         await self.db.commit()
 
         result = await self.remove()
@@ -188,9 +216,9 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self.remote.delete_workspace_user.assert_not_awaited()
         self.remote.delete_member.assert_not_awaited()
 
-    async def test_standard_member_can_depart_after_manual_enable(self):
+    async def test_standard_member_can_depart_with_an_explicit_schedule(self):
         self.mapping.seat_type = "standard"
-        self.mapping.standard_auto_kick_enabled = True
+        self.mapping.auto_kick_at = get_now() - timedelta(minutes=1)
         await self.db.commit()
 
         result = await self.remove()
@@ -201,12 +229,14 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_admin_failure_and_unconfirmed_snapshot_keep_member_joined(self):
         self.login.login.side_effect = OpenAIAutomaticLoginError("account_deactivated")
+        self.remote.delete_member.side_effect = None
         self.remote.delete_member.return_value = {"success": False, "status_code": 403, "error": "forbidden"}
         with self.assertLogs("app.services.member_departure", "WARNING"):
             result = await self.remove()
         self.assertFalse(result["success"])
         self.assertEqual(self.mapping.status, "joined")
         self.login.login.side_effect = None
+        self.remote.get_members.side_effect = None
         self.remote.get_members.return_value = {"success": False, "error": "snapshot failed"}
         with patch("app.services.team.asyncio.sleep", new=AsyncMock()):
             result = await self.remove()
@@ -236,9 +266,9 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.mapping.status, "joined")
         self.remote.delete_member.assert_not_awaited()
 
-    async def test_exemption_changed_during_login_cancels_both_delete_methods(self):
+    async def test_schedule_cleared_during_login_cancels_both_delete_methods(self):
         async def login(_request):
-            self.mapping.auto_kick_exempt = True
+            self.mapping.auto_kick_at = None
             await self.db.commit()
             return login_result()
 

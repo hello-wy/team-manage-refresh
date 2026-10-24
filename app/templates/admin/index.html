@@ -467,56 +467,260 @@
         }
     }
 
-    .team-list-table-container .btn-toggle-warranty-seat[data-enabled="true"] {
-        background: var(--success);
-        color: #fff;
-        border-color: var(--success);
+    .team-identity {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        min-width: 0;
     }
 
-    .team-list-table-container .btn-toggle-warranty-seat[data-enabled="true"]:hover {
-        background: color-mix(in srgb, var(--success) 84%, #000 16%);
-        color: #fff;
-        border-color: color-mix(in srgb, var(--success) 84%, #000 16%);
+    .team-identity-name {
+        color: var(--text-main);
+        font-weight: 600;
     }
 
-    body.admin-theme .team-list-table-container .btn-toggle-warranty-seat[data-enabled="true"],
-    html.theme-warm body.admin-theme .team-list-table-container .btn-toggle-warranty-seat[data-enabled="true"] {
-        background: var(--ca-success) !important;
-        color: var(--ca-ink) !important;
-        border-color: color-mix(in srgb, var(--ca-success) 78%, var(--ca-border) 22%) !important;
-        box-shadow: var(--ca-shadow-xs) !important;
+    .team-identity-email {
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        word-break: break-all;
     }
 
-    body.admin-theme .team-list-table-container .btn-toggle-warranty-seat[data-enabled="true"]:hover:not(:disabled),
-    html.theme-warm body.admin-theme .team-list-table-container .btn-toggle-warranty-seat[data-enabled="true"]:hover:not(:disabled) {
-        background: color-mix(in srgb, var(--ca-success) 82%, #fff 18%) !important;
-        color: var(--ca-ink) !important;
-        border-color: color-mix(in srgb, var(--ca-success) 88%, var(--ca-border) 12%) !important;
+    .team-seat-usage {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        min-width: 150px;
     }
 
-    body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary {
-        color: var(--team-warm-minimal-primary-fg);
-        background: var(--team-warm-minimal-primary-bg);
-        border-color: var(--team-warm-minimal-primary-border);
+    .team-seat-usage .member-count {
+        color: var(--text-main);
+        font-weight: 600;
     }
 
-    body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:hover,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:hover,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:hover,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:hover {
-        color: var(--team-warm-minimal-primary-fg);
-        background: var(--team-warm-minimal-primary-hover-bg);
-        border-color: color-mix(in srgb, var(--team-warm-minimal-primary-border) 68%, var(--team-warm-minimal-primary-fg) 32%);
+    .team-seat-kinds {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
     }
 
-    body.admin-theme.theme-warm .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:focus-visible,
-    body.admin-theme.theme-warm .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:focus-visible,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-edit-team.btn-minimal.btn-primary:focus-visible,
-    html.theme-warm body.admin-theme .team-list-table-container .btn-push-sub2api.btn-minimal.btn-primary:focus-visible {
-        box-shadow: 0 0 0 3px var(--team-warm-minimal-primary-focus);
+    .team-seat-row {
+        display: grid;
+        grid-template-columns: 2.2em 64px auto;
+        align-items: center;
+        gap: 0.45rem;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .team-seat-kind {
+        color: var(--text-dim, var(--text-muted));
+    }
+
+    .team-seat-progress {
+        width: 64px;
+        height: 5px;
+        border: 0;
+        border-radius: var(--radius-full);
+        background: var(--bg-muted);
+        overflow: hidden;
+        appearance: none;
+        -webkit-appearance: none;
+    }
+
+    .team-seat-progress::-webkit-progress-bar {
+        background: var(--bg-muted);
+        border-radius: var(--radius-full);
+    }
+
+    .team-seat-progress::-webkit-progress-value {
+        background: var(--primary);
+        border-radius: var(--radius-full);
+    }
+
+    .team-seat-progress::-moz-progress-bar {
+        background: var(--primary);
+        border-radius: var(--radius-full);
+    }
+
+    .team-seat-row.is-full .team-seat-progress::-webkit-progress-value {
+        background: var(--warning);
+    }
+
+    .team-seat-row.is-full .team-seat-progress::-moz-progress-bar {
+        background: var(--warning);
+    }
+
+    .team-seat-row.is-full .team-seat-left {
+        color: var(--warning);
+        font-weight: 600;
+    }
+
+    .team-seat-left {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .team-seat-row .team-seat-left.is-empty {
+        grid-column: 2 / span 2;
+    }
+
+    .team-seat-hint {
+        color: var(--text-muted);
+        font-size: 0.72rem;
+    }
+
+    .team-status-line {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .team-status-refresh {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+    }
+
+    .team-status-refresh:hover:not(:disabled),
+    .team-status-refresh:focus-visible {
+        background: var(--bg-muted);
+        color: var(--text-main);
+    }
+
+    .team-status-refresh:disabled {
+        cursor: progress;
+        opacity: 0.5;
+    }
+
+    .team-status-refresh i,
+    .team-status-refresh svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .team-status-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin-top: 0.4rem;
+    }
+
+    .team-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.05rem 0.45rem;
+        border: 1px solid var(--border-main);
+        border-radius: var(--radius-sm);
+        color: var(--text-muted);
+        font-size: 0.72rem;
+        line-height: 1.5;
+        white-space: nowrap;
+    }
+
+    .team-tag.is-on {
+        color: var(--success);
+        border-color: color-mix(in srgb, var(--success) 35%, transparent);
+    }
+
+    .team-tag.is-warn {
+        color: var(--warning);
+        border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+        background: var(--warning-soft);
+    }
+
+    .team-list-table-container .team-actions-head {
+        text-align: right;
+    }
+
+    .team-row-actions {
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+    }
+
+    .team-row-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        white-space: nowrap;
+    }
+
+    .team-row-actions .btn i,
+    .team-row-actions .btn svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .team-row-actions .btn {
+        justify-content: center;
+        min-width: 34px;
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+
+    .team-row-menu {
+        position: fixed;
+        z-index: 1200;
+        min-width: 184px;
+        padding: 0.35rem;
+        border: 1px solid var(--border-main);
+        border-radius: var(--radius-md);
+        background: var(--bg-surface);
+        box-shadow: var(--shadow-lg);
+    }
+
+    .team-row-menu[hidden] {
+        display: none;
+    }
+
+    .team-row-menu button {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        width: 100%;
+        padding: 0.5rem 0.65rem;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-main);
+        font-size: 0.85rem;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .team-row-menu button:hover:not(:disabled),
+    .team-row-menu button:focus-visible {
+        background: var(--bg-muted);
+        outline: none;
+    }
+
+    .team-row-menu button:disabled {
+        color: var(--text-muted);
+        cursor: default;
+    }
+
+    .team-row-menu button i,
+    .team-row-menu button svg {
+        width: 15px;
+        height: 15px;
+        flex-shrink: 0;
+    }
+
+    .team-row-menu .is-danger {
+        color: var(--danger);
+    }
+
+    .team-row-menu hr {
+        margin: 0.3rem 0;
+        border: 0;
+        border-top: 1px solid var(--border-main);
     }
 
     @media (max-width: 768px) {
@@ -922,6 +1126,7 @@
             </div>
         </div>
 
+<div id="teamRowMenu" class="team-row-menu" role="menu" hidden></div>
 <div id="teamTableRegion">
 {% if teams %}
         <div class="team-table-card">
@@ -932,15 +1137,13 @@
                 <th style="width: 40px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)">
                 </th>
                 <th>{% if active_page == "welfare" %}编号{% else %}ID{% endif %}</th>
-                <th>邮箱</th>
+                <th>Team</th>
                 <th data-default-hidden>Account ID</th>
-                <th>Team 名称</th>
                 <th title="已加入成员数 / 总席位数">成员/席位</th>
                 <th data-default-hidden>订阅计划</th>
                 <th>到期时间</th>
-                <th>设备验证</th>
                 <th>状态</th>
-                <th>操作</th>
+                <th class="team-actions-head">操作</th>
             </tr>
         </thead>
         <tbody>
@@ -949,18 +1152,42 @@
                 <td class="team-select-cell" data-label="选择"><input type="checkbox" class="team-checkbox" value="{{ team.id }}" onchange="updateSelectedCount()">
                 </td>
                 <td data-label="{% if active_page == 'welfare' %}编号{% else %}ID{% endif %}"><span class="text-muted">{% if active_page == "welfare" %}{{ ((pagination.current_page - 1) * pagination.per_page) + loop.index }}{% else %}{{ team.id }}{% endif %}</span></td>
-                <td data-label="邮箱">
-                    {{ team.email }}
-                    {% if team.account_role and team.account_role != 'account-owner' %}
-                    <span class="role-hint" title="账号角色: {{ team.account_role }}">已降级</span>
-                    {% endif %}
+                <td data-label="Team">
+                    <div class="team-identity">
+                        <span class="team-identity-name">{{ team.team_name or '未命名 Team' }}</span>
+                        <span class="team-identity-email">
+                            {{ team.email }}
+                            {% if team.account_role and team.account_role != 'account-owner' %}
+                            <span class="role-hint" title="账号角色: {{ team.account_role }}">已降级</span>
+                            {% endif %}
+                        </span>
+                    </div>
                 </td>
                 <td data-label="Account ID"><span class="text-muted small">{{ team.account_id or '-' }}</span></td>
-                <td data-label="Team 名称">{{ team.team_name or '-' }}</td>
                 <td data-label="成员/席位">
-                    <span class="member-count" id="team-member-count-{{ team.id }}" title="已加入成员数 / 已购标准与高级席位合计；— 表示未知，请同步或刷新成员">
-                        {{ team.joined_members if team.joined_members is not none else '—' }}/{{ team.total_seats if team.total_seats is not none else '—' }}
-                    </span>
+                    {% set seats = team.seat_snapshot %}
+                    <div class="team-seat-usage" id="team-seat-usage-{{ team.id }}">
+                        <span class="member-count" id="team-member-count-{{ team.id }}" title="已加入成员数 / 已购标准与高级席位合计；— 表示未知，请同步或刷新成员">
+                            {{ team.joined_members if team.joined_members is not none else '—' }}/{{ team.total_seats if team.total_seats is not none else '—' }}
+                        </span>
+                        {% if seats %}
+                        <div class="team-seat-kinds" title="最近一次读取：{{ seats.observed_at|format_datetime }}">
+                            {% for label, paid, remaining in [('标准', seats.standard_paid, seats.standard_remaining), ('高级', seats.premium_paid, seats.premium_remaining)] %}
+                            <div class="team-seat-row{% if paid and not remaining %} is-full{% endif %}">
+                                <span class="team-seat-kind">{{ label }}</span>
+                                {% if paid %}
+                                <progress class="team-seat-progress" max="{{ paid }}" value="{{ paid - remaining }}" aria-label="{{ label }}席位已用"></progress>
+                                <span class="team-seat-left">剩 {{ remaining }}/{{ paid }}</span>
+                                {% else %}
+                                <span class="team-seat-left is-empty">未购买</span>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <span class="team-seat-hint">打开成员后显示标准/高级余额</span>
+                        {% endif %}
+                    </div>
                 </td>
                 <td data-label="订阅计划">{{ team.subscription_plan or '-' }}</td>
                 <td data-label="到期时间">
@@ -970,14 +1197,8 @@
                     -
                     {% endif %}
                 </td>
-                <td data-label="设备验证">
-                    {% if team.device_code_auth_enabled %}
-                    <span class="status-badge status-active">已开启</span>
-                    {% else %}
-                    <span class="status-badge status-banned">未开启</span>
-                    {% endif %}
-                </td>
                 <td data-label="状态">
+                    <div class="team-status-line">
                     <span id="team-status-{{ team.id }}" class="status-badge status-{{ team.status }}">
                         {% if team.status == 'active' %}
                         可用
@@ -993,59 +1214,40 @@
                         未知
                         {% endif %}
                     </span>
+                    <button type="button" class="team-status-refresh btn-refresh-team" data-id="{{ team.id }}"
+                        title="刷新状态" aria-label="刷新 {{ team.email }} 的状态">
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                    </button>
+                    </div>
+                    <div class="team-status-tags">
+                        {% if team.pool_type == 'normal' and team.warranty_seat_enabled %}
+                        <span class="team-tag is-on" title="作为质保兑换码分流目标">质保</span>
+                        {% endif %}
+                        {% if team.device_code_auth_enabled %}
+                        <span class="team-tag is-on">设备验证</span>
+                        {% else %}
+                        <span class="team-tag is-warn" title="未开启设备代码验证，可在「更多」中开启">未开设备验证</span>
+                        {% endif %}
+                    </div>
                 </td>
                 <td class="team-actions-cell" data-label="操作">
-                    <div class="action-buttons">
-                        <button class="btn btn-sm btn-icon btn-minimal btn-info btn-view-members"
-                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="查看成员" aria-label="查看成员">
-                            <i data-lucide="users" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">员</span>
+                    <div class="action-buttons team-row-actions">
+                        <button type="button" class="btn btn-sm btn-secondary btn-view-members"
+                            data-id="{{ team.id }}" data-email="{{ team.email }}"
+                            title="成员管理" aria-label="{{ team.email }} 的成员管理">
+                            <i data-lucide="users" aria-hidden="true"></i>
                         </button>
-                        <button class="btn btn-sm btn-icon btn-minimal btn-primary btn-edit-team"
-                            data-id="{{ team.id }}" title="编辑" aria-label="编辑">
-                            <i data-lucide="edit-3" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">编</span>
+                        <button type="button" class="btn btn-sm btn-secondary btn-edit-team" data-id="{{ team.id }}"
+                            title="编辑 Team" aria-label="编辑 {{ team.email }}">
+                            <i data-lucide="pencil" aria-hidden="true"></i>
                         </button>
-                        <button class="btn btn-sm btn-icon btn-minimal btn-secondary btn-refresh-team"
-                            data-id="{{ team.id }}" title="刷新" aria-label="刷新">
-                            <i data-lucide="refresh-cw" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">刷</span>
-                        </button>
-                        {% if team.pool_type == 'normal' %}
-                        <button class="btn btn-sm btn-icon btn-minimal {{ 'btn-success is-toggle-on' if team.warranty_seat_enabled else 'btn-secondary is-toggle-off' }} btn-toggle-warranty-seat"
-                            data-id="{{ team.id }}"
-                            data-enabled="{{ 'true' if team.warranty_seat_enabled else 'false' }}"
-                            title="{{ '已开启质保（点击关闭）' if team.warranty_seat_enabled else '开启质保' }}"
-                            aria-label="{{ '已开启质保（点击关闭）' if team.warranty_seat_enabled else '开启质保' }}"
-                            aria-pressed="{{ 'true' if team.warranty_seat_enabled else 'false' }}">
-                            <i data-lucide="{{ 'shield-check' if team.warranty_seat_enabled else 'shield' }}" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">保</span>
-                        </button>
-                        {% endif %}
-                        <button class="btn btn-sm btn-icon btn-minimal {{ 'btn-success is-toggle-on' if team.device_code_auth_enabled else 'btn-secondary is-toggle-off' }} btn-enable-device-auth"
-                            data-id="{{ team.id }}"
-                            data-enabled="{{ 'true' if team.device_code_auth_enabled else 'false' }}"
-                            title="{{ '已开启设备代码验证' if team.device_code_auth_enabled else '一键开启设备代码验证' }}"
-                            aria-label="{{ '已开启设备代码验证' if team.device_code_auth_enabled else '开启设备验证' }}"
-                            aria-pressed="{{ 'true' if team.device_code_auth_enabled else 'false' }}">
-                            <i data-lucide="{{ 'badge-check' if team.device_code_auth_enabled else 'shield-check' }}" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">验</span>
-                        </button>
-                        <button class="btn btn-sm btn-icon btn-minimal btn-primary btn-push-sub2api"
-                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="推送母号到 sub2api" aria-label="推送母号到 sub2api">
-                            <i data-lucide="send" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">推</span>
-                        </button>
-                        <button class="btn btn-sm btn-icon btn-minimal btn-secondary btn-export-team-json"
-                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="导出 JSON" aria-label="导出 JSON">
-                            <i data-lucide="download" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">导</span>
-                        </button>
-                        <button type="button" class="btn btn-sm btn-icon btn-minimal btn-danger btn-delete-team"
-                            data-id="{{ team.id }}" data-email="{{ team.email }}" title="删除" aria-label="删除"
-                            onclick='deleteTeam({{ team.id }}, {{ team.email|tojson }})'>
-                            <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
-                            <span class="btn-icon-fallback" aria-hidden="true">删</span>
+                        <button type="button" class="btn btn-sm btn-secondary btn-team-more"
+                            data-id="{{ team.id }}" data-email="{{ team.email }}"
+                            data-warranty="{{ ('true' if team.warranty_seat_enabled else 'false') if team.pool_type == 'normal' else '' }}"
+                            data-device-auth="{{ 'true' if team.device_code_auth_enabled else 'false' }}"
+                            aria-haspopup="menu" aria-expanded="false" aria-controls="teamRowMenu"
+                            title="更多操作" aria-label="{{ team.email }} 的更多操作">
+                            <i data-lucide="more-horizontal" aria-hidden="true"></i>
                         </button>
                     </div>
                 </td>
@@ -1316,7 +1518,7 @@
         }
 
         // Init Column Toggler
-        initColumnToggler('.team-list-table-container .data-table', 'team_list_columns');
+        initColumnToggler('.team-list-table-container .data-table', 'team_list_columns_v2');
 
         // 绑定下拉按钮点击（避免仅依赖内联 onclick）
         const statusFilterToggleBtn = document.getElementById('statusFilterToggleBtn');
@@ -1348,8 +1550,23 @@
                 pushTeamToSub2api(teamId, button.getAttribute('data-email'));
             } else if (button.matches('.btn-export-team-json')) {
                 exportTeamJson(teamId, button.getAttribute('data-email'));
+            } else if (button.matches('.btn-team-more')) {
+                toggleTeamRowMenu(button);
             }
         });
+
+        document.getElementById('teamRowMenu')?.addEventListener('click', (event) => {
+            const item = event.target.closest('button[data-action]');
+            if (item && !item.disabled) runTeamRowMenuAction(item.dataset.action);
+        });
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('#teamRowMenu, .btn-team-more')) closeTeamRowMenu();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeTeamRowMenu(true);
+        });
+        window.addEventListener('resize', () => closeTeamRowMenu());
+        window.addEventListener('scroll', () => closeTeamRowMenu(), true);
 
         // 绑定复选框事件（避免仅依赖内联 onchange）
         document.getElementById('selectAll')?.addEventListener('change', (e) => {
@@ -1368,6 +1585,69 @@
         document.getElementById('btnBatchTransferPool')?.addEventListener('click', handleBatchTransferPool);
         document.getElementById('btnCheckPoolTeamsLive')?.addEventListener('click', handleCheckPoolTeamsLive);
     });
+
+    let teamRowMenuTrigger = null;
+
+    function teamRowMenuItems(trigger) {
+        const warranty = trigger.dataset.warranty;
+        const deviceAuthEnabled = trigger.dataset.deviceAuth === 'true';
+        const items = [];
+        if (warranty) {
+            items.push(['warranty', warranty === 'true' ? 'shield-off' : 'shield-check',
+                warranty === 'true' ? '关闭质保车位' : '开启质保车位']);
+        }
+        items.push(['device-auth', 'badge-check', deviceAuthEnabled ? '设备验证已开启' : '开启设备验证', deviceAuthEnabled]);
+        items.push(['push', 'send', '推送母号到 sub2api'], ['export', 'download', '导出 JSON'], null,
+            ['delete', 'trash-2', '删除 Team', false, 'is-danger']);
+        return items.map(item => item ? `<button type="button" role="menuitem" data-action="${item[0]}"
+            class="${item[4] || ''}" ${item[3] ? 'disabled' : ''}><i data-lucide="${item[1]}" aria-hidden="true"></i>${item[2]}</button>`
+            : '<hr>').join('');
+    }
+
+    function toggleTeamRowMenu(trigger) {
+        const menu = document.getElementById('teamRowMenu');
+        if (!menu) return;
+        if (teamRowMenuTrigger === trigger && !menu.hidden) {
+            closeTeamRowMenu();
+            return;
+        }
+        closeTeamRowMenu();
+        menu.innerHTML = teamRowMenuItems(trigger);
+        menu.hidden = false;
+        if (window.lucide) lucide.createIcons();
+        const rect = trigger.getBoundingClientRect();
+        const width = menu.offsetWidth, height = menu.offsetHeight;
+        const top = rect.bottom + 6 + height > window.innerHeight ? Math.max(8, rect.top - 6 - height) : rect.bottom + 6;
+        menu.style.top = `${top}px`;
+        menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+        teamRowMenuTrigger = trigger;
+        trigger.setAttribute('aria-expanded', 'true');
+        menu.querySelector('button:not(:disabled)')?.focus();
+    }
+
+    function closeTeamRowMenu(restoreFocus = false) {
+        const menu = document.getElementById('teamRowMenu');
+        if (!menu || menu.hidden) return;
+        menu.hidden = true;
+        const trigger = teamRowMenuTrigger;
+        teamRowMenuTrigger = null;
+        if (!trigger) return;
+        trigger.setAttribute('aria-expanded', 'false');
+        if (restoreFocus && trigger.isConnected) trigger.focus();
+    }
+
+    function runTeamRowMenuAction(action) {
+        const trigger = teamRowMenuTrigger;
+        closeTeamRowMenu();
+        if (!trigger) return;
+        const teamId = trigger.dataset.id;
+        const email = trigger.dataset.email;
+        if (action === 'warranty') toggleTeamWarrantySeat(teamId, trigger.dataset.warranty === 'true');
+        else if (action === 'device-auth') enableDeviceAuth(teamId, trigger.dataset.deviceAuth === 'true');
+        else if (action === 'push') pushTeamToSub2api(teamId, email);
+        else if (action === 'export') exportTeamJson(teamId, email);
+        else if (action === 'delete') deleteTeam(Number(teamId), email);
+    }
 
     async function enableDeviceAuth(teamId, alreadyEnabled = false) {
         if (alreadyEnabled) {
@@ -1957,7 +2237,7 @@
             nextRegion.querySelectorAll('.team-checkbox').forEach((checkbox) => {
                 checkbox.checked = selectedIds.has(Number(checkbox.value));
             });
-            initColumnToggler('.team-list-table-container .data-table', 'team_list_columns');
+            initColumnToggler('.team-list-table-container .data-table', 'team_list_columns_v2');
             updateSelectedCount();
             updateAdminTeamSummary(nextDocument);
             const nextSearch = nextDocument.querySelector('.team-toolbar .search-form');

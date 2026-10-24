@@ -678,23 +678,19 @@ function initAccountPoolRowActions() {
     });
 }
 
-function accountPoolCountdownLabel(value, now = Date.now(), kind = 'replacement') {
-    const isExit = kind === 'exit';
+function accountPoolCountdownLabel(value, now = Date.now()) {
     const deadline = Date.parse(value);
-    if (!Number.isFinite(deadline)) return isExit ? '下线时间待确认' : '上线时间待确认';
-    if (deadline <= now) return isExit ? '等待下线执行' : '等待补位执行';
+    if (!Number.isFinite(deadline)) return '下线时间待确认';
+    if (deadline <= now) return '等待下线执行';
     const seconds = Math.ceil((deadline - now) / 1000);
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor(seconds % 3600 / 60);
-    return `${isExit ? '下线倒计时' : '预计上线倒计时'} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    return `下线倒计时 ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
 function updateAccountPoolCountdowns() {
-    document.querySelectorAll('[data-replacement-at]').forEach(node => {
-        node.textContent = accountPoolCountdownLabel(node.dataset.replacementAt);
-    });
     document.querySelectorAll('[data-exit-at]').forEach(node => {
-        node.textContent = accountPoolCountdownLabel(node.dataset.exitAt, Date.now(), 'exit');
+        node.textContent = accountPoolCountdownLabel(node.dataset.exitAt);
     });
 }
 

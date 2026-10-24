@@ -31,7 +31,6 @@ from app.services.auth import auth_service
 from app.services.team import team_service
 from app.services.member_auto_kick import member_auto_kick_service
 from app.services.member_departure import AccountPoolMemberExit
-from app.services.account_pool import account_pool_service
 from app.services.replacement_export import ReplacementExportService
 from app.models import Team
 from app.services.account_pool_usage import account_pool_usage_service
@@ -254,7 +253,7 @@ async def scheduled_rotation():
         for team in teams:
             try:
                 result = await run_team(session, team, RotationDependencies(
-                    team_service, account_pool_usage_service, account_pool_service))
+                    team_service, account_pool_usage_service))
                 logger.info("额度轮转扫描: team=%s result=%s", team.id, result)
             except Exception:
                 await session.rollback()
@@ -474,19 +473,7 @@ async def scheduled_member_auto_kick():
     """按成员计划下线时间自动移除已到期账号。"""
     try:
         async with AsyncSessionLocal() as session:
-            stats = await member_auto_kick_service.run_due_members(
-                session,
-                delete_due_team_member,
-                seat_balance_provider=team_service.get_team_seat_balance,
-                invite_replacement=lambda team_id, db_session, seat_type: (
-                    account_pool_service.invite_replacement(
-                        team_id,
-                        db_session,
-                        invite_member=team_service.add_team_member,
-                        seat_type=seat_type,
-                    )
-                ),
-            )
+            stats = await member_auto_kick_service.run_due_members(session, delete_due_team_member)
             export_stats = await member_auto_kick_service.process_pending_exports(
                 session,
                 ReplacementExportService(
@@ -495,16 +482,10 @@ async def scheduled_member_auto_kick():
             )
         log_method = logger.info if stats["success"] else logger.warning
         log_method(
-            "成员自动踢人完成: scanned=%s kicked=%s failed=%s "
-            "replacement_invited=%s replacement_unavailable=%s replacement_failed=%s "
-            "replacement_pending=%s",
+            "成员自动踢人完成: scanned=%s kicked=%s failed=%s",
             stats["scanned"],
             stats["kicked"],
             stats["failed"],
-            stats["replacement_invited"],
-            stats["replacement_unavailable"],
-            stats["replacement_failed"],
-            stats["replacement_pending"],
         )
         export_log = logger.info if export_stats["success"] else logger.warning
         export_log(

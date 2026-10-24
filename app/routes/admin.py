@@ -50,12 +50,9 @@ from app.services.sub2api import (
     sub2api_service,
 )
 from app.services.encryption import encryption_service
-from app.services.member_auto_kick import (
-    MAX_MEMBER_AUTO_KICK_HOURS,
-    MIN_MEMBER_AUTO_KICK_HOURS,
-    member_auto_kick_service,
-)
+from app.services.member_auto_kick import member_auto_kick_service
 from app.services.member_rotation import MemberRotationService
+from app.services.seat_snapshot import attach_seat_snapshots
 from app.services.replacement_export import ReplacementExportService
 from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, QuotaSnapshot, RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool_export import AccountPoolExportService, selected_workspace
@@ -275,17 +272,12 @@ class MemberSeatTypeRequest(BaseModel):
     expected_seat_type: Literal["default", "standard", "premium"]
 
 
-class MemberAutoKickRequest(BaseModel):
-    hours: int = Field(
-        2,
-        ge=MIN_MEMBER_AUTO_KICK_HOURS,
-        le=MAX_MEMBER_AUTO_KICK_HOURS,
-        description="成员加入后自动踢出的小时数",
-    )
+class MemberAutoKickHoursRequest(BaseModel):
+    hours: int = Field(..., description="成员加入后自动下线的小时数")
 
 
-class MemberAutoKickExemptionRequest(BaseModel):
-    exempt: bool = Field(..., description="是否免除该成员自动下线")
+class MemberAutoKickParticipationRequest(BaseModel):
+    enabled: bool = Field(..., description="该成员是否参与自动下线")
 
 
 class CodeGenerateRequest(BaseModel):
@@ -388,6 +380,7 @@ async def admin_dashboard(
         
         # 获取 Team 列表 (分页)
         teams_result = await team_service.get_all_teams(db, page=page, per_page=per_page, search=search, status=status_filter, pool_type="normal")
+        await attach_seat_snapshots(db, teams_result.get("teams", []))
         
         # 获取统计信息 (使用专用统计方法优化)
         team_stats = await team_service.get_stats(db, pool_type="normal")
@@ -888,6 +881,7 @@ async def welfare_dashboard(
             status_filter = legacy_status
 
         teams_result = await team_service.get_all_teams(db, page=page, per_page=per_page, search=search, status=status_filter, pool_type="welfare")
+        await attach_seat_snapshots(db, teams_result.get("teams", []))
         team_stats = await team_service.get_stats(db, pool_type="welfare")
         remaining_spots = await team_service.get_total_available_seats(db, pool_type="welfare")
         welfare_usage = await redemption_service.get_virtual_welfare_code_usage(db)
@@ -1553,34 +1547,25 @@ async def sync_team_members_batch(
 
 
 @router.post("/teams/{team_id}/members/auto-kick")
-async def update_member_auto_kick(
+async def update_team_auto_kick_hours(
     team_id: int,
-    payload: MemberAutoKickRequest,
+    payload: MemberAutoKickHoursRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    result = await member_auto_kick_service.update_team_hours(
-        team_id,
-        payload.hours,
-        db,
-    )
-    return JSONResponse(content=result, status_code=200 if result["success"] else 404)
+    result = await member_auto_kick_service.update_team_hours(team_id, payload.hours, db)
+    return JSONResponse(content=result, status_code=200 if result["success"] else 400)
 
 
 @router.post("/teams/{team_id}/members/{user_id}/auto-kick")
-async def update_member_auto_kick_exemption(
+async def update_member_auto_kick_participation(
     team_id: int,
     user_id: str,
-    payload: MemberAutoKickExemptionRequest,
+    payload: MemberAutoKickParticipationRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    result = await member_auto_kick_service.update_member_exemption(
-        team_id,
-        user_id,
-        payload.exempt,
-        db,
-    )
+    result = await member_auto_kick_service.update_member_participation(team_id, user_id, payload.enabled, db)
     return JSONResponse(content=result, status_code=200 if result["success"] else 400)
 
 

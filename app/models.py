@@ -35,7 +35,8 @@ class Team(Base):
     account_role = Column(String(50), comment="账号角色: account-owner/standard-user 等")
     device_code_auth_enabled = Column(Boolean, default=False, comment="是否开启设备代码身份验证")
     warranty_seat_enabled = Column(Boolean, default=False, comment="是否作为质保兑换码分流目标 Team")
-    member_auto_kick_hours = Column(Integer, default=2, nullable=False, comment="成员加入后自动踢出小时数")
+    member_auto_kick_hours = Column(Integer, default=2, server_default="2", nullable=False,
+                                    comment="成员加入后自动下线小时数")
     rotation_mode = Column(String(20), default="off", nullable=False)
     pending_replacements = Column(Integer, default=0, nullable=False, comment="自动踢人后待补账号数")
     error_count = Column(Integer, default=0, comment="连续报错次数")
@@ -191,7 +192,12 @@ class TeamEmailMapping(Base):
         Boolean, default=False, nullable=False,
         comment="是否手动开启标准席位定时下线；默认不开启",
     )
+    auto_kick_enabled = Column(Boolean, default=True, server_default="1", nullable=False,
+                               comment="成员是否参与按 Team 时长自动下线")
     auto_kick_at = Column(DateTime, comment="成员计划自动踢出时间")
+    auto_kick_failures = Column(Integer, default=0, server_default="0", nullable=False, comment="本次下线计划连续失败次数")
+    auto_kick_last_error = Column(Text, comment="最近一次自动下线失败原因")
+    auto_kick_retry_at = Column(DateTime, comment="自动下线失败后的下次重试时间")
     last_invited_at = Column(DateTime, comment="最近一次向该 Team 发送邀请的时间")
     last_seen_at = Column(DateTime, default=get_now, comment="最后一次确认该状态的时间")
     missing_sync_count = Column(Integer, default=0, nullable=False, comment="连续同步缺失次数")

@@ -26,7 +26,7 @@ from app.services.account_pool import TEAM_REINVITE_COOLDOWN_DAYS, account_pool_
 from app.services.account_pool_team_usage import record_seat_switch
 from app.services.sub2api_cleanup import enqueue_member_cleanup
 from app.services.member_profile import normalize_member_profiles
-from app.services.member_auto_kick_policy import calculate_deadline
+from app.services.member_auto_kick_policy import refresh_deadline, reset_for_new_join, team_auto_kick_hours
 from app.services.member_listing import MemberListingService
 from app.services.member_identity import load_member_identities
 from app.services.member_name_identity import resolve_pool_member_emails
@@ -711,6 +711,7 @@ class TeamService:
             mapping.member_name = None
             mapping.member_role = None
             mapping.upstream_user_id = None
+            reset_for_new_join(mapping)
         mapping.status = TEAM_EMAIL_STATUS_JOINED
         mapping.source = "sync"
         mapping.last_seen_at = seen_at
@@ -726,8 +727,7 @@ class TeamService:
         elif mapping.joined_at and joined_at:
             joined_at = max(mapping.joined_at, joined_at)
         mapping.joined_at = joined_at or mapping.joined_at
-        hours = int((team.member_auto_kick_hours if team else None) or 2)
-        mapping.auto_kick_at = calculate_deadline(mapping, hours)
+        refresh_deadline(mapping, team_auto_kick_hours(team))
 
     @staticmethod
     def _apply_invited_mapping(mapping, seen_at) -> None:
@@ -2821,12 +2821,13 @@ class TeamService:
         user_id: str,
         email: Optional[str],
         db_session: AsyncSession,
+        delays=(0, 2, 4, 8, 16),
     ) -> Optional[bool]:
         # 删除已成功时，上游成员快照仍可能短暂包含旧成员。
         # 只重读快照，不重复删除；仍无法确认则保留失败状态，不能提前释放席位。
         normalized_email = self._normalize_member_email(email)
         absent = None
-        for delay in (0, 2, 4, 8, 16):
+        for delay in delays:
             if delay:
                 await asyncio.sleep(delay)
             snapshot = await self.chatgpt_service.get_members(
@@ -2927,12 +2928,19 @@ class TeamService:
                     TeamEmailMapping.status == TEAM_EMAIL_STATUS_JOINED,
                 ))).scalar_one_or_none()
 
-            # 定时下线先登录成员，再获取管理员凭据复核或踢出。
-            access_token = None if member_exit else await self.ensure_access_token(team, db_session)
+            access_token = await self.ensure_access_token(team, db_session)
             if not access_token and member_exit is None:
                 return self._admin_error(
                     "token_refresh_failed",
                     "该 Team 的登录凭证已过期，且自动刷新失败，请重新登录或重新导入",
+                )
+            # 定时下线前先确认成员仍在；已自行离开时不再登录成员，也不调用删除接口。
+            if member_exit and access_token and await self._member_absent_in_snapshot(
+                team, access_token, user_id, email, db_session, delays=(0,),
+            ) is True:
+                return await self._complete_member_removal(
+                    MemberExitTarget(team=team, user_id=user_id, email=email, db=db_session),
+                    {"success": True, "message": "成员已不在 Team 中", "removal_method": "already_left"},
                 )
 
             # 3. 默认成员自退；成员 AT 不可用时再用母号兜底。

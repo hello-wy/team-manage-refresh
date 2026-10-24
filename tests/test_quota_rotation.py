@@ -5,18 +5,15 @@ from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from fastapi import HTTPException
 
 from app.database import Base
 from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
                         RotationAction, RotationSeatSnapshot, Sub2apiExportRecord,
                         Team, TeamEmailMapping, TeamReplacementQueue)
 from app.routes.rotation import RotationConfig, rotation_config
-from app.services.account_pool import account_pool_service
 from app.services.quota_rotation import (RotationDependencies, block_unverified_removal,
                                          reconcile_action, run_team)
 from app.services.quota_rotation_policy import RotationDecision, next_action
-from app.services.rotation_candidates import find_rotation_candidate
 from app.services.quota_sync import refresh_historical_candidates
 from app.utils.time_utils import get_now
 
@@ -75,7 +72,7 @@ class RotationPolicyTests(unittest.TestCase):
 
 
 class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_team_mode_setting_checks_old_replacement_queue(self):
+    async def test_team_mode_setting_ignores_retired_replacement_queue(self):
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with engine.begin() as connection:
@@ -90,10 +87,9 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(configured["mode"], "auto")
                 db.add(TeamReplacementQueue(team_id=1, seat_type="standard"))
                 await db.commit()
-                with self.assertRaises(HTTPException) as error:
-                    await rotation_config(1, RotationConfig(mode="dry_run"),
-                                          db=db, user={})
-                self.assertEqual(error.exception.status_code, 409)
+                configured = await rotation_config(1, RotationConfig(mode="dry_run"),
+                                                   db=db, user={})
+                self.assertEqual(configured["mode"], "dry_run")
         finally:
             await engine.dispose()
 
@@ -122,25 +118,34 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await engine.dispose()
 
-    async def test_candidate_with_in_flight_invite_is_skipped(self):
+    async def test_standard_vacancy_does_not_invite_pool_account(self):
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         try:
             async with sessions() as db:
-                team = Team(id=2, email="owner@example.com", account_id="space-2",
+                team = Team(id=1, email="owner@example.com", account_id="space",
                             access_token_encrypted="token", rotation_mode="auto")
-                db.add_all([team, Team(id=1, email="other@example.com",
-                                       account_id="space-1", access_token_encrypted="token")])
-                now = get_now()
-                db.add_all([AccountPoolEntry(id=1, email="a@example.com", updated_at=now),
-                            AccountPoolEntry(id=2, email="b@example.com", updated_at=now)])
-                db.add(RotationAction(team_id=1, email="a@example.com", action_type="invite",
-                                      idempotency_key="other-team:invite", status="executing"))
+                db.add_all([team, AccountPoolEntry(id=1, email="idle@example.com")])
+                db.add(TeamEmailMapping(team_id=1, email="member@example.com",
+                                        status="joined", seat_type="standard",
+                                        upstream_user_id="user-1", joined_at=get_now()))
                 await db.commit()
-                candidate = await find_rotation_candidate(db, team, account_pool_service)
-                self.assertEqual(candidate.email, "b@example.com")
+                members = {"success": True, "seat_balance": balance(standard=1, premium=1),
+                           "members": [{"email": "member@example.com",
+                                        "seat_type": "standard", "status": "joined"}]}
+                teams = SimpleNamespace(get_team_members=AsyncMock(return_value=members),
+                                        add_team_member=AsyncMock())
+                usage = SimpleNamespace(check_many=AsyncMock(return_value={
+                    ("member@example.com", "space"): {"status": "ok",
+                        "5h": {"remaining": 3}, "1week": {"remaining": 5}},
+                }))
+                result = await run_team(db, team, RotationDependencies(teams, usage))
+                self.assertEqual(result, {"status": "idle"})
+                teams.add_team_member.assert_not_awaited()
+                actions = (await db.execute(select(RotationAction))).scalars().all()
+                self.assertEqual(actions, [])
         finally:
             await engine.dispose()
 
@@ -217,7 +222,7 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
                     ("member@example.com", "space"): {"status": "ok",
                         "5h": {"remaining": 0}, "1week": {"remaining": 0}},
                 }))
-                result = await run_team(db, team, RotationDependencies(teams, usage, object()))
+                result = await run_team(db, team, RotationDependencies(teams, usage))
                 self.assertEqual(result["status"], "succeeded")
                 self.assertEqual((await db.get(RotationSeatSnapshot, 1)).premium_remaining, 1)
                 teams.update_member_seat_type.assert_awaited_once_with(

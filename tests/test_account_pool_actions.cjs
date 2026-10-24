@@ -59,16 +59,14 @@ test('cancel and Escape abort export before any request despite native dialog su
     }
 });
 
-test('exit and replacement countdowns reach waiting states and respect timezone', () => {
+test('exit countdown reaches waiting state and respects timezone', () => {
     const {context} = runtime();
     const now = Date.parse('2030-01-01T00:00:00Z');
-    for (const kind of ['replacement', 'exit']) {
-        const label = value => context.accountPoolCountdownLabel(value, now, kind);
-        assert.equal(label('2030-01-01T09:02:03+08:00'), `${kind === 'exit' ? '下线倒计时' : '预计上线倒计时'} 01:02:03`);
-        assert.equal(label('2030-01-01T08:00:00+08:00'), kind === 'exit' ? '等待下线执行' : '等待补位执行');
-        assert.equal(label('2029-12-31T08:00:00+08:00'), kind === 'exit' ? '等待下线执行' : '等待补位执行');
-        assert.equal(label(''), kind === 'exit' ? '下线时间待确认' : '上线时间待确认');
-    }
+    const label = value => context.accountPoolCountdownLabel(value, now);
+    assert.equal(label('2030-01-01T09:02:03+08:00'), '下线倒计时 01:02:03');
+    assert.equal(label('2030-01-01T08:00:00+08:00'), '等待下线执行');
+    assert.equal(label('2029-12-31T08:00:00+08:00'), '等待下线执行');
+    assert.equal(label(''), '下线时间待确认');
 });
 
 test('quota refresh updates only its cell and re-enables retry after an error', async () => {

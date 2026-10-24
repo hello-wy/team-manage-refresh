@@ -166,14 +166,14 @@ class MemberProfileSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(member["added_at"])
         self.assertIsNone(member["auto_kick_at"])
 
-    async def test_owner_and_exempt_member_keep_no_exit_schedule(self):
+    async def test_owner_and_non_participating_member_keep_no_exit_schedule(self):
         owner = await self.fetch(role="account-owner")
         self.assertIsNone(owner["auto_kick_at"])
         mapping = await self.mapping()
-        mapping.auto_kick_exempt = True
+        mapping.auto_kick_enabled = False
         await self.db.commit()
         member = await self.fetch()
-        self.assertTrue(member["auto_kick_exempt"])
+        self.assertFalse(member["auto_kick_enabled"])
         self.assertIsNone(member["auto_kick_at"])
 
     async def test_team_sync_also_updates_profile_and_repairs_exit_schedule(self):

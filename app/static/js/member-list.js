@@ -1,4 +1,3 @@
-const DEFAULT_MEMBER_AUTO_KICK_HOURS = 2;
 const MEMBER_LIST_TABLE_COLUMNS = Object.freeze({
     modalJoinedMembersTableBody: 6,
     modalInvitedMembersTableBody: 5,
@@ -77,20 +76,44 @@ async function synchronizeMemberBatches(teamId, requestId) {
     } while (memberListIsCurrent(teamId, requestId));
 }
 
+const MEMBER_TABS = {joined: 'Joined', invited: 'Invited', invite: 'Invite'};
+
+function selectMemberTab(name) {
+    for (const [key, suffix] of Object.entries(MEMBER_TABS)) {
+        const active = key === name;
+        const tab = document.getElementById(`memberTab${suffix}`);
+        const panel = document.getElementById(`memberPanel${suffix}`);
+        if (tab) {
+            tab.classList.toggle('is-active', active);
+            tab.setAttribute('aria-selected', String(active));
+        }
+        if (panel) panel.hidden = !active;
+    }
+}
+
+function setMemberTabCount(id, count) {
+    const badge = document.getElementById(id);
+    if (badge) badge.textContent = String(count);
+}
+
 function applyMemberListSnapshot(teamId, data) {
     renderedMemberTeamId = teamId;
     const members = data.members || [];
     updateTeamMemberCount(teamId, data);
     memberSeatBalance = data.seat_balance || null;
     memberExistingEmails = new Set(members.map(member => (member.email || '').toLowerCase()));
-    const autoKick = document.getElementById('memberAutoKickHours');
-    if (autoKick) autoKick.value = String(data.member_auto_kick_hours || DEFAULT_MEMBER_AUTO_KICK_HOURS);
+    const autoKickHours = document.getElementById('memberAutoKickHours');
+    if (autoKickHours && data.member_auto_kick_hours) autoKickHours.value = String(data.member_auto_kick_hours);
     document.getElementById('memberSeatBalanceError').textContent = memberSeatBalance?.success
         ? '' : memberSeatBalance?.error || '余额暂不可用，无法保存或邀请。';
     const summary = document.getElementById('memberSeatSummary');
     if (summary) summary.innerHTML = renderMemberSeatSummary(data.seat_summary);
-    renderJoinedMemberList(teamId, members.filter(member => member.status === 'joined'));
-    renderInvitedMemberList(teamId, members.filter(member => member.status === 'invited'), data);
+    const joinedMembers = members.filter(member => member.status === 'joined');
+    const invitedMembers = members.filter(member => member.status === 'invited');
+    setMemberTabCount('memberJoinedCount', joinedMembers.length);
+    setMemberTabCount('memberInvitedCount', invitedMembers.length);
+    renderJoinedMemberList(teamId, joinedMembers);
+    renderInvitedMemberList(teamId, invitedMembers, data);
     const pagination = data.pagination;
     setMemberSyncStatus(pagination?.has_more
         ? `正在同步：已获取 ${pagination.loaded}/${pagination.total} 位成员，继续读取下一批...`
