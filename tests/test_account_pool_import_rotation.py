@@ -11,10 +11,14 @@ from app.database import Base
 from app.models import AccountPoolEntry, AccountPoolTotpJob
 from app.routes.admin import AccountPoolAddRequest, add_account_pool_emails
 from app.services.account_pool_batch import AccountPoolBatchService
+from app.services.account_pool_credentials import account_pool_credential_service
+from app.services.account_pool_profile import save_import_account_name
+from app.services.account_pool_totp import AccountPoolTotpError, AccountPoolTotpService
 from app.services.encryption import encryption_service
 from app.utils.time_utils import get_now
 
 SECRET = 'JBSWY3DPEHPK3PXP'
+ROTATED_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
 
 
 def record(email):
@@ -95,6 +99,59 @@ class AccountPoolImportRotationTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as session:
             entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
             self.assertEqual(encryption_service.decrypt_token(entry.two_factor_secret_encrypted), 'ROTATEDSECRET')
+
+    async def test_import_executes_rotation_and_persists_new_secret_even_without_name(self):
+        def response(payload):
+            return SimpleNamespace(status_code=200, json=lambda: payload)
+
+        def info(factor_id=None):
+            return {"mfa_enabled": bool(factor_id),
+                    "factors": {"totp": [{"id": factor_id}] if factor_id else []}}
+
+        self.authorization.login_entry.side_effect = None
+        self.authorization.login_entry.return_value = SimpleNamespace(
+            payload={"accounts": [{"credentials": {"access_token": "access-token"}}]},
+            verified_totp_factor_id="old-factor",
+        )
+        remote_session = SimpleNamespace(cookies={"oai-did": "device-id"},
+            get=AsyncMock(side_effect=[response(info("old-factor")), response(info()),
+                                      response(info("new-factor"))]),
+            post=AsyncMock(side_effect=[response({"success": True}),
+                response({"secret": ROTATED_SECRET, "session_id": "enrollment"}),
+                response({"success": True})]))
+        remote = SimpleNamespace(_get_session=AsyncMock(return_value=remote_session), clear_session=AsyncMock())
+        self.batch._totp = AccountPoolTotpService(self.authorization, account_pool_credential_service, remote,
+                                                 import_profile_saver=save_import_account_name)
+        status, result, tasks = await self.add(record('new@example.com'))
+        self.assertEqual(status, 200)
+        self.assertEqual(result['rotation']['queued'], 1)
+        with self.assertLogs('app.services.account_pool_totp', level='WARNING'):
+            await tasks()
+        async with self.sessions() as session:
+            entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
+            self.assertEqual(encryption_service.decrypt_token(entry.two_factor_secret_encrypted), ROTATED_SECRET)
+            self.assertIsNone(entry.name)
+            jobs = await self.batch.rotation_status(session, result['rotation']['batch_id'])
+            self.assertEqual(jobs[0]['status'], 'completed')
+            self.assertEqual(jobs[0]['two_factor_secret'], ROTATED_SECRET)
+            self.assertIn('补姓名失败', jobs[0]['error'])
+        self.authorization.login_entry.assert_awaited_once()
+        remote.clear_session.assert_awaited_once()
+
+    async def test_import_keeps_candidate_secret_in_failed_job_after_activation_timeout(self):
+        self.totp.rotate.side_effect = AccountPoolTotpError(
+            '旧 2FA 已禁用，新 2FA 激活结果未确认', new_secret=ROTATED_SECRET)
+        _, result, tasks = await self.add(record('new@example.com'))
+        with self.assertLogs('app.services.account_pool_batch', level='ERROR'):
+            await tasks()
+        async with self.sessions() as session:
+            jobs = await self.batch.rotation_status(session, result['rotation']['batch_id'])
+            self.assertEqual(jobs[0]['status'], 'failed')
+            self.assertEqual(jobs[0]['two_factor_secret'], ROTATED_SECRET)
+            entry = (await session.execute(select(AccountPoolEntry))).scalar_one()
+            self.assertEqual(encryption_service.decrypt_token(entry.two_factor_secret_encrypted), SECRET)
+            job = (await session.execute(select(AccountPoolTotpJob))).scalar_one()
+            self.assertNotIn(ROTATED_SECRET, job.new_secret_encrypted)
 
     async def test_opt_out_and_api_default_only_add_accounts(self):
         self.assertFalse(AccountPoolAddRequest().rotate_2fa)

@@ -10,7 +10,7 @@ from sqlalchemy.orm import load_only
 from app.models import (
     QuotaSnapshot, RotationAction, RotationMemberState, Sub2apiExportRecord, Team, TeamEmailMapping,
 )
-from app.services.member_auto_kick_policy import has_auto_kick_schedule, participates
+from app.services.member_auto_kick_policy import departure_deadline, has_auto_kick_schedule, participates
 from app.services.quota_rotation_policy import ADMIN_ROLES, quota_ready
 from app.utils.time_utils import get_now
 from app.utils.team_names import team_display_name
@@ -18,11 +18,7 @@ from app.utils.team_names import team_display_name
 OPEN_STATUSES = ("pending", "executing", "reconciling")
 ROTATION_FILTER_OPTIONS = {
     "invited": "待接受邀请",
-    "using": "使用中",
     "waiting_exit": "待下线",
-    "waiting_rotation": "待轮转",
-    "processing": "处理中",
-    "attention": "需关注",
     "idle": "空闲",
     "excluded": "不参与轮转",
 }
@@ -30,15 +26,7 @@ ROTATION_FILTER_OPTIONS = {
 # small set of lifecycle groups instead of exposing every implementation step.
 _STATUS_BY_LABEL = {
     "待接受邀请": "invited",
-    "继续使用": "using",
     "定时下线": "waiting_exit", "等待退出": "waiting_exit",
-    "待升高级": "waiting_rotation", "待降标准": "waiting_rotation",
-    "等待额度恢复": "waiting_rotation",
-    "邀请确认中": "processing", "退出确认中": "processing",
-    "升级确认中": "processing", "降级确认中": "processing", "轮转处理中": "processing",
-    "下线失败": "attention", "轮转受阻": "attention", "归属冲突": "attention",
-    "额度待确认": "attention", "待确认下线计划": "attention",
-    "席位待确认": "attention", "归属待确认": "attention",
     "空闲": "idle",
     "所有者": "excluded", "保留当前 Team": "excluded",
 }
@@ -49,8 +37,9 @@ REASONS = {
 
 
 def _view(label, reason, team=None, *, kind="waiting", mode=None):
-    status = _STATUS_BY_LABEL[label]
-    group_label = ROTATION_FILTER_OPTIONS[status]
+    # Suppressed groups keep diagnostic reasons without adding a lifecycle badge.
+    status = _STATUS_BY_LABEL.get(label, "")
+    group_label = ROTATION_FILTER_OPTIONS.get(status, "")
     if label != group_label:
         reason = label + ("；" + reason if reason else "")
     return {"status": status, "label": group_label, "detail": label, "reason": reason, "kind": kind,
@@ -60,17 +49,18 @@ def _view(label, reason, team=None, *, kind="waiting", mode=None):
 
 
 def _schedule_view(mapping, team, now):
-    if mapping.auto_kick_last_error:
+    deadline = departure_deadline(mapping, team)
+    if mapping.auto_kick_last_error and mapping.auto_kick_at == deadline:
         retry = mapping.auto_kick_retry_at
         reason = mapping.auto_kick_last_error + (f"；{retry.strftime('%m-%d %H:%M')} 重试" if retry else "")
         return _view("下线失败", reason, team, kind="blocked")
-    reason = "下线时间 " + mapping.auto_kick_at.strftime("%m-%d %H:%M") + "；退出后不会自动补位"
-    if getattr(mapping, "departure_policy", None) == "team_expiry":
-        reason = "Team 到期下线 " + mapping.auto_kick_at.strftime("%m-%d %H:%M")
+    reason = "下线时间 " + deadline.strftime("%m-%d %H:%M") + "；退出后不会自动补位"
+    if mapping.seat_type == "standard" or getattr(mapping, "departure_policy", None) == "team_expiry":
+        reason = "Team 到期下线 " + deadline.strftime("%m-%d %H:%M")
     elif team.rotation_mode != "off":
         reason += "；额度轮转照常进行"
-    view = _view("等待退出" if mapping.auto_kick_at <= now else "定时下线", reason, team)
-    view["exit_at"] = pytz.timezone(settings.timezone).localize(mapping.auto_kick_at).isoformat()
+    view = _view("等待退出" if deadline <= now else "定时下线", reason, team)
+    view["exit_at"] = pytz.timezone(settings.timezone).localize(deadline).isoformat()
     return view
 
 
@@ -78,8 +68,12 @@ def _member_view(mapping, team, snapshot, state, exported, now):
     if mapping.status == "invited":
         return {**_view("待接受邀请", "已邀请至此 Team，接受后继续授权导出", team),
                 "can_import_16688": True}
-    if has_auto_kick_schedule(mapping):
+    if has_auto_kick_schedule(mapping, team):
         return _schedule_view(mapping, team, now)
+    if mapping.seat_type == "standard":
+        return _view("定时下线", "Team 到期时间待同步；标准席位不会按小时下线", team)
+    if mapping.seat_type not in ("standard", "premium"):
+        return _view("席位待确认", "当前席位类型未知，不执行小时级下线", team)
     if team.rotation_mode == "off":
         if not participates(mapping):
             return _view("保留当前 Team", "未参与自动下线", team, kind="idle")
@@ -109,7 +103,7 @@ async def attach_rotation_status(db, rows):
     now = get_now()
     # Fixed batched reads: no network requests, credential reads, or mutations.
     teams = {team.id: team for team in (await db.execute(select(Team).options(load_only(
-        Team.id, Team.email, Team.team_name, Team.account_id, Team.rotation_mode, Team.status,
+        Team.id, Team.email, Team.team_name, Team.account_id, Team.rotation_mode, Team.status, Team.expires_at,
     )).order_by(Team.id))).scalars()}
     mappings = (await db.execute(select(TeamEmailMapping).where(
         TeamEmailMapping.status.in_(("joined", "invited")),
@@ -151,7 +145,7 @@ async def attach_rotation_status(db, rows):
                                 states.get((team.id, email)),
                                 (email, team.account_id) in exported, now) if team else _view(
                                     "归属待确认", "原 Team 已不存在", kind="blocked")
-            if team and team.rotation_mode == "dry_run" and not has_auto_kick_schedule(mapping):
+            if team and team.rotation_mode == "dry_run" and not has_auto_kick_schedule(mapping, team):
                 view["reason"] = "仅预览；" + view["reason"]
         else:
             view = _view("空闲", "未加入 Team；不会自动邀请，可手动加入", kind="idle")

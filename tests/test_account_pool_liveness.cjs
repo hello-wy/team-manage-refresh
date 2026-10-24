@@ -5,13 +5,19 @@ const {test} = require('node:test');
 
 function runtime() {
     const cells = [], requests = [], toasts = [];
-    const context = vm.createContext({AbortSignal, console,
-        document: {addEventListener() {}, querySelectorAll(selector) {
+    const progress = {};
+    const allButton = {disabled: false, setAttribute(name, value) {this[name] = value;}};
+    const allLabel = {textContent: '一键验活'};
+    const context = vm.createContext({AbortSignal, URL, URLSearchParams, console,
+        document: {addEventListener() {}, querySelector() {return null;},
+            getElementById: id => ({accountPoolLivenessProgress: progress,
+                accountPoolCheckAllLiveness: allButton, accountPoolCheckAllLabel: allLabel})[id], querySelectorAll(selector) {
             if (selector === '.account-pool-liveness[data-entry-id]') return cells;
             if (selector === '.account-pool-entry-liveness') return cells.map(cell => cell.button);
             return [];
         }},
-        window: {}, showToast: (...args) => toasts.push(args),
+        window: {location: {origin: 'http://localhost', search: '?page=3&per_page=1&seat_filter=standard&liveness_filter=unchecked'}},
+        showToast: (...args) => toasts.push(args),
         fetch: (url, options) => new Promise(resolve => requests.push({url, options, resolve})),
     });
     vm.runInContext(fs.readFileSync(`${__dirname}/../app/static/js/account-pool.js`, 'utf8'), context);
@@ -31,7 +37,7 @@ function runtime() {
     function respond(index, payload, ok = true) {
         requests[index].resolve({ok, json: async () => payload});
     }
-    return {context, cells, requests, toasts, addCell, respond};
+    return {context, cells, requests, toasts, addCell, respond, progress, allButton, allLabel};
 }
 
 test('click immediately shows checking in the chosen column and prevents duplicate checks', async () => {
@@ -98,4 +104,110 @@ test('network failure and server conflict show feedback and restore the retry bu
     await env.context.checkAccountPoolEntryLiveness(cell.button);
     assert.equal(cell.button.disabled, false);
     assert.equal(env.toasts.at(-1)[0], '该账号正在验活');
+});
+
+async function flush() { await new Promise(resolve => setImmediate(resolve)); }
+
+test('batch checks selected accounts across pages with two concurrent logins and per-row progress', async () => {
+    const env = runtime();
+    const rows = ['1', '2', '3', '4'].map(env.addCell);
+    const batch = env.context.checkAccountPoolBatchLiveness([1, 2, 3, 4, 5, 5]);
+    assert.equal(env.requests.length, 2);
+    assert.equal(rows[0].badge.textContent, '验活中');
+    assert.equal(rows[1].badge.textContent, '验活中');
+    assert.equal(rows[2].badge.textContent, '等待验活');
+    assert.equal(rows[2].button.disabled, true);
+    await env.context.checkAccountPoolEntryLiveness(rows[2].button);
+    await env.context.checkAccountPoolBatchLiveness([3]);
+    assert.equal(env.requests.length, 2);
+    env.respond(0, {success: true, status: 'alive', message: '验证通过'});
+    await flush();
+    assert.equal(env.requests.length, 3);
+    assert.equal(rows[2].badge.textContent, '验活中');
+    env.respond(1, {success: true, status: 'invalid', message: '密码无效'});
+    await flush();
+    assert.equal(env.requests.length, 4);
+    env.respond(2, {success: false, error: '服务不可用'}, false);
+    await flush();
+    assert.equal(env.requests.length, 5);
+    assert.equal(env.requests[4].url, '/admin/account-pool/5/liveness');
+    assert.equal(rows[2].badge.textContent, '异常');
+    env.respond(3, {success: true, status: 'alive', message: '验证通过'});
+    env.respond(4, {success: true, status: 'alive', message: '验证通过'});
+    await batch;
+    assert.equal(env.progress.textContent, '批量验活完成 5/5 · 正常 3 · 异常 2');
+    assert.equal(env.toasts.length, 0);
+    assert.ok(rows.every(cell => !cell.button.disabled));
+    const retry = env.context.checkAccountPoolBatchLiveness([3]);
+    assert.equal(env.requests.length, 6);
+    env.respond(5, {success: true, status: 'alive', message: '验证通过'});
+    await retry;
+    assert.equal(rows[2].badge.textContent, '正常');
+});
+
+test('batch skips an active single check and queued state survives a table redraw', async () => {
+    const env = runtime(), first = env.addCell('1');
+    env.addCell('2'); env.addCell('3'); env.addCell('4');
+    const single = env.context.checkAccountPoolEntryLiveness(first.button);
+    const batch = env.context.checkAccountPoolBatchLiveness([1, 2, 3, 4]);
+    assert.equal(env.requests.length, 3);
+    env.cells.length = 0;
+    const queued = env.addCell('4');
+    env.context.initAccountPoolRowActions();
+    assert.equal(queued.badge.textContent, '等待验活');
+    assert.equal(queued.button.disabled, true);
+    env.respond(1, {success: true, status: 'alive', message: '通过'});
+    await flush();
+    assert.equal(queued.badge.textContent, '验活中');
+    env.respond(2, {success: false, code: 'checking', error: '该账号正在验活'}, false);
+    env.respond(3, {success: true, status: 'alive', message: '通过'});
+    await batch;
+    assert.equal(env.progress.textContent, '批量验活完成 4/4 · 正常 2 · 异常 0 · 跳过 2（已在验活）');
+    env.respond(0, {success: true, status: 'alive', message: '通过'});
+    await single;
+});
+
+test('one-click liveness snapshots all filtered pages and includes owners without selecting rows', async () => {
+    const env = runtime(), first = env.addCell('1');
+    const all = env.context.checkAllAccountPoolLiveness();
+    assert.equal(env.allButton.disabled, true);
+    assert.equal(env.allLabel.textContent, '读取账号…');
+    assert.equal(env.requests[0].url.pathname, '/admin/account-pool/liveness-targets');
+    assert.equal(env.requests[0].url.searchParams.get('liveness_filter'), 'unchecked');
+    assert.equal(env.requests[0].url.searchParams.get('seat_filter'), 'standard');
+    await env.context.checkAllAccountPoolLiveness();
+    await env.context.checkAccountPoolBatchLiveness([1]);
+    assert.equal(env.requests.length, 1);
+    env.respond(0, {success: true, ids: [1, 2, 3, -7], total: 4});
+    await flush();
+    assert.equal(env.requests.length, 3);
+    assert.equal(first.badge.textContent, '验活中');
+    assert.equal(env.allLabel.textContent, '验活中…');
+    env.respond(1, {success: true, status: 'alive', message: '通过'});
+    env.respond(2, {success: true, status: 'invalid', message: '密码错误'});
+    await flush();
+    assert.equal(env.requests.length, 5);
+    assert.equal(env.requests[4].url, '/admin/account-pool/-7/liveness');
+    env.respond(3, {success: true, status: 'alive', message: '通过'});
+    env.respond(4, {success: true, status: 'alive', message: '通过'});
+    await all;
+    assert.equal(env.progress.textContent, '一键验活完成 4/4 · 正常 3 · 异常 1');
+    assert.equal(env.allButton.disabled, false);
+    assert.equal(env.allLabel.textContent, '一键验活');
+});
+
+test('one-click liveness handles empty lists and target read failures without starting logins', async () => {
+    const env = runtime();
+    const empty = env.context.checkAllAccountPoolLiveness();
+    env.respond(0, {success: true, ids: [], total: 0});
+    await empty;
+    assert.equal(env.progress.textContent, '当前列表没有可验活的账号');
+    assert.equal(env.allButton.disabled, false);
+    const failure = env.context.checkAllAccountPoolLiveness();
+    env.respond(1, {success: false, detail: '账号列表读取失败'}, false);
+    await failure;
+    assert.equal(env.requests.length, 2);
+    assert.equal(env.progress.textContent, '账号列表读取失败');
+    assert.equal(env.allButton.disabled, false);
+    assert.equal(env.allButton['aria-busy'], 'false');
 });

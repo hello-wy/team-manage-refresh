@@ -2230,13 +2230,6 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
             "items": [],
         }
 
-    @staticmethod
-    async def _stub_account_settings_success(*args, **kwargs):
-        return {
-            "success": True,
-            "data": {"beta_settings": {}},
-        }
-
     async def test_auto_select_skips_team_where_user_already_exists(self):
         await self._seed_basic_data()
         service = RedeemFlowService()
@@ -3266,7 +3259,6 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(team_service.chatgpt_service, "get_account_info", new=self._stub_account_info_success), \
                  patch.object(team_service.chatgpt_service, "get_members", new=self._stub_members_four), \
                  patch.object(team_service.chatgpt_service, "get_invites", new=self._stub_empty_invites), \
-                 patch.object(team_service.chatgpt_service, "get_account_settings", new=self._stub_account_settings_success), \
                  patch.object(team_service.chatgpt_service, "get_seat_capacity", new=AsyncMock(return_value={"success": True, "data": {"seat_capacity": [
                      {"type": "default", "paid": 4}, {"type": "prolite", "paid": 2},
                  ]}})):

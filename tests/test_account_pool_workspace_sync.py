@@ -114,7 +114,8 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         mappings = (await self.db.execute(select(TeamEmailMapping))).scalars().all()
         self.assertTrue(all(mapping.joined_at for mapping in mappings))
         by_seat = {mapping.seat_type: mapping for mapping in mappings}
-        self.assertIsNotNone(by_seat["standard"].auto_kick_at)
+        self.assertIsNone(by_seat["standard"].auto_kick_at)
+        self.assertEqual(by_seat["standard"].departure_policy, "standard_expiry")
         self.assertIsNotNone(by_seat["premium"].auto_kick_at)
         self.login.login.assert_not_awaited()
 
@@ -162,8 +163,9 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(member["name"]
                             and not member["profile_sync_error"] for member in snapshot["members"]))
         by_seat = {member["seat_type"]: member for member in snapshot["members"]}
-        self.assertIsNotNone(by_seat["default"]["auto_kick_at"])
-        self.assertTrue(by_seat["default"]["auto_kick_enabled"])
+        self.assertIsNone(by_seat["default"]["auto_kick_at"])
+        self.assertEqual(by_seat["default"]["departure_policy"], "standard_expiry")
+        self.assertFalse(by_seat["default"]["auto_kick_enabled"])
         self.assertIsNotNone(by_seat["prolite"]["auto_kick_at"])
         self.login.login.reset_mock()
         await self.authorization.refresh_team_list(self.db, entries[0].id)

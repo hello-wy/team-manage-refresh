@@ -230,7 +230,6 @@ class TeamRefreshTests(unittest.IsolatedAsyncioTestCase):
         teams.chatgpt_service = self.remote
         self.remote.get_members = AsyncMock(return_value={"success": True, "members": [], "total": 0})
         self.remote.get_invites = AsyncMock(return_value={"success": True, "items": []})
-        self.remote.get_account_settings = AsyncMock(return_value={"success": True, "data": {}})
         self.remote.get_seat_capacity = AsyncMock(return_value={"success": True, "data": {}})
         for before, members, expired, expected in (("error", 0, False, "active"),
                                                   ("banned", 6, False, "full"),

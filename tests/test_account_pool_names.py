@@ -104,7 +104,7 @@ class AccountPoolNamePersistenceTests(unittest.IsolatedAsyncioTestCase):
                            "headers": [], "query_string": b"", "server": ("localhost", 8008)})
         page = await account_pool_page(request, db=self.db, current_user={"username": "admin"})
         html = page.body.decode()
-        self.assertIn('<th>名称</th>', html)
+        self.assertIn('data-sort-by="name"', html)
         self.assertIn('data-label="名称">&lt;Kohei&gt;</td>', html)
         self.assertNotIn('data-label="名称"><Kohei>', html)
 

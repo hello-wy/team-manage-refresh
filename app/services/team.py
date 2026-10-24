@@ -749,7 +749,7 @@ class TeamService:
             mapping.usage_started_at = mapping.joined_at
         if was_joined and previous_seat == "standard" and seat_type == "premium":
             mapping.usage_started_at = seen_at
-        refresh_deadline(mapping, team_auto_kick_hours(team))
+        refresh_deadline(mapping, team_auto_kick_hours(team), team=team)
 
     @staticmethod
     def _apply_invited_mapping(mapping, seen_at) -> None:
@@ -1183,18 +1183,6 @@ class TeamService:
                 # 解析过期时间
                 expires_at = self._parse_remote_expires_at(selected_account.get("expires_at"))
 
-                # 获取账户设置 (包含 beta_settings)
-                device_code_auth_enabled = False
-                settings_result = await self.chatgpt_service.get_account_settings(
-                    access_token,
-                    selected_account["account_id"],
-                    db_session,
-                    identifier=email
-                )
-                if settings_result["success"]:
-                    beta_settings = settings_result["data"].get("beta_settings", {})
-                    device_code_auth_enabled = beta_settings.get("codex_device_code_auth", False)
-
                 # 确定状态和最大成员数 (默认读取系统设置，异常时回退到 6)
                 max_members_raw = await settings_service.get_setting(
                     db_session,
@@ -1241,7 +1229,6 @@ class TeamService:
                     max_members=max_members,
                     status=status,
                     account_role=selected_account.get("account_user_role"),
-                    device_code_auth_enabled=device_code_auth_enabled,
                     last_sync=get_now(),
                     pool_type=pool_type
                 )
@@ -1587,8 +1574,7 @@ class TeamService:
                     "client_id": team.client_id or "",
                     "team_name": team.team_name,
                     "status": team.status,
-                    "account_role": team.account_role,
-                    "device_code_auth_enabled": team.device_code_auth_enabled
+                    "account_role": team.account_role
                 }
             }
         except Exception:
@@ -2003,8 +1989,8 @@ class TeamService:
                     "error": "该 Token 没有关联任何 Team 账户"
                 }
 
-            # 5. 小并发获取只读信息 (成员、邀请、账户设置)
-            members_result, invites_result, settings_result = await asyncio.gather(
+            # 5. 并发获取成员和邀请信息
+            members_result, invites_result = await asyncio.gather(
                 self.chatgpt_service.get_members(
                     access_token,
                     current_account["account_id"],
@@ -2012,12 +1998,6 @@ class TeamService:
                     identifier=team.email
                 ),
                 self.chatgpt_service.get_invites(
-                    access_token,
-                    current_account["account_id"],
-                    db_session,
-                    identifier=team.email
-                ),
-                self.chatgpt_service.get_account_settings(
                     access_token,
                     current_account["account_id"],
                     db_session,
@@ -2109,12 +2089,6 @@ class TeamService:
             # 6. 解析过期时间
             expires_at = self._parse_remote_expires_at(current_account.get("expires_at"))
 
-            # 7.5 使用并发请求返回的账户设置 (包含 beta_settings)
-            device_code_auth_enabled = team.device_code_auth_enabled
-            if settings_result["success"]:
-                beta_settings = settings_result["data"].get("beta_settings", {})
-                device_code_auth_enabled = beta_settings.get("codex_device_code_auth", False)
-
             # 7. 确定状态
             status = "active"
             if current_members >= team.max_members:
@@ -2129,7 +2103,6 @@ class TeamService:
             team.subscription_plan = current_account["subscription_plan"]
             team.account_role = current_account.get("account_user_role")
             team.expires_at = expires_at
-            team.device_code_auth_enabled = device_code_auth_enabled
             team.error_count = 0  # 同步成功，重置错误次数
             team.last_sync = get_now()
             await self._refresh_member_display(team, members_result, access_token, db_session)
@@ -2497,6 +2470,18 @@ class TeamService:
                 return self._admin_error("seat_changed", "成员席位已被修改，请刷新列表后重试")
             if current == target:
                 return {"success": True, "status": "unchanged", "message": "该成员已使用所选席位", "error": None}
+            if current == "standard":
+                return self._admin_error("standard_seat_locked", "标准席位已有成员，不能更换席位类型；如需移出成员请手动踢出")
+            member_email = member.get("email")
+            if target == "premium" and not member_email:
+                member_email = await db_session.scalar(select(TeamEmailMapping.email).where(
+                    TeamEmailMapping.team_id == team_id, TeamEmailMapping.upstream_user_id == user_id,
+                    TeamEmailMapping.status == TEAM_EMAIL_STATUS_JOINED,
+                ))
+                if not member_email:
+                    return self._admin_error("member_identity_missing", "成员邮箱尚未确认，无法核验质保规则，请先同步成员")
+            if target == "premium" and await is_warranty_member(db_session, team_id, member_email):
+                return self._admin_error("warranty_standard_only", "质保兑换成员仅可使用标准席位，不能升级高级席位")
 
             balance = await self.get_team_seat_balance(team, db_session, token, members_result=result)
             error = self._seat_balance_error(balance, seat_type)
@@ -2914,7 +2899,7 @@ class TeamService:
                 return {"success": False, "error": "成员自退已返回成功，但无法完成成员快照复核"}
             logger.warning("成员自退返回成功但快照仍存在，转母号兜底: team=%s user=%s", team.id, user_id)
         if member_exit and not await scheduled_departure_allowed(db_session, team.id, email):
-            return {"success": False, "error": "质保成员仅在 Team 到期后下线，取消旧计划"}
+            return {"success": False, "error": "成员下线规则或 Team 到期时间已变化，取消旧计划"}
         return await self._delete_as_owner(team, user_id, email=email,
                                            access_token=access_token, db_session=db_session)
 
@@ -3010,52 +2995,6 @@ class TeamService:
             await self._reset_error_status(target.team, target.db)
         return {"success": True, "message": result.get("message") or "成员已删除",
                 "removal_method": result.get("removal_method"), "error": None}
-
-    async def enable_device_code_auth(
-        self,
-        team_id: int,
-        db_session: AsyncSession
-    ) -> Dict[str, Any]:
-        """
-        开启 Team 的设备代码身份验证
-        """
-        try:
-            # 1. 查询 Team
-            stmt = select(Team).where(Team.id == team_id)
-            result = await db_session.execute(stmt)
-            team = result.scalar_one_or_none()
-
-            if not team:
-                return {"success": False, "error": f"Team ID {team_id} 不存在"}
-
-            # 2. 确保 AT Token 有效
-            access_token = await self.ensure_access_token(team, db_session)
-            if not access_token:
-                return {"success": False, "error": "Token 已过期且无法刷新"}
-
-            # 3. 调用 ChatGPT API 开启功能
-            result = await self.chatgpt_service.toggle_beta_feature(
-                access_token,
-                team.account_id,
-                "codex_device_code_auth",
-                True,
-                db_session,
-                identifier=team.email
-            )
-
-            if not result["success"]:
-                return {"success": False, "error": f"开启设备身份验证失败: {result.get('error', '未知错误')}"}
-
-            # 更新数据库状态
-            team.device_code_auth_enabled = True
-            await db_session.commit()
-
-            logger.info(f"Team {team_id} ({team.email}) 开启设备身份验证成功")
-            return {"success": True, "message": "设备代码身份验证开启成功"}
-
-        except Exception:
-            logger.exception("开启设备身份验证失败")
-            return {"success": False, "error": "开启设备身份验证失败，请稍后重试"}
 
     async def set_warranty_seat_enabled(
         self,
@@ -3214,7 +3153,6 @@ class TeamService:
                 "max_members": team.max_members,
                 "status": team.status,
                 "account_role": team.account_role,
-                "device_code_auth_enabled": team.device_code_auth_enabled,
                 "rotation_mode": team.rotation_mode,
                 "warranty_seat_enabled": team.warranty_seat_enabled,
                 "last_sync": team.last_sync.isoformat() if team.last_sync else None,
@@ -3283,7 +3221,6 @@ class TeamService:
                 Team.current_members,
                 Team.max_members,
                 Team.status,
-                Team.device_code_auth_enabled,
                 Team.joined_members,
                 Team.total_seats,
                 Team.warranty_seat_enabled,
@@ -3346,7 +3283,6 @@ class TeamService:
                     "current_members": team.current_members,
                     "max_members": team.max_members,
                     "status": team.effective_status,
-                    "device_code_auth_enabled": getattr(team, 'device_code_auth_enabled', False),
                     "joined_members": team.joined_members,
                     "total_seats": team.total_seats,
                     "warranty_seat_enabled": getattr(team, "warranty_seat_enabled", False),

@@ -1,6 +1,7 @@
 """Rotate an account-pool entry's ChatGPT TOTP factor."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.services.account_pool_authorization import AccountPoolAuthorizationError
@@ -9,6 +10,7 @@ from app.utils.totp import generate_totp, normalize_totp_secret
 
 MFA_BASE_URL = "https://chatgpt.com/backend-api/accounts"
 SUCCESS_STATUS = 200
+logger = logging.getLogger(__name__)
 
 
 class AccountPoolTotpError(ValueError):
@@ -36,10 +38,12 @@ class AccountPoolTotpService:
         self._remote = remote
         self._import_profile_saver = import_profile_saver
 
-    async def rotate(self, db, entry_id: int, *, populate_name=False) -> str:
+    async def rotate(self, db, entry_id: int, *, populate_name=False,
+                     profile_warnings: list[str] | None = None) -> str:
         identifier = f"account-pool-login-{entry_id}"
         try:
-            login = await self._login(db, entry_id, populate_name=populate_name)
+            login = await self._login(db, entry_id, populate_name=populate_name,
+                                      profile_warnings=profile_warnings)
             token = login.payload["accounts"][0]["credentials"]["access_token"]
             session = await self._remote._get_session(db, identifier)
             headers = self._headers(session, token)
@@ -53,7 +57,8 @@ class AccountPoolTotpService:
                 secret = await self._enroll_and_activate(session, headers)
             except Exception as exc:
                 if old_ids:
-                    raise AccountPoolTotpError(f"旧 2FA 已禁用，新 2FA 创建失败：{exc}") from exc
+                    raise AccountPoolTotpError(f"旧 2FA 已禁用，新 2FA 创建失败：{exc}",
+                                              new_secret=getattr(exc, "new_secret", "")) from exc
                 raise
             try:
                 active = await self._info(session, headers)
@@ -77,11 +82,18 @@ class AccountPoolTotpService:
         finally:
             await self._remote.clear_session(identifier)
 
-    async def _login(self, db, entry_id, *, populate_name):
+    async def _login(self, db, entry_id, *, populate_name, profile_warnings):
         login = await self._authorization.login_entry(db, entry_id)
         if populate_name:
-            await self._import_profile_saver(db, entry_id, login.payload)
-            await db.commit()
+            try:
+                await self._import_profile_saver(db, entry_id, login.payload)
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                warning = f"补姓名失败：{exc}"
+                if profile_warnings is not None:
+                    profile_warnings.append(warning)
+                logger.warning("导入账号 %s；继续更换 2FA: entry=%s", warning, entry_id)
         return login
 
     @staticmethod
@@ -134,9 +146,15 @@ class AccountPoolTotpService:
         if not secret or not session_id:
             raise AccountPoolTotpError("创建 2FA 未返回密钥或 session_id")
         code = generate_totp(secret)
-        activation = await self._post(session, headers, "mfa/user/activate_enrollment", {
-            "code": code, "factor_type": "totp", "session_id": session_id,
-        })
-        if activation.get("success") is not True:
-            raise AccountPoolTotpError("新 2FA 激活响应未确认成功")
+        try:
+            activation = await self._post(session, headers, "mfa/user/activate_enrollment", {
+                "code": code, "factor_type": "totp", "session_id": session_id,
+            })
+            if activation.get("success") is not True:
+                raise AccountPoolTotpError("新 2FA 激活响应未确认成功")
+        except Exception as exc:
+            # A timeout can occur after activation. Retain the candidate secret
+            # for recovery without replacing the saved, unverified credential.
+            raise AccountPoolTotpError("新 2FA 激活结果未确认，请用记录中的候选新密钥核对远端状态",
+                                      new_secret=secret) from exc
         return secret

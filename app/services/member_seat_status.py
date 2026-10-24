@@ -6,6 +6,7 @@ from sqlalchemy import or_, select
 from app.models import RedemptionCode, RedemptionRecord
 from app.services.member_lifecycle import service_start
 from app.services.settings import settings_service
+from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
 
@@ -55,11 +56,20 @@ async def decorate_seat_status(db, team, members):
                 warranty_expiry = start + timedelta(days=(code.warranty_days or 30) + (code.extension_days or 0))
         # 兼容仅有 used_team_id/used_by_email 的旧质保码绑定。
         protected = member.get('departure_policy') == 'team_expiry'
+        standard = normalize_seat_type(member.get('seat_type')) == 'standard'
+        # 实际席位优先于旧参与标志；缺少映射的成员也按 Team 到期时间展示。
+        if standard and member.get('role') != 'account-owner':
+            member.update(departure_policy='team_expiry' if protected else 'standard_expiry',
+                          auto_kick_enabled=False,
+                          auto_kick_at=iso(team.expires_at) if member.get('status') == 'joined' else None)
         deadline = member.get('auto_kick_at')
         if member.get('role') == 'account-owner':
             state, label, reason = 'owner', '所有者', '不参与自动下线'
         elif member.get('status') == 'invited':
-            state, label, reason = 'invited', '等待确认邀请', '确认加入后开始计时'
+            state, label = 'invited', '等待确认邀请'
+            reason = ('确认加入后开始质保，保留至 Team 到期' if protected else
+                      '接受邀请后保留至 Team 到期' if normalize_seat_type(member.get('seat_type')) == 'standard'
+                      else '确认加入后开始计时')
         elif protected and team.expires_at and team.expires_at <= now:
             state, label, reason = 'overdue', '到期待下线', 'Team 已到期，等待自动下线'
         elif protected:
@@ -70,6 +80,10 @@ async def decorate_seat_status(db, team, members):
             else:
                 state, label = 'protected', '质保信息待同步'
             reason = '免小时级及额度清退，Team 到期后下线' if team.expires_at else 'Team 到期时间待同步'
+        elif standard:
+            overdue = bool(team.expires_at and team.expires_at <= now)
+            state, label = ('overdue', '到期待下线') if overdue else ('retained', '保留至 Team 到期')
+            reason = '标准席位不按小时下线，Team 到期后下线' if team.expires_at else 'Team 到期时间待同步；不会按小时下线'
         elif member.get('auto_kick_enabled') is False:
             state, label, reason = 'retained', '保留成员', '不参与自动下线'
         elif deadline:
@@ -80,7 +94,7 @@ async def decorate_seat_status(db, team, members):
                 reason += '；额度耗尽可能提前轮转'
         else:
             state, label, reason = 'syncing', '等待同步', '使用起点待同步'
-        member.update(seat_status=state, status_label=label, status_reason=reason,
+        member.update(warranty_protected=protected, seat_status=state, status_label=label, status_reason=reason,
                       warranty_expires_at=iso(warranty_expiry), team_expires_at=iso(team.expires_at),
                       server_now=iso(now))
     return members

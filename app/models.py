@@ -33,7 +33,7 @@ class Team(Base):
     total_seats = Column(Integer, nullable=True, comment="上游已购标准与高级席位合计")
     status = Column(String(20), default="active", comment="状态: active/full/expired/error/banned")
     account_role = Column(String(50), comment="账号角色: account-owner/standard-user 等")
-    device_code_auth_enabled = Column(Boolean, default=False, comment="是否开启设备代码身份验证")
+    device_code_auth_enabled = Column(Boolean, default=False, comment="历史兼容字段，设备验证功能已移除")
     warranty_seat_enabled = Column(Boolean, default=False, comment="是否作为质保兑换码分流目标 Team")
     member_auto_kick_hours = Column(Integer, default=2, server_default="2", nullable=False,
                                     comment="成员加入后自动下线小时数")
@@ -169,7 +169,7 @@ class TeamEmailMapping(Base):
     source = Column(String(20), default="sync", nullable=False, comment="来源: redeem/admin_add/sync/api")
     join_source = Column(String(20), comment="本次入组来源，不被同步覆盖")
     departure_policy = Column(String(20), nullable=False, default="timed", server_default="timed",
-                              comment="清退规则: timed/team_expiry")
+                              comment="清退规则: timed/standard_expiry/team_expiry")
     usage_started_at = Column(DateTime, comment="当前使用周期起点，升级高级席位后重新起算")
     is_admin_invited = Column(
         Boolean,

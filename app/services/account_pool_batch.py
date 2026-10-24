@@ -3,7 +3,7 @@ import json
 import logging
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolTotpJob, AccountPoolWorkspace
 from app.services.account_pool_owners import require_non_owner, owner_emails
@@ -121,26 +121,34 @@ class AccountPoolBatchService:
     async def run_rotations(self, batch_id, *, populate_names=False):
         async with self._sessions() as session:
             ids = (await session.execute(select(AccountPoolTotpJob.id).where(
-                AccountPoolTotpJob.batch_id == batch_id
+                AccountPoolTotpJob.batch_id == batch_id,
+                AccountPoolTotpJob.status == "pending",
             ).order_by(AccountPoolTotpJob.id))).scalars().all()
         for job_id in ids:
             await self._run_rotation(job_id, populate_names=populate_names)
 
     async def _run_rotation(self, job_id, *, populate_names=False):
         async with self._sessions() as session:
-            job = await session.get(AccountPoolTotpJob, job_id)
-            job.status = "running"
+            claimed = await session.execute(update(AccountPoolTotpJob).where(
+                AccountPoolTotpJob.id == job_id, AccountPoolTotpJob.status == "pending",
+            ).values(status="running"))
             await session.commit()
+            if claimed.rowcount != 1:
+                return
+            job = await session.get(AccountPoolTotpJob, job_id)
+            warnings = []
             try:
                 entries = await self.entries(session, [job.account_pool_id])
                 await require_non_owner(session, entries)
-                secret = await self._totp.rotate(session, job.account_pool_id,
-                                                 populate_name=populate_names)
+                options = {"populate_name": populate_names}
+                if populate_names:
+                    options["profile_warnings"] = warnings
+                secret = await self._totp.rotate(session, job.account_pool_id, **options)
             except Exception as exc:
                 await session.rollback()
                 job = await session.get(AccountPoolTotpJob, job_id)
                 job.status = "failed"
-                job.error = str(exc)
+                job.error = "；".join([*warnings, str(exc)])
                 if getattr(exc, "new_secret", ""):
                     job.new_secret_encrypted = self._cipher.encrypt_token(exc.new_secret)
                 logger.exception("账号池 2FA 更换失败: email=%s job=%s result=%s",
@@ -148,6 +156,7 @@ class AccountPoolBatchService:
             else:
                 job = await session.get(AccountPoolTotpJob, job_id)
                 job.status = "completed"
+                job.error = "；".join(warnings) or None
                 job.new_secret_encrypted = self._cipher.encrypt_token(secret)
                 logger.info("账号池 2FA 更换成功: email=%s job=%s result=completed",
                             job.email, job.id)

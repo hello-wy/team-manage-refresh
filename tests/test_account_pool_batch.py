@@ -113,6 +113,35 @@ class AccountPoolBatchTests(unittest.IsolatedAsyncioTestCase):
                     AccountPoolTotpJob.batch_id == batch_id)
             )).scalar_one_or_none())
 
+    async def test_replaying_finished_batch_does_not_rotate_again(self):
+        self.totp.rotate.side_effect = ["NEWSECRET", AccountPoolTotpError("远端失败")]
+        async with self.sessions() as session:
+            batch_id = await self.service.enqueue_rotations(session, [1, 2])
+        with self.assertLogs("app.services.account_pool_batch", level="ERROR"):
+            await self.service.run_rotations(batch_id)
+        await self.service.run_rotations(batch_id)
+        self.assertEqual(self.totp.rotate.await_count, 2)
+        async with self.sessions() as session:
+            results = await self.service.rotation_status(session, batch_id)
+        self.assertEqual([item["status"] for item in results], ["completed", "failed"])
+
+    async def test_profile_warning_keeps_successful_rotation_and_is_visible_in_history(self):
+        async def rotate(session, entry_id, *, populate_name, profile_warnings):
+            self.assertTrue(populate_name)
+            profile_warnings.append("补姓名失败：导入登录未返回账号姓名")
+            return "NEWSECRET"
+        self.totp.rotate.side_effect = rotate
+        async with self.sessions() as session:
+            batch_id = await self.service.enqueue_rotations(session, [1])
+        await self.service.run_rotations(batch_id, populate_names=True)
+        async with self.sessions() as session:
+            result = (await self.service.rotation_status(session, batch_id))[0]
+            _, history = await self.service.rotation_history(session, 1, 20)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["two_factor_secret"], "NEWSECRET")
+        self.assertIn("补姓名失败", result["error"])
+        self.assertEqual(history[0]["error"], result["error"])
+
     async def test_delete_removes_export_records_for_all_selected_emails(self):
         async with self.sessions() as session:
             session.add_all([

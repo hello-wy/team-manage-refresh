@@ -48,6 +48,11 @@ async def record_stages(db, team, mappings, *, snapshots, states, seat_balance):
             state = RotationMemberState(team_id=team.id, email=mapping.email)
             db.add(state)
             states[mapping.email] = state
+        if mapping.seat_type == "standard":
+            state.phase = "standard"
+            state.queued_at = None
+            state.blocked_reason = None
+            continue
         snapshot = snapshots.get(mapping.email)
         if not snapshot or snapshot.status != "ok" or snapshot.observed_seat_type != mapping.seat_type:
             continue
@@ -64,10 +69,6 @@ async def record_stages(db, team, mappings, *, snapshots, states, seat_balance):
                 state.premium_completed_at = None
             state.blocked_reason = None
             continue
-        if mapping.seat_type == "standard" and not state.standard_completed_at:
-            state.standard_completed_at = now
-            state.queued_at = now
-            state.phase = "wait_premium"
         if mapping.seat_type == "premium" and not state.premium_completed_at:
             state.premium_completed_at = now
         if mapping.seat_type == "premium" and mapping.member_role in ADMIN_ROLES:
@@ -123,9 +124,9 @@ def action_confirmed(action, members):
 
 
 async def reconcile_action(db, action, team_service):
-    if action.action_type == "remove" and await is_warranty_member(db, action.team_id, action.email):
+    if action.action_type in ("remove", "upgrade") and await is_warranty_member(db, action.team_id, action.email):
         action.status = "cancelled"
-        action.result = "质保兑换成员不参与自动踢出"
+        action.result = "质保兑换成员仅使用标准席位，不参与升级或自动踢出"
         await db.commit()
         return action.status
     result = await team_service.get_team_members(action.team_id, db)
@@ -136,6 +137,14 @@ async def reconcile_action(db, action, team_service):
         action.status = "succeeded"
         action.result = "上游成员列表已确认"
         await _complete_action(db, action)
+    elif action.action_type == "upgrade":
+        member = next((row for row in result["members"] if row.get("email", "").lower() == action.email), None)
+        if member and member.get("pending_seat_type") in ("premium", "prolite"):
+            action.status = "reconciling"
+            action.result = "上游已有待生效的高级席位变更，继续核对，不重复提交"
+        else:
+            action.status = "cancelled"
+            action.result = "标准席位已有成员，取消尚未提交或生效的自动升级"
     elif action.status in ("executing", "reconciling"):
         action.status = "reconciling"
         if not action.result:
@@ -175,6 +184,10 @@ async def _execute_remote(db, team, action, *, mapping, team_service):
             raise RuntimeError("受保护成员不能退出 Team")
         return await team_service.delete_team_member(
             team.id, mapping.upstream_user_id, db, email=action.email)
+    if action.action_type == "upgrade" and await is_warranty_member(db, team.id, action.email):
+        raise RuntimeError("质保兑换成员不能升级高级席位")
+    if action.action_type == "upgrade":
+        raise RuntimeError("标准席位已有成员，不能升级高级席位")
     target = "premium" if action.action_type == "upgrade" else "default"
     return await team_service.update_member_seat_type(
         team.id, mapping.upstream_user_id, target, mapping.seat_type, db)

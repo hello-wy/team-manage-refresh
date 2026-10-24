@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team, TeamEmailMapping
-from app.services.warranty_member_protection import is_warranty_member, warranty_member_condition
+from app.services.warranty_member_protection import is_standard_member, is_warranty_member, warranty_member_condition
 from app.services.settings import (
     settings_service,
     WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM,
@@ -717,7 +717,6 @@ class WarrantyService:
                             "team_status": "suspected_inconsistent",
                             "team_expires_at": team.expires_at.isoformat() if team.expires_at else None,
                             "email": record.email,
-                            "device_code_auth_enabled": team.device_code_auth_enabled,
                             "remaining_warranty_days": remaining_days,
                             "auto_kick_enabled": auto_kick_enabled,
                             "renewal_reminder_days": renewal_reminder_days,
@@ -770,7 +769,6 @@ class WarrantyService:
                     "team_status": team.status,
                     "team_expires_at": team.expires_at.isoformat() if team.expires_at else None,
                     "email": record.email,
-                    "device_code_auth_enabled": team.device_code_auth_enabled,
                     "remaining_warranty_days": remaining_days,
                     "auto_kick_enabled": auto_kick_enabled,
                     "renewal_reminder_days": renewal_reminder_days,
@@ -1001,6 +999,9 @@ class WarrantyService:
             except Exception:
                 pass
 
+            if await is_standard_member(db_session, redemption_code.used_team_id, redemption_code.used_by_email):
+                return {"success": True, "code": normalized_code, "category": "skipped",
+                        "skip_reason": "standard_seat", "error": None}
             if redemption_code.has_warranty or await is_warranty_member(
                 db_session, redemption_code.used_team_id, redemption_code.used_by_email,
             ):
@@ -1360,6 +1361,9 @@ class WarrantyService:
                         "error": None,
                     }
 
+            if await is_standard_member(db_session, team_id, normalized_email):
+                return {"success": True, "team_id": team_id, "email": normalized_email,
+                        "category": "skipped", "skip_reason": "standard_seat", "error": None}
             if await is_warranty_member(db_session, team_id, normalized_email):
                 return {"success": True, "team_id": team_id, "email": normalized_email,
                         "category": "skipped", "skip_reason": "warranty_member", "error": None}
@@ -1670,6 +1674,9 @@ class WarrantyService:
             if mapping.joined_at + timedelta(days=period) > get_now():
                 return {"success": True, "category": "skipped", "skip_reason": "not_due", "error": None}
 
+            if await is_standard_member(db_session, team_id, normalized_email):
+                return {"success": True, "team_id": team_id, "email": normalized_email,
+                        "category": "skipped", "skip_reason": "standard_seat", "error": None}
             if await is_warranty_member(db_session, team_id, normalized_email):
                 return {"success": True, "team_id": team_id, "email": normalized_email,
                         "category": "skipped", "skip_reason": "warranty_member", "error": None}

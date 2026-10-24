@@ -143,13 +143,23 @@ test('workbench member removal waits for the page dialog and cancellation sends 
     assert.equal(calls, 1);
 });
 
+function stock16688Button() {
+    const attributes = new Map();
+    return {dataset: {entryId: '7', email: 'member@example.com'}, disabled: false,
+        innerHTML: '<img src="/static/stock-16688-icon.png" alt="">',
+        setAttribute: (name, value) => attributes.set(name, value),
+        removeAttribute: name => attributes.delete(name),
+        getAttribute: name => attributes.get(name) ?? null};
+}
+
 test('16688 import requires confirmation and sends only the entry ID to the backend', async () => {
     const env = runtime(), calls = [], messages = [];
-    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    const button = stock16688Button();
     env.context.fetch = async (url, options) => {
         calls.push({url, options});
         assert.equal(button.disabled, true);
-        assert.equal(button.textContent, '补货中…');
+        assert.equal(button.getAttribute('aria-busy'), 'true');
+        assert.match(button.innerHTML, /stock-16688-icon/);
         return {ok: true, json: async () => ({success: true, message: '已成功补货至 16688'})};
     };
     env.context.showToast = (...args) => messages.push(args);
@@ -165,12 +175,13 @@ test('16688 import requires confirmation and sends only the entry ID to the back
     assert.equal(calls[0].options.cache, 'no-store');
     assert.deepEqual(messages, [['已成功补货至 16688', 'success']]);
     assert.equal(button.disabled, false);
-    assert.equal(button.textContent, '导入 16688');
+    assert.equal(button.getAttribute('aria-busy'), null);
+    assert.match(button.innerHTML, /stock-16688-icon/);
 });
 
 test('16688 cancel and duplicate clicks never submit another export', async () => {
     const env = runtime();
-    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    const button = stock16688Button();
     env.context.fetch = () => { throw Error('No request expected'); };
     const pending = env.context.importAccountPool16688(button);
     await env.context.importAccountPool16688(button);
@@ -182,7 +193,7 @@ test('16688 cancel and duplicate clicks never submit another export', async () =
 test('16688 errors restore the button and do not retry uncertain imports', async () => {
     const env = runtime(), messages = [];
     let calls = 0;
-    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    const button = stock16688Button();
     env.context.fetch = async () => {
         calls++;
         return {ok: false, json: async () => ({success: false, error: '补货结果未确认，请先核对库存'})};
@@ -198,7 +209,7 @@ test('16688 errors restore the button and do not retry uncertain imports', async
 
 test('network interruptions in 16688 export show an uncertain result instead of encouraging a blind retry', async () => {
     const env = runtime(), messages = [];
-    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    const button = stock16688Button();
     env.context.fetch = async () => { throw new TypeError('Failed to fetch'); };
     env.context.showToast = (...args) => messages.push(args);
     const pending = env.context.importAccountPool16688(button);

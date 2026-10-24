@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const {test} = require('node:test');
 
-function runtime(search = '?page=3&per_page=20&search=alex&team_filter=2&seat_filter=premium&rotation_filter=invited&sort_by=email') {
+function runtime(search = '?page=3&per_page=20&search=alex&team_filter=2&seat_filter=premium&rotation_filter=invited&liveness_filter=abnormal&sort_by=email&sort_order=desc') {
     const location = {origin: 'http://localhost', search};
     const elements = new Map();
     const requests = [];
@@ -33,24 +33,28 @@ test('page size and ordering preserve team, seat, rotation and email filters', (
     assert.equal(params.get('team_filter'), '2');
     assert.equal(params.get('seat_filter'), 'premium');
     assert.equal(params.get('rotation_filter'), 'invited');
+    assert.equal(params.get('liveness_filter'), 'abnormal');
     assert.equal(params.get('search'), 'alex');
     assert.equal(params.get('per_page'), '50');
     assert.equal(params.get('page'), '1');
     assert.equal(params.get('sort_by'), 'deadline');
-    const reset = context.getAccountPoolTableUrl({page: 1, teamFilter: '', seatFilter: '', rotationFilter: '', search: ''}).searchParams;
+    assert.equal(params.get('sort_order'), 'desc');
+    const reset = context.getAccountPoolTableUrl({page: 1, teamFilter: '', seatFilter: '', rotationFilter: '', livenessFilter: '', search: ''}).searchParams;
     assert.equal(reset.get('team_filter'), '');
     assert.equal(reset.get('seat_filter'), '');
     assert.equal(reset.get('rotation_filter'), '');
+    assert.equal(reset.get('liveness_filter'), '');
     assert.equal(reset.get('search'), '');
 });
 
 test('rapid filter changes combine intent and discard the older response', async () => {
     const env = runtime('');
-    const first = env.context.refreshAccountPoolTable({page: 1, teamFilter: '1', rotationFilter: 'waiting_exit'});
+    const first = env.context.refreshAccountPoolTable({page: 1, teamFilter: '1', rotationFilter: 'waiting_exit', livenessFilter: 'alive'});
     const second = env.context.refreshAccountPoolTable({page: 1, seatFilter: 'standard'});
     assert.equal(env.requests[1].url.searchParams.get('team_filter'), '1');
     assert.equal(env.requests[1].url.searchParams.get('seat_filter'), 'standard');
     assert.equal(env.requests[1].url.searchParams.get('rotation_filter'), 'waiting_exit');
+    assert.equal(env.requests[1].url.searchParams.get('liveness_filter'), 'alive');
     assert.equal(env.requests[0].options.signal.aborted, true);
     env.requests[1].resolve({ok: true, text: async () => 'new'});
     await second;
@@ -74,21 +78,65 @@ test('rotation changes reset page and clear selection, refreshes keep the filter
     assert.equal(env.context.getAccountPoolTableUrl().searchParams.get('rotation_filter'), 'idle');
 });
 
-test('rotation select and reset use delegated events after filters are replaced', () => {
+test('all dropdowns and reset use delegated events after filters are replaced', () => {
     const env = runtime();
     const handlers = {};
     env.elements.set('accountPoolFilters', {addEventListener(name, callback) {handlers[name] = callback;}});
     const calls = [];
     env.context.refreshAccountPoolTable = options => calls.push(options);
     env.context.initAccountPoolFilters();
-    handlers.change({target: {id: 'accountPoolRotationFilter', value: 'attention'}});
-    assert.equal(calls[0].rotationFilter, 'attention');
+    handlers.change({target: {id: 'accountPoolRotationFilter', value: 'idle'}});
+    assert.equal(calls[0].rotationFilter, 'idle');
     assert.equal(calls[0].page, 1);
+    handlers.change({target: {id: 'accountPoolLivenessFilter', value: 'unchecked'}});
+    assert.equal(calls[1].livenessFilter, 'unchecked');
+    assert.equal(calls[1].page, 1);
     handlers.click({target: {closest: () => ({href: 'http://localhost/admin/account-pool',
                                             dataset: {filterKind: 'reset'}})}, preventDefault() {}});
-    assert.equal(calls[1].rotationFilter, '');
-    assert.equal(calls[1].teamFilter, '');
-    assert.equal(calls[1].seatFilter, '');
+    assert.equal(calls[2].rotationFilter, '');
+    assert.equal(calls[2].teamFilter, '');
+    assert.equal(calls[2].seatFilter, '');
+    assert.equal(calls[2].livenessFilter, '');
+    handlers.change({target: {id: 'accountPoolTeamFilter', value: 'personal'}});
+    assert.equal(calls[3].teamFilter, 'personal');
+    assert.equal(calls[3].statusFilter, '');
+    assert.equal(calls[3].page, 1);
+    handlers.change({target: {id: 'accountPoolSeatFilter', value: 'standard'}});
+    assert.equal(calls[4].seatFilter, 'standard');
+    assert.equal(calls[4].page, 1);
+});
+
+test('column sorting toggles direction, resets pagination and keeps all filters', async () => {
+    const env = runtime();
+    const ascending = env.context.sortAccountPoolTable('email');
+    assert.equal(env.requests[0].url.searchParams.get('sort_order'), 'asc');
+    assert.equal(env.requests[0].url.searchParams.get('page'), '1');
+    assert.equal(env.requests[0].url.searchParams.get('liveness_filter'), 'abnormal');
+    env.requests[0].resolve({ok: true, text: async () => 'html'});
+    await ascending;
+    const descending = env.context.sortAccountPoolTable('email');
+    assert.equal(env.requests[1].url.searchParams.get('sort_order'), 'desc');
+    env.requests[1].resolve({ok: true, text: async () => 'html'});
+    await descending;
+    const otherColumn = env.context.sortAccountPoolTable('name');
+    assert.equal(env.requests[2].url.searchParams.get('sort_by'), 'name');
+    assert.equal(env.requests[2].url.searchParams.get('sort_order'), 'asc');
+    env.requests[2].resolve({ok: true, text: async () => 'html'});
+    await otherColumn;
+    assert.equal(env.cleared(), 0);
+});
+
+test('rapid clicks toggle the pending sort intent instead of repeating the previous direction', async () => {
+    const env = runtime();
+    const first = env.context.sortAccountPoolTable('email');
+    const second = env.context.sortAccountPoolTable('email');
+    assert.equal(env.requests[0].options.signal.aborted, true);
+    assert.equal(env.requests[1].url.searchParams.get('sort_order'), 'desc');
+    env.requests[1].resolve({ok: true, text: async () => 'new'});
+    await second;
+    env.requests[0].resolve({ok: true, text: async () => 'old'});
+    await first;
+    assert.equal(env.replaced(), 1);
 });
 
 test('sorting refresh preserves selection while changing search clears it', async () => {
@@ -101,4 +149,15 @@ test('sorting refresh preserves selection while changing search clears it', asyn
     env.requests[1].resolve({ok: true, text: async () => 'html'});
     await search;
     assert.equal(env.cleared(), 1);
+});
+
+test('liveness filter changes clear selection while pagination and sorting preserve it', async () => {
+    const env = runtime();
+    const change = env.context.refreshAccountPoolTable({page: 1, livenessFilter: 'unchecked'});
+    env.requests[0].resolve({ok: true, text: async () => 'html'});
+    await change;
+    assert.equal(env.cleared(), 1);
+    const next = env.context.getAccountPoolTableUrl({page: 2, sortBy: 'email'});
+    assert.equal(next.searchParams.get('liveness_filter'), 'unchecked');
+    assert.equal(next.searchParams.get('rotation_filter'), 'invited');
 });

@@ -97,7 +97,8 @@ def build_seat_layout(members, balance=None):
         invited = member.get("status") == "invited"
         grouped[kind].append({
             **{key: member.get(key) for key in ("seat_status", "status_label", "status_reason",
-                "warranty_expires_at", "team_expires_at", "auto_kick_at", "usage_started_at", "server_now")},
+                "warranty_expires_at", "team_expires_at", "auto_kick_at", "auto_kick_enabled",
+                "joined_at", "added_at", "usage_started_at", "server_now")},
             "state": "invited" if invited else "joined",
             "label": member.get("email") or member.get("name") or "成员资料待同步",
             "detail": "邀请中" if invited else "所有者" if member.get("role") == "account-owner" else "已加入",

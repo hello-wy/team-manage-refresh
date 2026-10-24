@@ -216,9 +216,10 @@ class MemberDepartureTests(unittest.IsolatedAsyncioTestCase):
         self.remote.delete_workspace_user.assert_not_awaited()
         self.remote.delete_member.assert_not_awaited()
 
-    async def test_standard_member_can_depart_with_an_explicit_schedule(self):
+    async def test_standard_member_can_depart_only_at_team_expiry(self):
         self.mapping.seat_type = "standard"
         self.mapping.auto_kick_at = get_now() - timedelta(minutes=1)
+        self.team.expires_at = get_now() - timedelta(seconds=1)
         await self.db.commit()
 
         result = await self.remove()

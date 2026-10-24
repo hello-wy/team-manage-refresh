@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.database import Base
 from app.models import (AccountPoolEntry, AccountPoolHistory, QuotaSnapshot,
-                        RotationAction, RotationSeatSnapshot, Sub2apiExportRecord,
+                        RotationAction, RotationMemberState, RotationSeatSnapshot, Sub2apiExportRecord,
                         Team, TeamEmailMapping, TeamReplacementQueue)
 from app.routes.rotation import RotationConfig, rotation_config
 from app.services.quota_rotation import (RotationDependencies, block_unverified_removal,
@@ -42,9 +42,9 @@ class RotationPolicyTests(unittest.TestCase):
         row = member()
         self.assertIsNone(next_action([row], {row.email: snapshot(weekly=5)}, {}, balance()))
 
-    def test_standard_weekly_exhaustion_only_upgrades(self):
+    def test_standard_weekly_exhaustion_does_not_change_occupied_seat(self):
         row = member()
-        self.assertEqual(next_action([row], {row.email: snapshot()}, {}, balance()).action, "upgrade")
+        self.assertIsNone(next_action([row], {row.email: snapshot()}, {}, balance()))
 
     def test_premium_weekly_exhaustion_removes_ordinary_member(self):
         row = member(seat="premium")
@@ -192,7 +192,7 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await engine.dispose()
 
-    async def test_auto_tick_upgrades_once_after_weekly_exhaustion(self):
+    async def test_auto_tick_keeps_standard_after_weekly_exhaustion(self):
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with engine.begin() as connection:
@@ -205,16 +205,15 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 db.add(TeamEmailMapping(team_id=1, email="member@example.com",
                                         status="joined", seat_type="standard",
                                         upstream_user_id="user-1", joined_at=get_now()))
+                db.add(RotationMemberState(team_id=1, email="member@example.com",
+                                           phase="wait_premium", queued_at=get_now()))
                 await db.commit()
                 seats = balance(standard=0, premium=1)
                 current = {"success": True, "seat_balance": seats,
                            "members": [{"email": "member@example.com",
                                         "seat_type": "standard", "status": "joined"}]}
-                upgraded = {"success": True, "seat_balance": seats,
-                            "members": [{"email": "member@example.com",
-                                         "seat_type": "premium", "status": "joined"}]}
                 teams = SimpleNamespace(get_team_members=AsyncMock(
-                    side_effect=[current, current, upgraded]),
+                    return_value=current),
                     update_member_seat_type=AsyncMock(return_value={
                         "success": True, "status": "applied"}),
                 )
@@ -223,9 +222,12 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
                         "5h": {"remaining": 0}, "1week": {"remaining": 0}},
                 }))
                 result = await run_team(db, team, RotationDependencies(teams, usage))
-                self.assertEqual(result["status"], "succeeded")
+                self.assertEqual(result["status"], "idle")
                 self.assertEqual((await db.get(RotationSeatSnapshot, 1)).premium_remaining, 1)
-                teams.update_member_seat_type.assert_awaited_once_with(
-                    1, "user-1", "premium", "standard", db)
+                teams.update_member_seat_type.assert_not_awaited()
+                self.assertEqual((await db.scalars(select(RotationAction))).all(), [])
+                state = (await db.scalars(select(RotationMemberState))).one()
+                self.assertEqual(state.phase, "standard")
+                self.assertIsNone(state.queued_at)
         finally:
             await engine.dispose()
