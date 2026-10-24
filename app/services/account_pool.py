@@ -241,10 +241,13 @@ class AccountPoolService:
     async def list_entries(
         self, db_session: AsyncSession, page: int = 1, per_page: int = 20,
         search: str = "", status_filter: str = "", team_filter: str = "",
-        seat_filter: str = "", sort_by: str = "id", rotation_filter: str = "", liveness_filter: str = "",
-        sort_order: str = "asc",
+        seat_filter: str = "", sort_by: str | None = None, rotation_filter: str = "", liveness_filter: str = "",
+        sort_order: str | None = None,
     ) -> dict[str, Any]:
         from app.services.account_pool_query import query_pool_ids
+        sort_by = str(sort_by or "joined")
+        if sort_order is None:
+            sort_order = "desc" if sort_by == "joined" else "asc"
         listing = await query_pool_ids(
             db_session, page=page, per_page=min(max(per_page, 1), 100), search=search,
             status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,

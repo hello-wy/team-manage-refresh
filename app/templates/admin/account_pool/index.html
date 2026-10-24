@@ -139,7 +139,6 @@
                 <thead>
                     <tr>
                         <th class="account-pool-select-cell"><input type="checkbox" id="accountPoolSelectPage" aria-label="选择本页全部账号"></th>
-                        {{ sortable_header('ID', 'id', '按账号 ID 数值排序') }}
                         {{ sortable_header('账号', 'email') }}
                         {{ sortable_header('名称', 'name') }}
                         {{ sortable_header('Team / 席位', 'team') }}
@@ -157,7 +156,6 @@
                     {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
                     <tr data-account-pool-row="{{ entry.id }}" data-email="{{ entry.email }}">
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
-                        <td data-label="ID">{{ entry.id if entry.id > 0 else '—' }}</td>
                         <td data-label="账号">
                             <strong>{{ entry.email }}</strong>
                         </td>
@@ -333,7 +331,7 @@
 <script src="/static/js/account-pool-confirm.js?v=20260927-shared"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
-<script src="/static/js/account-pool.js?v=20261024-liveness-refresh"></script>
+<script src="/static/js/account-pool.js?v=20261024-owner-join-sort"></script>
 <script src="/static/js/account-pool-quota.js?v=20261024-liveness-refresh"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>

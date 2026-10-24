@@ -30,15 +30,16 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([
                 TeamEmailMapping(team_id=1, email='standard@example.com', status='joined', seat_type='standard',
                                  standard_auto_kick_enabled=True,
-                                 auto_kick_at=self.now + timedelta(hours=1)),
+                                 auto_kick_at=self.now + timedelta(hours=1), joined_at=self.now - timedelta(hours=3)),
                 TeamEmailMapping(team_id=1, email='premium@example.com', status='joined', seat_type='premium',
-                                 auto_kick_at=self.now + timedelta(hours=3)),
+                                 auto_kick_at=self.now + timedelta(hours=3), joined_at=self.now - timedelta(hours=1)),
                 TeamEmailMapping(team_id=1, email='owner1@example.com', status='joined', seat_type='standard',
-                                 auto_kick_at=self.now - timedelta(days=1)),
+                                 auto_kick_at=self.now - timedelta(days=1), joined_at=self.now - timedelta(hours=4)),
                 TeamEmailMapping(team_id=1, email='conflict@example.com', status='joined', seat_type='standard',
                                  standard_auto_kick_enabled=True,
-                                 auto_kick_at=self.now + timedelta(hours=2)),
-                TeamEmailMapping(team_id=2, email='conflict@example.com', status='joined', seat_type='premium'),
+                                 auto_kick_at=self.now + timedelta(hours=2), joined_at=self.now - timedelta(hours=2)),
+                TeamEmailMapping(team_id=2, email='conflict@example.com', status='joined', seat_type='premium',
+                                 joined_at=self.now - timedelta(hours=1, minutes=30)),
                 TeamEmailMapping(team_id=2, email='invited@example.com', status='invited'),
             ])
             await db.commit()
@@ -70,15 +71,15 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([email for page in pages for email in self.emails(page)], emails)
         self.assertEqual((await self.listing(sort_by='team', page=999, per_page=2))['current_page'], 4)
 
-    async def test_default_id_sort_is_numeric_and_synthetic_owners_follow(self):
+    async def test_default_sort_prioritizes_owners_then_recent_joiners_and_removes_id_sort(self):
         listing = await self.listing()
-        persisted = [row['id'] for row in listing['entries'] if row['id'] > 0]
-        self.assertEqual(persisted, sorted(persisted))
-        self.assertTrue(all(row['id'] < 0 for row in listing['entries'][len(persisted):]))
-        descending = await self.listing(sort_by='id', sort_order='desc')
-        descending_ids = [row['id'] for row in descending['entries']]
-        descending_pool_ids = [entry_id for entry_id in descending_ids if entry_id > 0]
-        self.assertEqual(descending_pool_ids, sorted(descending_pool_ids, reverse=True))
+        emails = self.emails(listing)
+        self.assertEqual(set(emails[:2]), {'owner1@example.com', 'owner2@example.com'})
+        self.assertEqual(emails[2:5], ['premium@example.com', 'conflict@example.com', 'standard@example.com'])
+        self.assertEqual(set(emails[5:]), {'invited@example.com', 'personal@example.com'})
+        self.assertEqual(listing['sort_by'], 'joined')
+        self.assertEqual(listing['sort_order'], 'desc')
+        self.assertNotIn('id', listing['sort_options'])
 
     async def test_team_and_seat_must_match_same_membership(self):
         self.assertEqual(set(self.emails(await self.listing(team_filter='1', seat_filter='premium'))),
@@ -176,7 +177,7 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(load.call_args.args[1]), 2)
             self.assertEqual(listing['team_filter'], '')
             self.assertEqual(listing['seat_filter'], '')
-            self.assertEqual(listing['sort_by'], 'id')
+            self.assertEqual(listing['sort_by'], 'joined')
             self.assertEqual(listing['rotation_filter'], '')
             self.assertEqual(listing['liveness_filter'], '')
 
@@ -202,8 +203,8 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         second = await self.listing(rotation_filter='excluded', per_page=1, page=999)
         self.assertEqual(first['total'], 2)
         self.assertEqual(first['total_pages'], 2)
-        self.assertEqual(self.emails(first), ['owner1@example.com'])
-        self.assertEqual(self.emails(second), ['owner2@example.com'])
+        self.assertEqual(self.emails(first), ['owner2@example.com'])
+        self.assertEqual(self.emails(second), ['owner1@example.com'])
         self.assertEqual(second['current_page'], 2)
 
     async def test_rotation_filter_combines_with_existing_filters_and_sort(self):
@@ -243,7 +244,7 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(removed, ROTATION_FILTER_OPTIONS)
             self.assertEqual((await self.listing(rotation_filter=removed))['rotation_filter'], '')
         self.assertEqual(self.emails(await self.listing(rotation_filter='excluded')),
-                         ['owner1@example.com', 'owner2@example.com'])
+                         ['owner2@example.com', 'owner1@example.com'])
 
     async def test_page_renders_selected_rotation_and_preserves_it_in_links(self):
         from starlette.requests import Request
@@ -347,6 +348,8 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="accountPoolCheckAllLiveness"', html)
         self.assertIn('aria-sort="descending"', html)
         self.assertIn('data-sort-by="email"', html)
+        self.assertNotIn('data-sort-by="id"', html)
+        self.assertNotIn('data-label="ID"', html)
         self.assertIn('name="sort_order" value="desc"', html)
         self.assertIn('sort_order=desc', response.context['filter_url'](page=2))
 

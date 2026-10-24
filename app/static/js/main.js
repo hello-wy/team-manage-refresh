@@ -757,16 +757,20 @@ function confirmAction(message) {
 function setSingleImportMode(mode = 'quick') {
     const quickSection = document.getElementById('oauthQuickSection');
     const manualSection = document.getElementById('manualTokenSection');
+    const credentialsSection = document.getElementById('teamCredentialLoginSection');
     if (!quickSection || !manualSection) return;
 
     const isManual = mode === 'manual';
-    quickSection.style.display = isManual ? 'none' : 'block';
+    const isCredentials = mode === 'credentials';
+    quickSection.style.display = isManual || isCredentials ? 'none' : 'block';
     manualSection.style.display = isManual ? 'block' : 'none';
+    if (credentialsSection) credentialsSection.style.display = isCredentials ? 'block' : 'none';
 
     // display:none 不会让带 required 的控件退出 HTML 表单校验。
     // 切换模式时禁用非当前模式的输入，避免隐藏的 AT 字段阻止提交。
-    [quickSection, manualSection].forEach((section) => {
-        const inactive = section !== (isManual ? manualSection : quickSection);
+    [quickSection, manualSection, credentialsSection].filter(Boolean).forEach((section) => {
+        const activeSection = isCredentials ? credentialsSection : isManual ? manualSection : quickSection;
+        const inactive = section !== activeSection;
         section.querySelectorAll('input, textarea, select').forEach((field) => {
             field.disabled = inactive;
         });
@@ -883,6 +887,18 @@ document.addEventListener('DOMContentLoaded', function () {
     if (switchToQuickToken) {
         switchToQuickToken.addEventListener('click', () => setSingleImportMode('quick'));
     }
+
+    document.querySelectorAll('[data-team-import-mode="credentials"]').forEach((button) => {
+        button.addEventListener('click', () => setSingleImportMode('credentials'));
+    });
+
+    document.querySelectorAll('[data-team-import-mode="quick"]').forEach((button) => {
+        button.addEventListener('click', () => setSingleImportMode('quick'));
+    });
+
+    document.querySelectorAll('[data-team-import-mode="manual"]').forEach((button) => {
+        button.addEventListener('click', () => setSingleImportMode('manual'));
+    });
 
     const chooseJsonFileBtn = document.getElementById('chooseJsonFileBtn');
     const jsonImportFile = document.getElementById('jsonImportFile');

@@ -1,7 +1,7 @@
 """Filter and order pool identities in SQL before loading one page of account data."""
 from sqlalchemy import case, func, literal, select, union_all
 
-from app.models import AccountPoolEntry, Team, TeamEmailMapping
+from app.models import AccountPoolEntry, AccountPoolHistory, Team, TeamEmailMapping
 from app.services.account_pool_rotation import ROTATION_FILTER_OPTIONS, attach_rotation_status
 from app.services.member_auto_kick_policy import auto_kick_deadline_expression, auto_kick_enabled_condition
 from app.utils.team_names import team_display_name
@@ -9,9 +9,9 @@ from app.utils.team_names import team_display_name
 LIVENESS_FILTER_OPTIONS = {"alive": "正常", "abnormal": "异常", "unchecked": "未检测"}
 
 SORT_OPTIONS = {
-    "id": "ID",
     "team": "Team / 席位",
     "deadline": "下线时间优先",
+    "joined": "加入时间",
     "newest": "最近添加",
     "oldest": "最早添加",
     "email": "邮箱 A–Z",
@@ -30,7 +30,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     await ensure_team_owners_in_pool(db)
     rotation_filter = rotation_filter if rotation_filter in ROTATION_FILTER_OPTIONS else ""
     liveness_filter = liveness_filter if liveness_filter in LIVENESS_FILTER_OPTIONS else ""
-    sort_by = sort_by if sort_by in SORT_OPTIONS else "id"
+    sort_by = sort_by if sort_by in SORT_OPTIONS else "joined"
     sort_order = "desc" if sort_order == "desc" else "asc"
     seat_filter = seat_filter if seat_filter in ("standard", "premium", "unknown") else ""
     status_filter = status_filter if status_filter in ("joined", "not_joined", "invited", "unassigned", "conflict") else ""
@@ -65,6 +65,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
                          (TeamEmailMapping.seat_type == "premium", 1),
                          (TeamEmailMapping.seat_type == "standard", 2), else_=3).label("seat_rank"),
                     literal("joined").label("status"),
+                    TeamEmailMapping.joined_at.label("joined_at"),
     ).join(Team, Team.id == TeamEmailMapping.team_id).where(TeamEmailMapping.status == "joined")
     owner_mapping = select(TeamEmailMapping.id).where(
         TeamEmailMapping.team_id == Team.id, _normalized(TeamEmailMapping.email) == owner_email,
@@ -73,6 +74,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     owner_memberships = select(owner_email.label("email"), Team.id.label("team_id"),
                                literal(None).label("seat_type"), literal(None).label("deadline"),
                                literal(0).label("seat_rank"), literal("joined").label("status"),
+                               Team.created_at.label("joined_at"),
     ).where(~owner_mapping, owner_email != "")
     memberships = union_all(joined, owner_memberships).subquery()
     scope = select(memberships)
@@ -81,8 +83,22 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     scoped = scope.subquery()
     groups = select(scoped.c.email, func.min(scoped.c.team_id).label("team_id"),
                     func.min(scoped.c.deadline).label("deadline"),
+                    func.max(scoped.c.joined_at).label("joined_at"),
     ).group_by(scoped.c.email).subquery()
     query = select(identities.c.id).outerjoin(groups, groups.c.email == identities.c.email)
+    joined_at = groups.c.joined_at
+    owner_priority = []
+    if sort_by == "joined":
+        history_joins = select(
+            _normalized(AccountPoolEntry.email).label("email"),
+            func.max(AccountPoolHistory.joined_at).label("joined_at"),
+        ).join(AccountPoolHistory, AccountPoolHistory.account_pool_id == AccountPoolEntry.id).where(
+            AccountPoolEntry.deleted_at.is_(None)
+        ).group_by(_normalized(AccountPoolEntry.email)).subquery()
+        query = query.outerjoin(history_joins, history_joins.c.email == identities.c.email)
+        identity_is_owner = select(Team.id).where(_normalized(Team.email) == identities.c.email).exists()
+        owner_priority = [case((identity_is_owner, 0), else_=1)]
+        joined_at = func.coalesce(groups.c.joined_at, history_joins.c.joined_at)
     effective_status = identities.c.liveness_status
     if liveness_filter or sort_by == "liveness":
         # Match the listing's latest owner result, including multiple Teams and
@@ -149,10 +165,10 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
         return column.desc() if sort_order == "desc" else column.asc()
 
     orders = {
-        "id": [identities.c.id < 0, direction(identities.c.id)],
         "team": [groups.c.team_id.is_(None), direction(groups.c.team_id), direction(primary_seat_rank),
                  groups.c.deadline.is_(None), direction(groups.c.deadline)],
         "deadline": [groups.c.deadline.is_(None), direction(groups.c.deadline), direction(groups.c.team_id)],
+        "joined": [joined_at.is_(None), direction(joined_at)],
         "newest": [identities.c.created_at.desc(), identities.c.id.desc()],
         "oldest": [identities.c.created_at, identities.c.id],
         "email": [direction(identities.c.email)],
@@ -160,7 +176,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
         "liveness": [func.coalesce(effective_status, "") == "",
                      direction(case((effective_status == "alive", 0), else_=1))],
     }
-    ordered = query.order_by(*orders[sort_by], identities.c.email, identities.c.id)
+    ordered = query.order_by(*owner_priority, *orders[sort_by], identities.c.email, identities.c.id)
     rotation_views = {}
     if rotation_filter:
         # Evaluate the same display policy before pagination, using only lightweight

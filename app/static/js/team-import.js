@@ -12,6 +12,17 @@ function buildManualTeamImportPayload(form) {
     };
 }
 
+function buildCredentialTeamImportPayload(form) {
+    return {
+        import_type: 'credentials',
+        email: form.loginEmail.value.trim(),
+        password: form.loginPassword.value,
+        two_factor_secret: form.loginTotp.value.trim(),
+        account_id: form.loginAccountId.value.trim() || null,
+        pool_type: getCurrentPoolType()
+    };
+}
+
 async function buildQuickTeamImportPayload() {
     const parsed = await parseOAuthCallbackData();
     const normalized = buildOAuthJsonTemplate(parsed);
@@ -44,8 +55,11 @@ async function handleSingleImport(event) {
     if (form.dataset.importing === 'true') return;
 
     const quickSection = document.getElementById('oauthQuickSection');
-    const isQuick = quickSection.style.display !== 'none';
-    const activeSection = isQuick ? quickSection : document.getElementById('manualTokenSection');
+    const credentialSection = document.getElementById('teamCredentialLoginSection');
+    const isCredential = !!credentialSection && credentialSection.style.display !== 'none';
+    const isQuick = !isCredential && quickSection.style.display !== 'none';
+    const activeSection = isCredential ? credentialSection
+        : isQuick ? quickSection : document.getElementById('manualTokenSection');
     const submitButton = activeSection.querySelector('button[type="submit"]');
     const buttonText = submitButton.textContent;
     const buttonStates = Array.from(form.querySelectorAll('button'), button => ({
@@ -53,10 +67,12 @@ async function handleSingleImport(event) {
     }));
     form.dataset.importing = 'true';
     buttonStates.forEach(({button}) => { button.disabled = true; });
-    submitButton.textContent = isQuick ? '解析并导入中...' : '导入中...';
+    submitButton.textContent = isQuick ? '解析并导入中...' : isCredential ? '登录并导入中...' : '导入中...';
 
     try {
-        const payload = isQuick ? await buildQuickTeamImportPayload() : buildManualTeamImportPayload(form);
+        const payload = isQuick ? await buildQuickTeamImportPayload()
+            : isCredential ? buildCredentialTeamImportPayload(form)
+            : buildManualTeamImportPayload(form);
         submitButton.textContent = '导入中...';
         await submitTeamImport(payload);
         showToast('Team 导入成功！', 'success');

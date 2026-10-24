@@ -28,7 +28,12 @@ from app.services.settings import (
     DEFAULT_UI_STYLE,
 )
 from app.services.cliproxyapi import cliproxyapi_service
-from app.services.member_authorization import MemberAuthorizationService, MemberAuthorizationError
+from app.services.member_authorization import (
+    MemberAuthorizationService,
+    MemberAuthorizationError,
+    CLIENT_ID as MEMBER_OAUTH_CLIENT_ID,
+    REDIRECT_URI as MEMBER_OAUTH_REDIRECT_URI,
+)
 from app.services.account_pool_credentials import account_pool_credential_service
 from app.services.account_pool_authorization import (
     AccountPoolAuthorizationError,
@@ -37,6 +42,8 @@ from app.services.account_pool_authorization import (
 from app.services.openai_automatic_login import (
     AutomaticLoginDependencies,
     OpenAIAutomaticLoginService,
+    AutomaticLoginRequest,
+    OpenAIAutomaticLoginError,
 )
 from app.services.phone_verification import complete_herosms_phone_verification
 from app.services.sub2api import (
@@ -163,7 +170,7 @@ async def build_admin_base_context(
 # 请求模型
 class TeamImportRequest(BaseModel):
     """Team 导入请求"""
-    import_type: str = Field(..., description="导入类型: single 或 batch")
+    import_type: str = Field(..., description="导入类型: single、credentials 或 batch")
     access_token: Optional[str] = Field(None, description="AT Token (单个导入)")
     id_token: Optional[str] = Field(None, description="ID Token (单个导入)")
     refresh_token: Optional[str] = Field(None, description="Refresh Token (单个导入)")
@@ -171,6 +178,8 @@ class TeamImportRequest(BaseModel):
     client_id: Optional[str] = Field(None, description="Client ID (单个导入)")
     email: Optional[str] = Field(None, description="邮箱 (单个导入)")
     account_id: Optional[str] = Field(None, description="Account ID (单个导入)")
+    password: Optional[str] = Field(None, max_length=4096, description="账号密码（账号密码 2FA 登录导入）")
+    two_factor_secret: Optional[str] = Field(None, max_length=2048, description="2FA 密钥（账号密码 2FA 登录导入）")
     content: Optional[str] = Field(None, description="批量导入内容")
     pool_type: str = Field("normal", description="导入池类型: normal/welfare")
 
@@ -477,10 +486,10 @@ async def account_pool_page(
     current_user: dict = Depends(require_admin),
     team_filter: str = "",
     seat_filter: str = "",
-    sort_by: str = "id",
+    sort_by: str = "joined",
     rotation_filter: str = "",
     liveness_filter: str = "",
-    sort_order: str = "asc",
+    sort_order: str = "desc",
 ):
     """账号号池页面。"""
     from app.main import templates
@@ -1236,6 +1245,74 @@ async def team_import(
     try:
         pool_type = "welfare" if (import_data.pool_type or "normal") == "welfare" else "normal"
         logger.info(f"管理员导入 Team: {import_data.import_type}, pool={pool_type}")
+
+        if import_data.import_type == "credentials":
+            email = (import_data.email or "").strip().lower()
+            password = import_data.password or ""
+            two_factor_secret = import_data.two_factor_secret or ""
+            from app.services.account_pool_credential_input import EMAIL_PATTERN
+            if not EMAIL_PATTERN.fullmatch(email) or not password.strip() or not two_factor_secret.strip():
+                return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
+                    "success": False, "error": "请填写有效邮箱、密码和 2FA 密钥",
+                })
+            from app.utils.totp import TotpError, generate_totp, normalize_totp_secret
+            try:
+                normalized_secret = normalize_totp_secret(two_factor_secret)
+                generate_totp(normalized_secret)
+            except TotpError as exc:
+                return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
+                    "success": False, "error": str(exc),
+                })
+
+            oauth_draft = chatgpt_service.create_oauth_authorize_url(
+                MEMBER_OAUTH_CLIENT_ID, MEMBER_OAUTH_REDIRECT_URI,
+            )
+            oauth_draft.update({
+                "client_id": MEMBER_OAUTH_CLIENT_ID,
+                "redirect_uri": MEMBER_OAUTH_REDIRECT_URI,
+            })
+            try:
+                login_result = await automatic_login_service.login(AutomaticLoginRequest(
+                    email=email,
+                    password=password,
+                    totp_secret=normalized_secret,
+                    account_id=(import_data.account_id or "").strip(),
+                    oauth_draft=oauth_draft,
+                    db_session=db,
+                    identifier=f"team-import-login-{email}",
+                ))
+            except OpenAIAutomaticLoginError as exc:
+                return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
+                    "success": False, "error": str(exc),
+                })
+
+            access_token = str(login_result.get("access_token") or "").strip()
+            id_token = str(login_result.get("id_token") or "").strip() or None
+            if not access_token:
+                return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
+                    "success": False, "error": "登录成功但未返回 Access Token",
+                })
+            token_email = team_service.jwt_parser.extract_email(access_token)
+            token_email = token_email or (team_service.jwt_parser.extract_email(id_token) if id_token else None)
+            if token_email and token_email.strip().lower() != email:
+                return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
+                    "success": False, "error": "登录返回的账号邮箱与填写邮箱不一致，已取消导入",
+                })
+
+            result = await team_service.import_team_single(
+                access_token=access_token,
+                db_session=db,
+                email=email,
+                id_token=id_token,
+                refresh_token=login_result.get("refresh_token"),
+                session_token=login_result.get("session_token"),
+                client_id=MEMBER_OAUTH_CLIENT_ID,
+                account_id=(import_data.account_id or "").strip() or None,
+                pool_type=pool_type,
+            )
+            if not result.get("success"):
+                return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=result)
+            return JSONResponse(content=result)
 
         if import_data.import_type == "single":
             # 单个导入 - 允许通过 AT, RT 或 ST 导入

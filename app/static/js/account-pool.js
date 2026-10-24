@@ -531,7 +531,7 @@ function initAccountPoolColumnToggler() {
         return;
     }
 
-    const storageKey = 'account_pool_list_columns_v5';
+    const storageKey = 'account_pool_list_columns_v6';
     const hiddenColumns = loadAccountPoolHiddenColumns(storageKey);
     container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
@@ -642,8 +642,8 @@ function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter
         seat_filter: seatFilter ?? current.get('seat_filter') ?? '',
         rotation_filter: rotationFilter ?? current.get('rotation_filter') ?? '',
         liveness_filter: livenessFilter ?? current.get('liveness_filter') ?? '',
-        sort_by: sortBy ?? current.get('sort_by') ?? 'team',
-        sort_order: sortOrder ?? current.get('sort_order') ?? 'asc',
+        sort_by: sortBy ?? current.get('sort_by') ?? 'joined',
+        sort_order: sortOrder ?? current.get('sort_order') ?? 'desc',
     })) url.searchParams.set(key, String(value));
     return url;
 }

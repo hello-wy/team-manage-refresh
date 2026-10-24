@@ -651,6 +651,7 @@
 
                             <div class="import-mode-toggle-wrap">
                                 <button type="button" id="switchToManualFill" class="import-mode-toggle-btn">已有 Token？直接填写</button>
+                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="credentials">使用邮箱、密码和 2FA 登录</button>
                             </div>
                         </div>
 
@@ -697,6 +698,39 @@
                             </div>
                             <div class="import-mode-toggle-wrap">
                                 <button type="button" id="switchToQuickToken" class="import-mode-toggle-btn">返回一键获取 Token</button>
+                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="credentials">使用邮箱、密码和 2FA 登录</button>
+                            </div>
+                        </div>
+
+                        <div id="teamCredentialLoginSection" class="import-mode-card" style="display: none;">
+                            <div class="form-group">
+                                <label for="teamImportLoginEmail">账号邮箱 <span class="required">*</span></label>
+                                <input type="email" id="teamImportLoginEmail" name="loginEmail" class="form-control"
+                                    placeholder="owner@example.com" autocomplete="username" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="teamImportLoginPassword">账号密码 <span class="required">*</span></label>
+                                <input type="password" id="teamImportLoginPassword" name="loginPassword" class="form-control"
+                                    placeholder="账号密码" autocomplete="current-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="teamImportLoginTotp">2FA 密钥 <span class="required">*</span></label>
+                                <input type="text" id="teamImportLoginTotp" name="loginTotp" class="form-control"
+                                    placeholder="Base32 密钥或 otpauth:// 链接" autocomplete="off" required>
+                                <small class="form-text">凭据仅用于本次登录，不会保存到账号号池。</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="teamImportLoginAccountId">Account ID</label>
+                                <input type="text" id="teamImportLoginAccountId" name="loginAccountId" class="form-control"
+                                    placeholder="有多个 Team 时填写目标 Account ID">
+                                <small class="form-text">留空时仅适用于登录后只有一个可用 Team 的账号。</small>
+                            </div>
+                            <div class="manual-import-action-top" style="margin-bottom: 0.85rem;">
+                                <button type="submit" id="btnCredentialImportTeam" class="btn btn-primary">登录并导入 Team</button>
+                            </div>
+                            <div class="import-mode-toggle-wrap">
+                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="quick">返回一键获取 Token</button>
+                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="manual">返回填写 Token</button>
                             </div>
                         </div>
                     </form>
@@ -861,8 +895,8 @@ eyJ..."></textarea>
     <script src="/static/js/invited-member-credentials.js?v=20261022"></script>
     <script src="/static/js/member-seats.js?v=20261024-rotation-count"></script>
     <script src="/static/js/member-list.js?v=20261024-seat-rules"></script>
-    <script src="/static/js/main.js?v=20261024-seat-rules"></script>
-    <script src="/static/js/team-import.js?v=20261020-team-import"></script>
+    <script src="/static/js/main.js?v=20261024-team-import-login"></script>
+    <script src="/static/js/team-import.js?v=20261024-team-import-login"></script>
     <script>window.initLucideIcons();</script>
     {% block extra_js %}{% endblock %}
 </body>

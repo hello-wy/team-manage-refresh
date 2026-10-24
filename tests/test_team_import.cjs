@@ -149,6 +149,18 @@ test('manual import submits supplied fields without parsing a callback', async (
     assert.equal(h.manualButton.textContent, '导入 Team');
 });
 
+test('credential import submits email, password and 2FA login payload', async () => {
+    const h = harness();
+    h.context.setSingleImportMode('credentials');
+    await h.submit();
+    assert.deepEqual(h.calls.map(call => call.url), [IMPORT_URL]);
+    assert.deepEqual(h.calls[0].body, {
+        import_type: 'credentials', email: 'owner@example.com', password: 'owner-password',
+        two_factor_secret: 'JBSWY3DPEHPK3PXP', account_id: 'owner-team', pool_type: 'welfare',
+    });
+    assert.equal(h.credentialButton.textContent, '登录并导入 Team');
+});
+
 test('quick import template exposes only one combined import button', () => {
     const html = readFileSync(join(__dirname, '../app/templates/base.html'), 'utf8');
     const section = html.slice(html.indexOf('id="oauthQuickSection"'), html.indexOf('id="manualTokenSection"'));
