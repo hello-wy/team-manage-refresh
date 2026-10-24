@@ -13,7 +13,6 @@ from app.services.openai_auth_protocol import (
     is_callback as _is_callback,
     is_mfa_challenge as _is_mfa_challenge,
     json_body as _json_body,
-    mfa_factor_id as _mfa_factor_id,
     next_url as _next_url,
 )
 from app.services.openai_auth_session import auth_session_claims
@@ -25,7 +24,8 @@ from app.services.openai_automatic_login_models import (
 from app.services.openai_sentinel import OpenAISentinelError
 from app.services.openai_workspace_discovery import discover_workspaces
 from app.services.openai_workspace import inspect_workspace_claims, resolve_workspace_id, token_workspace_id
-from app.utils.totp import TotpError, generate_totp
+from app.services.openai_auth_totp import complete_totp
+from app.services.operation_progress import report_progress
 
 MAX_REDIRECTS = 20
 
@@ -66,6 +66,8 @@ class OpenAIAutomaticLoginService:
             _, current_url = await self._follow(
                 session, phone_result["continue_url"], device_id, sentinel_token
             )
+        if phone_number:
+            await report_progress(request.on_progress, "oauth")
         current_url, workspace = await self._select_workspace(
             session, current_url, request.account_id, device_id, sentinel_token
         )
@@ -187,8 +189,9 @@ class OpenAIAutomaticLoginService:
         next_url = _next_url(response)
         verified_totp_factor_id = ""
         if _is_mfa_challenge(payload, next_url):
-            next_url, verified_totp_factor_id = await self._complete_totp(
-                session, request.totp_secret, payload, next_url, device_id, sentinel_token
+            next_url, verified_totp_factor_id = await complete_totp(
+                session, request.totp_secret, payload=payload, referer=next_url,
+                device_id=device_id, sentinel_token=sentinel_token,
             )
         if not next_url:
             raise OpenAIAutomaticLoginError("密码验证后未返回下一步")
@@ -196,42 +199,6 @@ class OpenAIAutomaticLoginService:
         if "email-verification" in current_url.lower():
             raise OpenAIAutomaticLoginError("该账号还要求邮箱验证码，当前自动登录仅支持密码和 2FA")
         return current_url, verified_totp_factor_id
-
-    async def _complete_totp(
-        self, session: Any, secret: str, payload: dict[str, Any], referer: str,
-        device_id: str, sentinel_token: str,
-    ) -> tuple[str, str]:
-        factor_id = _mfa_factor_id(payload)
-        if not factor_id:
-            factor_id = _mfa_factor_id({
-                "oai-client-auth-session": auth_session_claims(session)
-            })
-        if not factor_id:
-            raise OpenAIAutomaticLoginError("2FA 挑战未返回 TOTP 因子")
-        try:
-            code = generate_totp(secret)
-        except TotpError as exc:
-            raise OpenAIAutomaticLoginError(str(exc)) from exc
-        headers = _auth_headers(
-            device_id, referer, json_request=True, sentinel_token=sentinel_token
-        )
-        issue = await session.post(
-            f"{AUTH_ORIGIN}/api/accounts/mfa/issue_challenge",
-            headers=headers,
-            json={"type": "totp", "id": factor_id, "force_fresh_challenge": False},
-            allow_redirects=False,
-        )
-        if issue.status_code not in {200, 201, 202, 204}:
-            raise OpenAIAutomaticLoginError(auth_failure_message("mfa_issue", issue))
-        verify = await session.post(
-            f"{AUTH_ORIGIN}/api/accounts/mfa/verify",
-            headers=headers,
-            json={"type": "totp", "id": factor_id, "code": code},
-            allow_redirects=False,
-        )
-        if verify.status_code != 200:
-            raise OpenAIAutomaticLoginError(auth_failure_message("mfa_verify", verify))
-        return _next_url(verify), factor_id
 
     async def _select_workspace(
         self, session: Any, current_url: str, account_id: str,

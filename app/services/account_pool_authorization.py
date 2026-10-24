@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import select, update
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace
+from app.services.account_pool_authorization_models import (
+    AccountPoolAuthorizationError, AccountPoolLoginResult,
+)
 from app.services.account_pool_credentials import AccountPoolCredentialError
 from app.services.encryption import encryption_service
 from app.services.member_authorization import CLIENT_ID, REDIRECT_URI
@@ -20,23 +23,11 @@ from app.services.openai_automatic_login import (
 from app.services.openai_workspace import token_claims, token_plan_type, token_workspace_id
 from app.services.member_identity import credential_identity
 from app.services.account_pool_profile import login_result_values
+from app.services.operation_progress import ProgressCallback
 from app.utils.time_utils import get_now
 from app.services.account_pool_workspace_sync import (
     WorkspaceSyncError, persist_workspace_scan, synchronize_memberships,
 )
-
-
-class AccountPoolAuthorizationError(ValueError):
-    pass
-
-
-@dataclass(frozen=True)
-class AccountPoolLoginResult:
-    payload: dict[str, Any]
-    workspace: dict[str, Any]
-    verified_totp_factor_id: str = ""
-    phone_number: str = ""
-    phone_rental_error: str = ""
 
 
 class AccountPoolAuthorizationService:
@@ -53,6 +44,7 @@ class AccountPoolAuthorizationService:
         workspace_id: str = "",
         *,
         phone_verification: bool = False,
+        on_progress: ProgressCallback | None = None,
     ) -> AccountPoolLoginResult:
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
@@ -65,6 +57,7 @@ class AccountPoolAuthorizationService:
         request = replace(
             self._request(entry, credentials, workspace_id, session),
             phone_verification=phone_verification,
+            on_progress=on_progress,
         )
         try:
             result = await self._login.login(request)

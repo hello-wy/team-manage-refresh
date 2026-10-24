@@ -1,6 +1,7 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, call, patch
 
 from app.services.phone_verification import (
     PhoneVerificationError,
@@ -10,7 +11,8 @@ from app.services.phone_verification import (
 
 class PhoneVerificationTests(unittest.IsolatedAsyncioTestCase):
     async def test_success_submits_received_code_and_completes_rental(self):
-        request = SimpleNamespace(db_session=object())
+        progress = AsyncMock()
+        request = SimpleNamespace(db_session=object(), on_progress=progress)
         with (
             patch("app.services.phone_verification.settings_service.get_setting", new=AsyncMock(
                 side_effect=["encrypted-key", "https://hero-sms.com/stubs/handler_api.php", "44", "0.05"]
@@ -37,9 +39,12 @@ class PhoneVerificationTests(unittest.IsolatedAsyncioTestCase):
         wait.assert_awaited_once_with("api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-1")
         submit.assert_awaited_once_with(ANY, "device", "sentinel", "654321")
         finish.assert_awaited_once_with("api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-1", "6")
+        self.assertEqual(progress.await_args_list, [call(stage) for stage in (
+            "rent_number", "send_code", "wait_code", "verify_code", "finish_rental",
+        )])
 
     async def test_validation_failure_releases_rental_and_surfaces_failure(self):
-        request = SimpleNamespace(db_session=object())
+        request = SimpleNamespace(db_session=object(), on_progress=None)
         with (
             patch("app.services.phone_verification.settings_service.get_setting", new=AsyncMock(
                 side_effect=["encrypted-key", "", "38", "0.06"]
@@ -61,3 +66,27 @@ class PhoneVerificationTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         finish.assert_awaited_once_with("api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-2", "8")
+
+    async def test_cancelled_wait_releases_rented_number(self):
+        request = SimpleNamespace(db_session=object(), on_progress=AsyncMock())
+        with (
+            patch("app.services.phone_verification.settings_service.get_setting", new=AsyncMock(
+                side_effect=["encrypted-key", "", "38", "0.06"]
+            )),
+            patch("app.services.phone_verification.encryption_service.decrypt_token", return_value="api-key"),
+            patch("app.services.phone_verification._rent_number", new=AsyncMock(
+                return_value=("activation-cancelled", "+233123456789")
+            )),
+            patch("app.services.phone_verification._send_code", new=AsyncMock()),
+            patch("app.services.phone_verification._wait_for_code", new=AsyncMock(
+                side_effect=asyncio.CancelledError()
+            )),
+            patch("app.services.phone_verification._finish_activation", new=AsyncMock()) as finish,
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await complete_herosms_phone_verification(
+                    request, object(), "device", "sentinel", "https://auth.openai.com/add-phone"
+                )
+        finish.assert_awaited_once_with(
+            "api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-cancelled", "8"
+        )

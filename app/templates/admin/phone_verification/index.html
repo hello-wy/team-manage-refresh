@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}手机号接码 - GPT Team 管理系统{% endblock %}
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/phone-verification.css?v=20261023-1">
+<link rel="stylesheet" href="/static/css/phone-verification.css?v=20261024-progress">
 {% endblock %}
 {% block content %}
 <div class="phone-workspace">
@@ -36,11 +36,16 @@
             <button type="button" class="btn btn-primary" id="phoneStartButton" {% if not phone_entries or not herosms_configured %}disabled{% endif %}><i data-lucide="message-square-code"></i> 添加手机号并接码</button>
         </div>
         <p class="phone-action-hint">执行时会使用账号号池中保存的登录密码和 2FA。HeroSMS 会按国家编号和最高单价租用号码；只有远端验证成功并完成 OAuth 后才保存。</p>
+        <section class="phone-progress" id="phoneProgress" aria-label="手机号验证进度" hidden>
+            <div class="phone-progress-heading"><strong id="phoneProgressTitle">准备开始</strong><span id="phoneProgressElapsed"></span></div>
+            <ol class="phone-progress-steps" id="phoneProgressSteps"></ol>
+        </section>
         <div class="phone-result" id="phoneResult" role="status" aria-live="polite" hidden></div>
         {% if not phone_entries %}<div class="phone-empty">账号号池中暂无账号。</div>{% endif %}
     </section>
 </div>
 {% endblock %}
 {% block extra_js %}
-<script src="/static/js/phone-verification.js?v=20261023-1"></script>
+<script src="/static/js/phone-verification-stream.js?v=20261024-progress"></script>
+<script src="/static/js/phone-verification.js?v=20261024-progress"></script>
 {% endblock %}

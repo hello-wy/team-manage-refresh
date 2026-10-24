@@ -2,18 +2,21 @@
 import logging
 import re
 
+import httpx
+
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.dependencies.auth import require_admin
 from app.models import AccountPoolEntry
 from app.routes.admin import account_pool_authorization_service, build_admin_base_context
 from app.services.encryption import encryption_service
 from app.services.settings import settings_service
+from app.services.operation_progress import stream_operation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/phone-verification", tags=["admin-phone-verification"])
@@ -106,46 +109,61 @@ async def save_phone_verification_settings(
 @router.post("/{entry_id}")
 async def add_phone_to_pool_account(
     entry_id: int,
-    db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
+    async def operation(report):
+        async with AsyncSessionLocal() as db:
+            return await _run_phone_verification(entry_id, db, report=report)
+
+    return StreamingResponse(
+        stream_operation(operation),
+        media_type="application/x-ndjson",
+        headers={**NO_STORE, "X-Accel-Buffering": "no", "Content-Encoding": "identity"},
+    )
+
+
+async def _run_phone_verification(entry_id, db, *, report):
     try:
-        entry = await db.get(AccountPoolEntry, entry_id)
-        if entry is None or entry.deleted_at is not None:
-            raise ValueError("账号不存在")
-        credential_version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
-        result = await account_pool_authorization_service.login_entry(
-            db, entry_id, entry.workspace_id or "", phone_verification=True
-        )
-        if not result.phone_number:
-            raise ValueError("登录流程没有要求添加手机号；远端账号状态未改变")
-        saved = await account_pool_authorization_service.save_result(
-            db, entry_id, result, credential_version=credential_version
-        )
-        if not saved:
-            raise ValueError("手机号验证已完成，但账号号池记录已变化，未保存结果")
-        result_content = {
-            "success": True,
-            "phone": _mask_phone(result.phone_number),
-        }
-        if result.phone_rental_error:
-            result_content["warning"] = f"手机号已验证并保存，但 HeroSMS 租号结束确认失败：{result.phone_rental_error}"
-        return JSONResponse(content=result_content, headers=NO_STORE)
+        await report("login")
+        content = await _verify_and_save(entry_id, db, report=report)
+        return {"type": "result", "success": True, **content}
     except (ValueError, KeyError) as exc:
         await db.rollback()
-        return JSONResponse(
-            status_code=400,
-            content={"success": False, "error": str(exc)},
-            headers=NO_STORE,
-        )
+        return {"type": "error", "success": False, "error": str(exc)}
+    except httpx.HTTPStatusError as exc:
+        await db.rollback()
+        logger.error("手机号验证上游请求失败 (entry=%s, status=%s, path=%s)",
+                     entry_id, exc.response.status_code, exc.request.url.path)
+        return {"type": "error", "success": False,
+                "error": f"上游请求失败（HTTP {exc.response.status_code}）"}
     except Exception:
         await db.rollback()
         logger.exception("号池账号手机号验证失败 (entry=%s)", entry_id)
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": "手机号验证失败，请检查服务端日志"},
-            headers=NO_STORE,
-        )
+        return {"type": "error", "success": False,
+                "error": "手机号验证失败，请检查服务端日志"}
+
+
+async def _verify_and_save(entry_id, db, *, report):
+    entry = await db.get(AccountPoolEntry, entry_id)
+    if entry is None or entry.deleted_at is not None:
+        raise ValueError("账号不存在")
+    credential_version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
+    result = await account_pool_authorization_service.login_entry(
+        db, entry_id, entry.workspace_id or "", phone_verification=True,
+        on_progress=report,
+    )
+    if not result.phone_number:
+        raise ValueError("登录流程没有要求添加手机号；远端账号状态未改变")
+    await report("save")
+    saved = await account_pool_authorization_service.save_result(
+        db, entry_id, result, credential_version=credential_version
+    )
+    if not saved:
+        raise ValueError("手机号验证已完成，但账号号池记录已变化，未保存结果")
+    content = {"phone": _mask_phone(result.phone_number)}
+    if result.phone_rental_error:
+        content["warning"] = f"手机号已验证并保存，但 HeroSMS 租号结束确认失败：{result.phone_rental_error}"
+    return content
 
 
 def _mask_phone(value: str) -> str:

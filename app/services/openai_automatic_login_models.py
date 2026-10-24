@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from app.services.openai_sentinel import issue_sentinel_token
+from app.services.operation_progress import ProgressCallback
 
 
 class OpenAIAutomaticLoginError(ValueError):
@@ -28,3 +29,4 @@ class AutomaticLoginRequest:
     db_session: Any
     identifier: str
     phone_verification: bool = False
+    on_progress: ProgressCallback | None = None

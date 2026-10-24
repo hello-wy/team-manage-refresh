@@ -152,7 +152,7 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             issue_sentinel=AsyncMock(return_value="sentinel-token"),
         ))
 
-        with patch("app.services.openai_automatic_login.generate_totp", return_value="123456"):
+        with patch("app.services.openai_auth_totp.generate_totp", return_value="123456"):
             result = await service.login(self.request())
 
         self.assertTrue(result["success"])

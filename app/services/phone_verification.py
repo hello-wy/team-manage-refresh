@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.encryption import encryption_service
 from app.services.openai_auth_protocol import AUTH_ORIGIN, auth_headers
 from app.services.settings import settings_service
+from app.services.operation_progress import report_progress
 
 HEROSMS_DEFAULT_ENDPOINT = "https://hero-sms.com/stubs/handler_api.php"
 OPENAI_SMS_SERVICE = "dr"
@@ -36,12 +37,17 @@ async def complete_herosms_phone_verification(
     ) or HEROSMS_DEFAULT_ENDPOINT).strip()
     country = str(await settings_service.get_setting(db, "herosms_country", "38") or "38").strip()
     max_price = str(await settings_service.get_setting(db, "herosms_max_price", "0.06") or "").strip()
+    progress = request.on_progress
+    await report_progress(progress, "rent_number")
     activation_id, phone_number = await _rent_number(api_key, endpoint, country, max_price)
     try:
+        await report_progress(progress, "send_code")
         await _send_code(session, device_id, sentinel_token, current_url, phone_number)
+        await report_progress(progress, "wait_code")
         code = await _wait_for_code(api_key, endpoint, activation_id)
+        await report_progress(progress, "verify_code")
         continue_url = await _submit_code(session, device_id, sentinel_token, code)
-    except Exception as original_error:
+    except (Exception, asyncio.CancelledError) as original_error:
         try:
             await _finish_activation(api_key, endpoint, activation_id, "8")
         except Exception as release_error:
@@ -50,6 +56,7 @@ async def complete_herosms_phone_verification(
             ) from original_error
         raise
     cleanup_error = ""
+    await report_progress(progress, "finish_rental")
     try:
         await _finish_activation(api_key, endpoint, activation_id, "6")
     except Exception as exc:
