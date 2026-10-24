@@ -95,14 +95,18 @@ def build_seat_layout(members, balance=None):
             continue
         kind = normalize_seat_type(member.get("seat_type"))
         invited = member.get("status") == "invited"
-        grouped[kind].append({
+        slot = {
             **{key: member.get(key) for key in ("seat_status", "status_label", "status_reason",
                 "warranty_expires_at", "team_expires_at", "auto_kick_at", "auto_kick_enabled",
                 "joined_at", "added_at", "usage_started_at", "server_now")},
             "state": "invited" if invited else "joined",
             "label": member.get("email") or member.get("name") or "成员资料待同步",
             "detail": "邀请中" if invited else "所有者" if member.get("role") == "account-owner" else "已加入",
-        })
+        }
+        if kind == "premium" and member.get("role") != "account-owner":
+            slot["rotation_round"] = max(1, int(member.get("rotation_round") or 1))
+            slot["rotation_rounds"] = max(0, int(member.get("rotation_rounds") or 0))
+        grouped[kind].append(slot)
     groups = []
     for kind, label, value in (("standard", "标准席位", "default"),
                                ("premium", "高级席位", "premium"),

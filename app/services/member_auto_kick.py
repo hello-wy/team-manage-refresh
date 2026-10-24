@@ -50,6 +50,7 @@ def schedule_payload(mapping) -> Dict[str, object]:
         "usage_started_at": ((getattr(mapping, "usage_started_at", None) or mapping.joined_at).isoformat()
                              if (getattr(mapping, "usage_started_at", None) or mapping.joined_at) else None),
         "join_source": getattr(mapping, "join_source", None),
+        "rotation_round": max(1, int(getattr(mapping, "rotation_round", 1) or 1)),
         "auto_kick_at": mapping.auto_kick_at.isoformat() if enabled and mapping.auto_kick_at else None,
         "auto_kick_failures": int(mapping.auto_kick_failures or 0) if enabled else 0,
         "auto_kick_last_error": mapping.auto_kick_last_error if enabled else None,

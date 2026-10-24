@@ -38,6 +38,14 @@
         return rows.map(row => `<span class="team-seat-time">${escapeHtml(row)}</span>`).join('');
     }
 
+    function rotationCount(slot, kind) {
+        if (kind !== 'premium' || slot.state === 'reserved' || slot.state === 'available' || slot.seat_status === 'owner') return '';
+        const round = Math.max(1, Number(slot.rotation_round) || 1);
+        const count = Math.max(0, round - (slot.state === 'invited' ? 1 : 0));
+        const limit = Math.max(0, Number(slot.rotation_rounds) || 0);
+        return `<span class="team-seat-rotation-count">已轮转 ${limit ? `${count}/${limit}` : count} 个账号</span>`;
+    }
+
     function renderSeats(layout) {
         const groups = layout.map(group => {
             const caption = group.paid === null ? '数量待同步'
@@ -53,6 +61,7 @@
                     <span class="team-seat-avatar" aria-hidden="true">${escapeHtml(icon)}</span>
                     <span class="team-seat-slot-copy"><span class="team-seat-slot-name">${escapeHtml(slot.label)}</span>
                     <span class="team-seat-status status-${escapeHtml(status)}">${escapeHtml(label)}</span>
+                    ${rotationCount(slot, group.kind)}
                     ${timeDetails(slot, group.kind)}</span>
                     ${available ? '<span class="team-seat-invite-label">邀请 <span aria-hidden="true">↗</span></span>' : ''}</button>`;
             }).join('');

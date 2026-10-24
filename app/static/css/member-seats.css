@@ -34,3 +34,4 @@
 #memberPanelSeats .status-timed { color: var(--primary); background: var(--primary-soft); }
 #memberPanelSeats .status-invited, #memberPanelSeats .status-overdue { color: var(--warning); background: var(--warning-soft); }
 #memberPanelSeats .team-seat-time { color: var(--text-muted); font-size: .7rem; line-height: 1.4; font-variant-numeric: tabular-nums; }
+#memberPanelSeats .team-seat-rotation-count { width: fit-content; padding: .18rem .38rem; border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent); border-radius: 5px; color: var(--text-main); background: color-mix(in srgb, var(--warning) 9%, var(--bg-surface)); font-size: .68rem; line-height: 1.25; font-variant-numeric: tabular-nums; }

@@ -130,6 +130,9 @@ class MemberListingService:
         authorizations = {record.email: record for record in records}
         mappings = await self.teams._team_mapping_index(team.id, db)
         decorated = [self._decorate_member(member, authorizations, mappings=mappings) for member in members]
+        rotation_rounds = max(0, int(team.rotation_rounds or 0))
+        for member in decorated:
+            member["rotation_rounds"] = rotation_rounds
         return await decorate_seat_status(db, team, decorated)
 
     @staticmethod

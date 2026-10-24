@@ -4,7 +4,8 @@ const vm = require('node:vm');
 const {test} = require('node:test');
 
 function runtime() {
-    const cells = [], requests = [], toasts = [];
+    const cells = [], requests = [], toasts = [], refreshes = [];
+    let refreshCallback = null;
     const progress = {};
     const allButton = {disabled: false, setAttribute(name, value) {this[name] = value;}};
     const allLabel = {textContent: '一键验活'};
@@ -21,7 +22,10 @@ function runtime() {
         fetch: (url, options) => new Promise(resolve => requests.push({url, options, resolve})),
     });
     vm.runInContext(fs.readFileSync(`${__dirname}/../app/static/js/account-pool.js`, 'utf8'), context);
-    context.refreshAccountPoolTable = async () => {};
+    context.refreshAccountPoolTable = async options => {
+        refreshes.push(options);
+        await refreshCallback?.();
+    };
     function addCell(id) {
         const badge = {textContent: '未检测'}, message = {}, time = {}, detail = {}, checked = {};
         const button = {disabled: false, dataset: {entryId: id, email: `${id}@example.com`},
@@ -37,7 +41,8 @@ function runtime() {
     function respond(index, payload, ok = true) {
         requests[index].resolve({ok, json: async () => payload});
     }
-    return {context, cells, requests, toasts, addCell, respond, progress, allButton, allLabel};
+    return {context, cells, requests, toasts, refreshes, addCell, respond, progress, allButton, allLabel,
+        onRefresh(callback) { refreshCallback = callback; }};
 }
 
 test('click immediately shows checking in the chosen column and prevents duplicate checks', async () => {
@@ -60,6 +65,8 @@ test('click immediately shows checking in the chosen column and prevents duplica
     assert.equal(first.button.disabled, false);
     assert.equal(first.time.hidden, false);
     assert.equal(first.detail.textContent, '密码、2FA 登录验证通过');
+    assert.equal(env.refreshes.length, 1);
+    assert.equal(env.refreshes[0].refreshQuotas, false);
     assert.equal(other.badge.textContent, '未检测');
 });
 
@@ -91,6 +98,21 @@ test('partial list redraw retains in-flight state and completion updates the rep
     await check;
     assert.equal(replacement.badge.textContent, '正常');
     assert.equal(replacement.button.disabled, false);
+});
+
+test('successful refresh redraw keeps the completed liveness state instead of restoring checking', async () => {
+    const env = runtime(), original = env.addCell('56');
+    env.onRefresh(async () => {
+        env.cells.length = 0;
+        const replacement = env.addCell('56');
+        env.context.initAccountPoolRowActions({refreshQuotas: false});
+        assert.equal(replacement.badge.textContent, '正常');
+        assert.equal(replacement.button.disabled, false);
+    });
+    const check = env.context.checkAccountPoolEntryLiveness(original.button);
+    env.respond(0, {success: true, status: 'alive', message: '密码、2FA 与 OAuth 登录验证通过', checked_at: '2030-01-01T12:00:00+08:00'});
+    await check;
+    assert.equal(env.refreshes[0].refreshQuotas, false);
 });
 
 test('network failure and server conflict show feedback and restore the retry button', async () => {
