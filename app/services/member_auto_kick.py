@@ -12,6 +12,9 @@ from app.services.member_auto_kick_policy import (
     record_failure, refresh_deadline, set_participation, team_auto_kick_hours,
 )
 from app.utils.time_utils import get_now
+from app.services.warranty_member_protection import (
+    is_warranty_member, protect_mapping, protect_team_mappings, warranty_member_condition,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +54,9 @@ class MemberAutoKickService:
             return {"success": False,
                     "error": f"自动下线时长必须在 {MIN_AUTO_KICK_HOURS} 到 {MAX_AUTO_KICK_HOURS} 小时之间"}
         team.member_auto_kick_hours = hours
-        for mapping in await self._joined_mappings(team_id, db_session):
+        mappings = await self._joined_mappings(team_id, db_session)
+        await protect_team_mappings(db_session, team_id, mappings)
+        for mapping in mappings:
             refresh_deadline(mapping, hours)
         await db_session.commit()
         return {"success": True, "hours": hours,
@@ -72,6 +77,12 @@ class MemberAutoKickService:
             return {"success": False, "error": "该成员已不在当前 Team 中，请刷新列表"}
         if mapping.member_role == OWNER_ROLE:
             return {"success": False, "error": "Team 所有者不会自动下线，无需设置"}
+        if await is_warranty_member(db_session, team_id, mapping.email):
+            protect_mapping(mapping)
+            await db_session.commit()
+            return {"success": not enabled, "message": "质保兑换成员不会自动下线",
+                    "error": "质保兑换成员不参与自动踢出，不能开启自动下线" if enabled else None,
+                    **schedule_payload(mapping)}
         set_participation(mapping, enabled, team_auto_kick_hours(team))
         await db_session.commit()
         return {"success": True,
@@ -92,6 +103,8 @@ class MemberAutoKickService:
         }
         for member in due_members:
             try:
+                if await is_warranty_member(db_session, member.team_id, member.email):
+                    continue
                 result = await delete_member(
                     member.team_id,
                     member.user_id,
@@ -130,6 +143,10 @@ class MemberAutoKickService:
             TeamEmailMapping.email == member.email,
         ).execution_options(populate_existing=True))).scalar_one_or_none()
         now = get_now()
+        if mapping and await is_warranty_member(db_session, member.team_id, member.email):
+            protect_mapping(mapping)
+            await db_session.commit()
+            return None
         # 计划在执行期间被修改或取消时，不把旧计划的失败记到新计划上。
         if not (mapping and mapping.status == JOINED_STATUS and mapping.upstream_user_id == member.user_id
                 and mapping.auto_kick_at and mapping.auto_kick_at <= now):
@@ -203,6 +220,7 @@ class MemberAutoKickService:
                     RotationAction.status.in_(OPEN_ROTATION_STATUSES),
                 ),
                 auto_kick_enabled_condition(),
+                ~warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email),
                 TeamEmailMapping.upstream_user_id.is_not(None),
                 TeamEmailMapping.member_role != OWNER_ROLE,
             )

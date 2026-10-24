@@ -204,7 +204,7 @@
                 <input type="checkbox" id="warrantyAutoKickEnabled" name="enabled" {% if (warranty_auto_kick_enabled or 'false')|lower in ['1','true','yes','on'] %}checked{% endif %}>
                 <span>启用兑换码过期自动踢人</span>
             </label>
-            <p class="form-help">开启后扫描过期且仍绑定 Team 的兑换码，自动踢人并销毁兑换码及历史记录。质保码按"质保时长 + 续期天数"判定，无质保码按下方"使用期限"判定。<strong>开关启用之前已使用的兑换码永久豁免</strong>，只对此后新兑换的兑换码生效，避免对老用户突然生效引起争议。</p>
+            <p class="form-help">开启后扫描过期且仍绑定 Team 的普通兑换码，按下方"使用期限"自动踢人并销毁兑换码及历史记录。<strong>使用质保兑换码入组的成员不参与自动踢出，质保到期后仍然免踢。</strong>开关启用之前已使用的普通兑换码永久豁免，只对此后新兑换的普通码生效。</p>
             {% if warranty_auto_kick_enabled_since %}
             <p class="form-help" style="color: var(--accent-color, #2563eb);">生效起点：{{ warranty_auto_kick_enabled_since }}</p>
             {% endif %}
@@ -221,7 +221,7 @@
             <label for="autoKickUsagePeriodDays">兑换码使用期限 (天)</label>
             <input type="number" id="autoKickUsagePeriodDays" name="usage_period_days"
                 value="{{ auto_kick_usage_period_days or '30' }}" min="1" max="3650" class="form-control">
-            <p class="form-help">仅作用于无质保兑换码，起算方式沿用"质保时长计算方式"。质保码按自身质保时长判定，不受此值影响。</p>
+            <p class="form-help">仅作用于普通兑换码，起算方式沿用"质保时长计算方式"。质保兑换成员不参与自动踢出。</p>
         </div>
 
         <div class="form-group">

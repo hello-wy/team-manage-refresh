@@ -7,7 +7,7 @@ from app.models import MemberAuthorization, Team
 from app.services.member_auto_kick import schedule_payload
 from app.services.member_auto_kick_policy import team_auto_kick_hours
 from app.services.member_sync_cursor import fetch_sync_members
-from app.services.seat_snapshot import complete_balance, store_seat_snapshot
+from app.services.seat_snapshot import build_seat_layout, complete_balance, store_seat_snapshot
 from app.utils.seats import summarize_member_seats
 from app.utils.time_utils import get_now
 
@@ -113,8 +113,9 @@ class MemberListingService:
         result = await self.teams.get_team_seat_balance(team, db, token, context.members, context.invites)
         balance = complete_balance(result)
         if balance is not None:
-            await store_seat_snapshot(db, team.id, balance)
+            snapshot = await store_seat_snapshot(db, team.id, balance)
             await db.commit()
+            result = {**result, "observed_at": snapshot.observed_at.isoformat()}
         return result
 
     async def _decorate(self, context, members):
@@ -151,6 +152,7 @@ class MemberListingService:
             "success": True, "members": decorated,
             "seat_summary": summarize_member_seats(decorated, context.invites["success"]),
             "seat_balance": balance, "joined_members": team.joined_members,
+            "seat_layout": build_seat_layout(decorated, complete_balance(balance)),
             "total_seats": team.total_seats, "team_status": team.effective_status,
             "total": effective,
             "member_auto_kick_hours": team_auto_kick_hours(team),

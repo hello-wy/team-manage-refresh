@@ -27,6 +27,7 @@ from app.services.account_pool_team_usage import record_seat_switch
 from app.services.sub2api_cleanup import enqueue_member_cleanup
 from app.services.member_profile import normalize_member_profiles
 from app.services.member_auto_kick_policy import refresh_deadline, reset_for_new_join, team_auto_kick_hours
+from app.services.warranty_member_protection import is_warranty_member, protect_mapping, protect_team_mappings
 from app.services.member_listing import MemberListingService
 from app.services.member_identity import load_member_identities
 from app.services.member_name_identity import resolve_pool_member_emails
@@ -550,6 +551,8 @@ class TeamService:
                 last_invited_at=invited_at,
             )
             db_session.add(mapping)
+            if await is_warranty_member(db_session, team_id, normalized_email):
+                protect_mapping(mapping)
             return mapping
 
         mapping.status = status
@@ -566,6 +569,8 @@ class TeamService:
             mapping.is_admin_invited = True
         if invited_at:
             mapping.last_invited_at = invited_at
+        if await is_warranty_member(db_session, team_id, normalized_email):
+            protect_mapping(mapping)
         return mapping
 
     async def get_reinvite_retry_at(
@@ -665,6 +670,7 @@ class TeamService:
                 db_session.add(mapping)
             current_mappings[email] = mapping
         active_emails = normalized_joined | normalized_invited
+        await protect_team_mappings(db_session, team_id, list(current_mappings.values()))
         if member_identities_complete:
             self._mark_missing_mappings(existing_mappings, active_emails, seen_at)
         else:
@@ -2886,6 +2892,8 @@ class TeamService:
             if verified is None:
                 return {"success": False, "error": "成员自退已返回成功，但无法完成成员快照复核"}
             logger.warning("成员自退返回成功但快照仍存在，转母号兜底: team=%s user=%s", team.id, user_id)
+        if member_exit and await is_warranty_member(db_session, team.id, email):
+            return {"success": False, "error": "质保兑换成员不参与自动踢出"}
         return await self._delete_as_owner(team, user_id, email=email,
                                            access_token=access_token, db_session=db_session)
 

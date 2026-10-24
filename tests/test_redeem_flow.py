@@ -200,7 +200,7 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
         settings_service.clear_cache()
         await self.engine.dispose()
 
-    async def test_scan_expired_warranty_codes_recomputes_history_using_current_mode(self):
+    async def test_expired_warranty_history_is_not_scanned_for_auto_kick(self):
         async with self.session_factory() as session:
             team = Team(
                 id=201,
@@ -254,10 +254,10 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             result = await service.scan_expired_warranty_codes(session)
 
             self.assertTrue(result["success"])
-            self.assertEqual(result["total"], 1)
-            self.assertEqual(result["codes"][0]["code"], "WARRANTY-RECALC-001")
+            self.assertEqual(result["total"], 0)
+            self.assertEqual(result["codes"], [])
 
-    async def test_kick_and_destroy_expired_warranty_code_removes_records_and_code(self):
+    async def test_expired_warranty_code_and_records_are_preserved(self):
         async with self.session_factory() as session:
             team = Team(
                 id=202,
@@ -301,26 +301,25 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             service = WarrantyService()
 
             async def stub_remove_invite_or_member(team_id, email, db_session):
-                self.assertEqual(team_id, 202)
-                self.assertEqual(email, "member@example.com")
-                return {"success": True, "message": "成员已删除", "error": None}
+                self.fail("质保兑换成员不应被自动踢出")
 
             service.team_service.remove_invite_or_member = stub_remove_invite_or_member
 
             result = await service.kick_and_destroy_expired_warranty_code(session, "WARRANTY-KICK-001")
 
             self.assertTrue(result["success"])
-            self.assertEqual(result["action"], "kicked_and_destroyed")
+            self.assertEqual(result["category"], "skipped")
+            self.assertEqual(result["skip_reason"], "warranty_member")
 
             remaining_code = await session.execute(
                 select(RedemptionCode).where(RedemptionCode.code == "WARRANTY-KICK-001")
             )
-            self.assertIsNone(remaining_code.scalar_one_or_none())
+            self.assertIsNotNone(remaining_code.scalar_one_or_none())
 
             remaining_records = await session.execute(
                 select(RedemptionRecord).where(RedemptionRecord.code == "WARRANTY-KICK-001")
             )
-            self.assertEqual(list(remaining_records.scalars().all()), [])
+            self.assertEqual(len(list(remaining_records.scalars().all())), 1)
 
     async def test_auto_kick_destroys_expired_non_warranty_code(self):
         """无质保兑换码到期后也应被自动踢人并销毁。"""
@@ -628,8 +627,8 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(updated_request_obj.status, "extended")
             self.assertEqual(updated_request_obj.extension_days, 7)
 
-    async def test_auto_kick_dismisses_pending_renewal_request(self):
-        """用户提交续期请求但未被审批时，自动踢人仍然执行，并将该请求标记为 ignored。"""
+    async def test_auto_kick_preserves_warranty_code_and_pending_renewal_request(self):
+        """质保到期不自动踢人，也不销毁尚未审批的续期请求。"""
         async with self.session_factory() as session:
             team = Team(
                 id=410,
@@ -672,30 +671,28 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             service = WarrantyService()
 
             async def stub_remove_invite_or_member(team_id, email, db_session):
-                self.assertEqual(team_id, 410)
-                self.assertEqual(email, "cheater@example.com")
-                return {"success": True, "message": "成员已删除", "error": None}
+                self.fail("质保兑换成员不应被自动踢出")
 
             service.team_service.remove_invite_or_member = stub_remove_invite_or_member
 
             result = await service.kick_and_destroy_expired_warranty_code(session, "WARRANTY-AK-RENEWAL-001")
             self.assertTrue(result["success"])
-            self.assertEqual(result["category"], "destroyed")
-            self.assertEqual(result.get("dismissed_renewal_requests"), 1)
+            self.assertEqual(result["category"], "skipped")
+            self.assertEqual(result["skip_reason"], "warranty_member")
 
             remaining_code = await session.execute(
                 select(RedemptionCode).where(RedemptionCode.code == "WARRANTY-AK-RENEWAL-001")
             )
-            self.assertIsNone(remaining_code.scalar_one_or_none())
+            self.assertIsNotNone(remaining_code.scalar_one_or_none())
 
             updated_renewal = await session.execute(
                 select(RenewalRequest).where(RenewalRequest.id == renewal_id)
             )
-            self.assertIsNone(updated_renewal.scalar_one_or_none())
+            self.assertEqual(updated_renewal.scalar_one().status, "pending")
 
-            # admin 待处理列表中不再出现该续期请求
+            # admin 待处理列表仍然保留该续期请求。
             list_result = await service.get_renewal_requests(session, status_filter="pending")
-            self.assertEqual(list_result["pending_count"], 0)
+            self.assertEqual(list_result["pending_count"], 1)
 
     async def test_run_warranty_auto_kick_categorizes_results(self):
         """整轮任务：destroyed / skipped / failed 按类别独立统计。"""
@@ -715,9 +712,9 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
 
             expired_code = RedemptionCode(
-                code="WARRANTY-RUN-OK",
+                code="NORMAL-RUN-OK",
                 status="used",
-                has_warranty=True,
+                has_warranty=False,
                 warranty_days=30,
                 used_by_email="ok@example.com",
                 used_team_id=420,
@@ -991,7 +988,7 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             code = RedemptionCode(
                 code="WARRANTY-AK-AUDIT-001",
                 status="used",
-                has_warranty=True,
+                has_warranty=False,
                 warranty_days=30,
                 used_by_email="user@example.com",
                 used_team_id=440,
@@ -1206,7 +1203,7 @@ class WarrantyAutoKickTests(unittest.IsolatedAsyncioTestCase):
             code = RedemptionCode(
                 code="WARRANTY-AK-MISSING-TEAM",
                 status="used",
-                has_warranty=True,
+                has_warranty=False,
                 warranty_days=30,
                 used_by_email="ghost@example.com",
                 used_team_id=430,
@@ -2333,6 +2330,37 @@ class RedeemFlowServiceTests(unittest.IsolatedAsyncioTestCase):
                 select(RedemptionCode).where(RedemptionCode.code == "WARRANTY-CODE-0001")
             )).scalar_one()
             self.assertEqual(code.used_team_id, 11)
+            mapping = (await session.execute(select(TeamEmailMapping).where(
+                TeamEmailMapping.team_id == 11,
+                TeamEmailMapping.email == "warranty-user@example.com",
+            ))).scalar_one()
+            self.assertFalse(mapping.auto_kick_enabled)
+            self.assertTrue(mapping.auto_kick_exempt)
+            self.assertIsNone(mapping.auto_kick_at)
+
+    async def test_reusable_warranty_code_also_marks_member_as_protected(self):
+        await self._seed_warranty_routing_data()
+        service = RedeemFlowService()
+        service.chatgpt_service = StubChatGPTService({})
+        async with self.session_factory(autoflush=False) as session:
+            code = (await session.scalars(select(RedemptionCode).where(
+                RedemptionCode.code == "WARRANTY-CODE-0001",
+            ))).one()
+            code.reusable_by_seat = True
+            await session.commit()
+            with patch.object(service.team_service, "ensure_access_token", new=self._return_token), \
+                 patch("app.services.redeem_flow.asyncio.create_task", side_effect=self._close_coro):
+                result = await service.redeem_and_join_team(
+                    email="warranty-user@example.com", code=code.code,
+                    team_id=11, db_session=session,
+                )
+            self.assertTrue(result["success"], result.get("error"))
+            record = (await session.scalars(select(RedemptionRecord))).one()
+            self.assertTrue(record.is_warranty_redemption)
+            mapping = (await session.scalars(select(TeamEmailMapping))).one()
+            self.assertFalse(mapping.auto_kick_enabled)
+            self.assertTrue(mapping.auto_kick_exempt)
+            self.assertIsNone(mapping.auto_kick_at)
 
     async def test_manual_team_selection_rejects_mismatched_warranty_mode_without_consuming_code(self):
         await self._seed_warranty_routing_data()

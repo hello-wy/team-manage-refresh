@@ -25,6 +25,7 @@ function setMemberListTableMessage(message, failed = false) {
 function prepareMemberList(teamId) {
     window.invitedMemberCredentials.reset();
     memberSeatBalance = null;
+    window.memberSeats?.reset();
     updateMemberInviteAvailability();
     setMemberSyncStatus('正在同步最新成员信息，每批读取 10 页...');
     if (renderedMemberTeamId === teamId) return;
@@ -49,6 +50,7 @@ async function loadModalMemberList(teamId, snapshot = null) {
         memberSeatBalance = null;
         updateMemberInviteAvailability();
         const message = getFriendlyAdminErrorMessage(error.message, 0, 'member');
+        window.memberSeats?.fail(message);
         setMemberSyncStatus(`成员同步失败：${message}`, true);
         document.getElementById('memberSeatBalanceError').textContent = message;
         if (renderedMemberTeamId !== teamId) setMemberListTableMessage(message, true);
@@ -76,7 +78,7 @@ async function synchronizeMemberBatches(teamId, requestId) {
     } while (memberListIsCurrent(teamId, requestId));
 }
 
-const MEMBER_TABS = {joined: 'Joined', invited: 'Invited', invite: 'Invite'};
+const MEMBER_TABS = {seats: 'Seats', joined: 'Joined', invited: 'Invited', invite: 'Invite'};
 
 function selectMemberTab(name) {
     for (const [key, suffix] of Object.entries(MEMBER_TABS)) {
@@ -101,6 +103,7 @@ function applyMemberListSnapshot(teamId, data) {
     const members = data.members || [];
     updateTeamMemberCount(teamId, data);
     memberSeatBalance = data.seat_balance || null;
+    window.memberSeats?.update(data);
     memberExistingEmails = new Set(members.map(member => (member.email || '').toLowerCase()));
     const autoKickHours = document.getElementById('memberAutoKickHours');
     if (autoKickHours && data.member_auto_kick_hours) autoKickHours.value = String(data.member_auto_kick_hours);
