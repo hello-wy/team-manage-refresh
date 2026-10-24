@@ -629,24 +629,9 @@ class RedeemFlowService:
 
                                 if (not rc.has_warranty) or should_refresh_warranty_window:
                                     rc.used_at = current_use_time
-                                if rc.has_warranty:
-                                    extension_days = max(int(getattr(rc, "extension_days", 0) or 0), 0)
-                                    days = (rc.warranty_days or 30) + extension_days
-                                    if should_refresh_warranty_window:
-                                        rc.warranty_expires_at = current_use_time + timedelta(days=days)
-                                        # 质保窗口已重置：admin 上一轮针对原使用者发放的人工续期天数
-                                        # 已经被本次重新计算消化掉，不应在新窗口里继续累加。
-                                        rc.extension_days = 0
-                                    elif not rc.warranty_expires_at:
-                                        base_time = previous_used_at or current_use_time
-                                        first_use_result = await db_session.execute(
-                                            select(func.min(RedemptionRecord.redeemed_at))
-                                            .where(RedemptionRecord.code == code)
-                                        )
-                                        first_use_time = first_use_result.scalar()
-                                        if first_use_time:
-                                            base_time = first_use_time
-                                        rc.warranty_expires_at = base_time + timedelta(days=days)
+                                if rc.has_warranty and should_refresh_warranty_window:
+                                    # 邀请只是预订，确认加入后才建立质保窗口。
+                                    rc.warranty_expires_at = None
 
                             if is_virtual_welfare_code:
                                 current_welfare_code = (await settings_service.get_setting(
@@ -719,6 +704,7 @@ class RedeemFlowService:
                                 team_id=team_id_final,
                                 account_id=target_team.account_id,
                                 is_warranty_redemption=bool(rc and rc.has_warranty),
+                                activation_pending=True,
                             )
                             db_session.add(record)
                             # 会话禁用 autoflush，先写入记录供映射识别质保免踢。

@@ -2,6 +2,7 @@
 from sqlalchemy import case, func, literal, select, union_all
 
 from app.models import AccountPoolEntry, Team, TeamEmailMapping
+from app.services.account_pool_rotation import ROTATION_FILTER_OPTIONS, attach_rotation_status
 from app.services.member_auto_kick_policy import auto_kick_enabled_condition
 from app.utils.team_names import team_display_name
 
@@ -18,7 +19,9 @@ def _normalized(column):
     return func.lower(func.trim(column))
 
 
-async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filter, seat_filter, sort_by):
+async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filter, seat_filter, sort_by,
+                         rotation_filter=""):
+    rotation_filter = rotation_filter if rotation_filter in ROTATION_FILTER_OPTIONS else ""
     sort_by = sort_by if sort_by in SORT_OPTIONS else "team"
     seat_filter = seat_filter if seat_filter in ("standard", "premium", "unknown") else ""
     status_filter = status_filter if status_filter in ("joined", "not_joined", "invited", "unassigned", "conflict") else ""
@@ -113,13 +116,31 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
         "oldest": [identities.c.created_at, identities.c.id],
         "email": [identities.c.email],
     }
-    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+    ordered = query.order_by(*orders[sort_by], identities.c.email, identities.c.id)
+    rotation_views = {}
+    if rotation_filter:
+        # Evaluate the same display policy before pagination, using only lightweight
+        # identities and batched local state. Account details still load for one page.
+        candidates = [dict(row) for row in (await db.execute(
+            ordered.add_columns(identities.c.email),
+        )).mappings()]
+        await attach_rotation_status(db, candidates)
+        matches = [row for row in candidates if row["rotation"]["status"] == rotation_filter]
+        total = len(matches)
+    else:
+        total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
     total_pages = max((total + per_page - 1) // per_page, 1)
     page = min(max(page, 1), total_pages)
-    ids = list((await db.execute(query.order_by(*orders[sort_by], identities.c.email, identities.c.id)
-                                .offset((page - 1) * per_page).limit(per_page))).scalars())
+    if rotation_filter:
+        selected = matches[(page - 1) * per_page:page * per_page]
+        ids = [row["id"] for row in selected]
+        rotation_views = {row["id"]: row["rotation"] for row in selected}
+    else:
+        ids = list((await db.execute(ordered.offset((page - 1) * per_page).limit(per_page))).scalars())
     teams = (await db.execute(select(Team.id, Team.team_name, Team.account_id).order_by(Team.id))).all()
     return {"ids": ids, "total": total, "total_pages": total_pages, "current_page": page,
             "per_page": per_page, "sort_by": sort_by, "sort_options": SORT_OPTIONS,
             "team_filter": team_filter, "seat_filter": seat_filter, "status_filter": status_filter,
+            "rotation_filter": rotation_filter, "rotation_filter_options": ROTATION_FILTER_OPTIONS,
+            "_rotation_views": rotation_views,
             "filter_teams": [{"id": team.id, "name": team_display_name(team)} for team in teams]}

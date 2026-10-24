@@ -856,7 +856,7 @@
         }
     }
 </style>
-<link rel="stylesheet" href="/static/css/team-workbench.css?v=20261024-seats">
+<link rel="stylesheet" href="/static/css/team-workbench.css?v=20261024-seat-lifecycle">
 {% endblock %}
 
 {% block content %}
@@ -1188,7 +1188,6 @@
                         </button>
                         <button type="button" class="btn btn-sm btn-secondary btn-team-more"
                             data-id="{{ team.id }}" data-email="{{ team.email }}"
-                            data-warranty="{{ ('true' if team.warranty_seat_enabled else 'false') if team.pool_type == 'normal' else '' }}"
                             data-device-auth="{{ 'true' if team.device_code_auth_enabled else 'false' }}"
                             aria-haspopup="menu" aria-expanded="false" aria-controls="teamRowMenu"
                             title="更多操作" aria-label="{{ team.email }} 的更多操作">
@@ -1429,6 +1428,14 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label for="edit-team-redemption-type">接收兑换码类型</label>
+                    <select id="edit-team-redemption-type" class="form-control">
+                        <option value="normal">普通码</option>
+                        <option value="warranty">质保码</option>
+                    </select>
+                    <small class="form-text">仅控制兑换码分流；成员质保权益按实际兑换记录判断。</small>
+                </div>
+                <div class="form-group">
                     <label for="edit-team-rotation-mode">额度轮转</label>
                     <select id="edit-team-rotation-mode" class="form-control">
                         <option value="off">关闭</option>
@@ -1445,8 +1452,8 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/team-workbench.js?v=20261024-auto-balance"></script>
-<script src="/static/js/team-seat-balances.js?v=20261024-auto-balance"></script>
+<script src="/static/js/team-workbench.js?v=20261024-seat-lifecycle"></script>
+<script src="/static/js/team-seat-balances.js?v=20261024-seat-lifecycle"></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         const editTeamModal = document.getElementById('editTeamModal');
@@ -1491,8 +1498,6 @@
                 editTeam(teamId);
             } else if (button.matches('.btn-enable-device-auth')) {
                 enableDeviceAuth(teamId, button.dataset.enabled === 'true');
-            } else if (button.matches('.btn-toggle-warranty-seat')) {
-                toggleTeamWarrantySeat(teamId, button.dataset.enabled === 'true');
             } else if (button.matches('.btn-push-sub2api')) {
                 pushTeamToSub2api(teamId, button.getAttribute('data-email'));
             } else if (button.matches('.btn-export-team-json')) {
@@ -1540,35 +1545,6 @@
                 await refreshAdminTeamTable();
             } else {
                 showToast(data.error || '开启失败', 'error');
-            }
-        } catch (error) {
-            showToast('网络错误', 'error');
-        }
-    }
-
-    async function toggleTeamWarrantySeat(teamId, currentlyEnabled) {
-        const nextEnabled = !currentlyEnabled;
-        const actionLabel = nextEnabled ? '开启' : '关闭';
-        if (!await confirmPageAction(`确定要为该 Team ${actionLabel}质保车位吗？\n\n此操作仅影响后续兑换码分流，不会影响现有成员。`)) {
-            return;
-        }
-
-        try {
-            showToast(`正在${actionLabel}质保车位...`, 'info');
-            const response = await fetch(`/admin/teams/${teamId}/warranty-seat`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ enabled: nextEnabled })
-            });
-
-            const data = await response.json();
-            if (response.ok && data.success) {
-                showToast(data.message || `${actionLabel}成功`, 'success');
-                await refreshAdminTeamTable();
-            } else {
-                showToast(data.error || `${actionLabel}失败`, 'error');
             }
         } catch (error) {
             showToast('网络错误', 'error');
@@ -1774,6 +1750,7 @@
                 document.getElementById('edit-team-max-members').value = team.max_members || 6;
                 document.getElementById('edit-team-name').value = team.team_name || '';
                 document.getElementById('edit-team-status').value = team.status || 'active';
+                document.getElementById('edit-team-redemption-type').value = team.warranty_seat_enabled ? 'warranty' : 'normal';
                 document.getElementById('edit-team-rotation-mode').value = team.rotation_mode || 'off';
                 document.getElementById('edit-team-role').value = team.account_role || '未知';
                 document.getElementById('edit-team-device-auth').value = team.device_code_auth_enabled ? '已开启' : '未开启';
@@ -1942,7 +1919,8 @@
             account_id: document.getElementById('edit-team-account-id').value,
             max_members: parseInt(document.getElementById('edit-team-max-members').value),
             team_name: document.getElementById('edit-team-name').value,
-            status: document.getElementById('edit-team-status').value
+            status: document.getElementById('edit-team-status').value,
+            warranty_seat_enabled: document.getElementById('edit-team-redemption-type').value === 'warranty'
         };
 
         try {

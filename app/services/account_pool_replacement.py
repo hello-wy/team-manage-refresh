@@ -19,6 +19,7 @@ async def mark_replacement_pending(db_session, team_id: int, email: str) -> None
             source="auto_replacement", last_invited_at=get_now(),
         )
         db_session.add(mapping)
+    mapping.join_source = "rotation"
     mapping.replacement_export_pending = True
 
     authorization = (await db_session.execute(

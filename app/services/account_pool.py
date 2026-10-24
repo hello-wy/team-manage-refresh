@@ -230,14 +230,19 @@ class AccountPoolService:
     async def list_entries(
         self, db_session: AsyncSession, page: int = 1, per_page: int = 20,
         search: str = "", status_filter: str = "", team_filter: str = "",
-        seat_filter: str = "", sort_by: str = "team",
+        seat_filter: str = "", sort_by: str = "team", rotation_filter: str = "",
     ) -> dict[str, Any]:
         from app.services.account_pool_query import query_pool_ids
         listing = await query_pool_ids(
             db_session, page=page, per_page=min(max(per_page, 1), 100), search=search,
             status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,
+            rotation_filter=rotation_filter,
         )
+        rotation_views = listing.pop("_rotation_views")
         listing["entries"] = await self.rows_by_ids(db_session, listing.pop("ids"))
+        for row in listing["entries"]:
+            if row["id"] in rotation_views:
+                row["rotation"] = rotation_views[row["id"]]
         return listing
 
     async def rows_by_ids(self, db_session, ids):

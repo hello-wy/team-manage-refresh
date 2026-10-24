@@ -73,6 +73,10 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_seat_participates_by_default_from_join_time(self):
         for seat in ("default", "standard", "premium", "prolite"):
             with self.subTest(seat=seat):
+                # 每种初始席位独立验证；同一成员标准升级高级另有确认起算测试。
+                for mapping in (await self.db.scalars(select(TeamEmailMapping))).all():
+                    await self.db.delete(mapping)
+                await self.db.commit()
                 member = await self.fetch(seat_type=seat)
                 self.assertTrue(member["auto_kick_enabled"])
                 self.assertEqual(member["auto_kick_at"], self.deadline(2).isoformat())
@@ -193,7 +197,8 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         row = {"id": entry.id, "email": EMAIL}
         await attach_rotation_status(self.db, [row])
-        self.assertEqual(row["rotation"]["label"], "定时下线")
+        self.assertEqual(row["rotation"]["label"], "待下线")
+        self.assertEqual(row["rotation"]["detail"], "定时下线")
         self.assertIn("额度轮转照常进行", row["rotation"]["reason"])
         self.assertFalse(row["rotation"]["reason"].startswith("仅预览"))
         mapping = await self.mapping()
@@ -201,12 +206,14 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
         mapping.auto_kick_retry_at = get_now() + timedelta(minutes=5)
         await self.db.commit()
         await attach_rotation_status(self.db, [row])
-        self.assertEqual((row["rotation"]["label"], row["rotation"]["kind"]), ("下线失败", "blocked"))
+        self.assertEqual((row["rotation"]["label"], row["rotation"]["kind"]), ("需关注", "blocked"))
+        self.assertEqual(row["rotation"]["detail"], "下线失败")
         self.assertIn("管理员凭据失效", row["rotation"]["reason"])
         team.rotation_mode = "off"
         await self.participate(False)
         await attach_rotation_status(self.db, [row])
-        self.assertEqual(row["rotation"]["label"], "保留当前 Team")
+        self.assertEqual(row["rotation"]["label"], "不参与轮转")
+        self.assertEqual(row["rotation"]["detail"], "保留当前 Team")
         self.assertIn("未参与自动下线", row["rotation"]["reason"])
 
 

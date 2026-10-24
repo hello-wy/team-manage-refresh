@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RotationAction, Team, TeamEmailMapping
@@ -14,6 +14,7 @@ from app.services.member_auto_kick_policy import (
 from app.utils.time_utils import get_now
 from app.services.warranty_member_protection import (
     is_warranty_member, protect_mapping, protect_team_mappings, warranty_member_condition,
+    scheduled_departure_allowed,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,13 @@ CompleteReplacement = Callable[[int, str, AsyncSession], Awaitable[str]]
 
 def schedule_payload(mapping) -> Dict[str, object]:
     enabled = participates(mapping)
+    policy = getattr(mapping, "departure_policy", None) or "timed"
     return {
-        "auto_kick_enabled": enabled,
+        "auto_kick_enabled": enabled and policy != "team_expiry",
+        "departure_policy": policy,
+        "usage_started_at": ((getattr(mapping, "usage_started_at", None) or mapping.joined_at).isoformat()
+                             if (getattr(mapping, "usage_started_at", None) or mapping.joined_at) else None),
+        "join_source": getattr(mapping, "join_source", None),
         "auto_kick_at": mapping.auto_kick_at.isoformat() if enabled and mapping.auto_kick_at else None,
         "auto_kick_failures": int(mapping.auto_kick_failures or 0) if enabled else 0,
         "auto_kick_last_error": mapping.auto_kick_last_error if enabled else None,
@@ -60,7 +66,7 @@ class MemberAutoKickService:
             refresh_deadline(mapping, hours)
         await db_session.commit()
         return {"success": True, "hours": hours,
-                "message": f"已设置为加入 {hours} 小时后自动下线，仅对参与自动下线的成员生效"}
+                "message": f"已设置为本次使用 {hours} 小时后自动下线，质保成员仍按 Team 到期时间下线"}
 
     async def update_member_participation(
         self, team_id: int, user_id: str, enabled: bool, db_session: AsyncSession,
@@ -78,10 +84,10 @@ class MemberAutoKickService:
         if mapping.member_role == OWNER_ROLE:
             return {"success": False, "error": "Team 所有者不会自动下线，无需设置"}
         if await is_warranty_member(db_session, team_id, mapping.email):
-            protect_mapping(mapping)
+            protect_mapping(mapping, team)
             await db_session.commit()
-            return {"success": not enabled, "message": "质保兑换成员不会自动下线",
-                    "error": "质保兑换成员不参与自动踢出，不能开启自动下线" if enabled else None,
+            return {"success": not enabled, "message": "质保兑换成员仅在 Team 到期后下线",
+                    "error": "质保兑换成员不参与小时级下线，不能修改使用规则" if enabled else None,
                     **schedule_payload(mapping)}
         set_participation(mapping, enabled, team_auto_kick_hours(team))
         await db_session.commit()
@@ -103,7 +109,7 @@ class MemberAutoKickService:
         }
         for member in due_members:
             try:
-                if await is_warranty_member(db_session, member.team_id, member.email):
+                if not await scheduled_departure_allowed(db_session, member.team_id, member.email):
                     continue
                 result = await delete_member(
                     member.team_id,
@@ -144,9 +150,8 @@ class MemberAutoKickService:
         ).execution_options(populate_existing=True))).scalar_one_or_none()
         now = get_now()
         if mapping and await is_warranty_member(db_session, member.team_id, member.email):
-            protect_mapping(mapping)
-            await db_session.commit()
-            return None
+            team = await db_session.get(Team, member.team_id, populate_existing=True)
+            protect_mapping(mapping, team)
         # 计划在执行期间被修改或取消时，不把旧计划的失败记到新计划上。
         if not (mapping and mapping.status == JOINED_STATUS and mapping.upstream_user_id == member.user_id
                 and mapping.auto_kick_at and mapping.auto_kick_at <= now):
@@ -208,31 +213,37 @@ class MemberAutoKickService:
 
     async def _due_members(self, db_session: AsyncSession) -> list[DueMember]:
         now = get_now()
+        warranty = warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email)
+        warranty_due = warranty & Team.expires_at.is_not(None) & (Team.expires_at <= now)
+        timed_due = (~warranty & auto_kick_enabled_condition() & (TeamEmailMapping.auto_kick_at <= now)
+                     & ~exists().where(
+                         RotationAction.team_id == TeamEmailMapping.team_id,
+                         RotationAction.email == TeamEmailMapping.email,
+                         RotationAction.status.in_(OPEN_ROTATION_STATUSES)))
         result = await db_session.execute(
             select(TeamEmailMapping)
+            .join(Team, Team.id == TeamEmailMapping.team_id)
             .where(
                 TeamEmailMapping.status == JOINED_STATUS,
-                TeamEmailMapping.auto_kick_at <= now,
-                or_(TeamEmailMapping.auto_kick_retry_at.is_(None), TeamEmailMapping.auto_kick_retry_at <= now),
-                ~exists().where(
-                    RotationAction.team_id == TeamEmailMapping.team_id,
-                    RotationAction.email == TeamEmailMapping.email,
-                    RotationAction.status.in_(OPEN_ROTATION_STATUSES),
-                ),
-                auto_kick_enabled_condition(),
-                ~warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email),
+                or_(TeamEmailMapping.auto_kick_retry_at.is_(None), TeamEmailMapping.auto_kick_retry_at <= now,
+                    warranty_due & or_(TeamEmailMapping.auto_kick_at.is_(None),
+                                       TeamEmailMapping.auto_kick_at != Team.expires_at)),
+                or_(warranty_due, timed_due),
                 TeamEmailMapping.upstream_user_id.is_not(None),
-                TeamEmailMapping.member_role != OWNER_ROLE,
+                func.coalesce(TeamEmailMapping.member_role, "") != OWNER_ROLE,
             )
             .order_by(TeamEmailMapping.auto_kick_at.asc())
         )
+        mappings = result.scalars().all()
+        for team_id in {m.team_id for m in mappings}:
+            await protect_team_mappings(db_session, team_id, [m for m in mappings if m.team_id == team_id])
         return [
             DueMember(
                 mapping.team_id,
                 mapping.upstream_user_id,
                 mapping.email,
             )
-            for mapping in result.scalars().all()
+            for mapping in mappings
         ]
 
 

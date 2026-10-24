@@ -2,6 +2,7 @@
 质保服务
 处理用户质保查询和验证
 """
+from app.services.member_lifecycle import service_start
 import logging
 import asyncio
 from typing import Optional, Dict, Any, List
@@ -113,16 +114,12 @@ class WarrantyService:
         """根据当前模式解析质保起算时间。"""
         mode = expiration_mode or await settings_service.get_warranty_expiration_mode(db_session)
 
-        if mode == WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM:
-            return redemption_code.used_at or (reference_record.redeemed_at if reference_record else None)
-
-        result = await db_session.execute(
-            select(func.min(RedemptionRecord.redeemed_at))
-            .where(RedemptionRecord.code == redemption_code.code)
-        )
-        first_redeemed_at = result.scalar()
-
-        return first_redeemed_at or redemption_code.used_at or (reference_record.redeemed_at if reference_record else None)
+        records = (await db_session.scalars(select(RedemptionRecord).where(
+            RedemptionRecord.code == redemption_code.code,
+        ))).all()
+        start = service_start(redemption_code, records, mode, reference_record)
+        redemption_code._activation_pending = bool(records and start is None)
+        return start
 
     async def _resolve_warranty_expiry_date(
         self,
@@ -136,7 +133,7 @@ class WarrantyService:
         if not redemption_code.has_warranty:
             return None
 
-        if redemption_code.warranty_expires_at and not force_recompute:
+        if redemption_code.warranty_expires_at and not force_recompute and not redemption_code.reusable_by_seat:
             return redemption_code.warranty_expires_at
 
         start_time = await self._get_warranty_start_time(
@@ -187,7 +184,7 @@ class WarrantyService:
         if expiry_date:
             return expiry_date >= get_now()
 
-        if redemption_code.has_warranty and redemption_code.status == "unused":
+        if redemption_code.has_warranty and (redemption_code.status == "unused" or getattr(redemption_code, "_activation_pending", False)):
             return True
 
         return False
@@ -304,9 +301,7 @@ class WarrantyService:
     ) -> Dict[str, Any]:
         """获取续期请求列表。
 
-        避免 N+1：先一次性把所有相关 RedemptionCode 拉出来；first_use 模式下也用一个聚合
-        子查询拿到每个码的 first_redeemed_at，再在内存里按模式计算 expiry，避免每条 request
-        都跑一轮 _resolve_warranty_expiry_date。
+        批量读取相关兑换码与服务起点，保持待确认邀请、历史记录和续期展示一致。
         """
         stmt = select(RenewalRequest).order_by(RenewalRequest.requested_at.desc(), RenewalRequest.id.desc())
         if status_filter:
@@ -317,7 +312,7 @@ class WarrantyService:
 
         related_codes: List[str] = sorted({req.code for req in requests if req.code})
         codes_by_value: Dict[str, RedemptionCode] = {}
-        first_redeemed_by_code: Dict[str, datetime] = {}
+        records_by_code = {}
         expiration_mode: Optional[str] = None
 
         if related_codes:
@@ -330,25 +325,17 @@ class WarrantyService:
             warranty_codes = [c for c in codes_by_value.values() if c.has_warranty]
             if warranty_codes:
                 expiration_mode = await settings_service.get_warranty_expiration_mode(db_session)
-                first_use_result = await db_session.execute(
-                    select(
-                        RedemptionRecord.code,
-                        func.min(RedemptionRecord.redeemed_at),
-                    )
-                    .where(RedemptionRecord.code.in_([c.code for c in warranty_codes]))
-                    .group_by(RedemptionRecord.code)
-                )
-                first_redeemed_by_code = {
-                    row[0]: row[1] for row in first_use_result.all() if row[1] is not None
-                }
+                for record in (await db_session.scalars(select(RedemptionRecord).where(
+                    RedemptionRecord.code.in_([c.code for c in warranty_codes]),
+                ))).all():
+                    records_by_code.setdefault(record.code, []).append(record)
 
         def _expiry_for(code_obj: RedemptionCode) -> Optional[datetime]:
             if not code_obj or not code_obj.has_warranty:
                 return None
-            if expiration_mode == WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM:
-                start = code_obj.used_at
-            else:
-                start = first_redeemed_by_code.get(code_obj.code) or code_obj.used_at
+            if code_obj.warranty_expires_at and not code_obj.reusable_by_seat:
+                return code_obj.warranty_expires_at
+            start = service_start(code_obj, records_by_code.get(code_obj.code, []), expiration_mode)
             if not start:
                 return None
             base_days = int(code_obj.warranty_days or 30)
@@ -890,14 +877,19 @@ class WarrantyService:
             result = await db_session.execute(stmt)
             rows = result.all()
 
+            code_values = [row[0].code for row in rows]
+            records_by_code = {}
+            if code_values:
+                records = (await db_session.scalars(select(RedemptionRecord).where(
+                    RedemptionRecord.code.in_(code_values),
+                ))).all()
+                for record in records:
+                    records_by_code.setdefault(record.code, []).append(record)
             now = get_now()
             candidates: List[Dict[str, Any]] = []
             exempted_count = 0
             for redemption_code, first_redeemed_at, record_count in rows:
-                if expiration_mode == WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM:
-                    start_time = redemption_code.used_at
-                else:
-                    start_time = first_redeemed_at or redemption_code.used_at
+                start_time = service_start(redemption_code, records_by_code.get(redemption_code.code, []), expiration_mode)
                 if not start_time:
                     continue
 
@@ -1504,11 +1496,11 @@ class WarrantyService:
     ) -> Dict[str, Any]:
         """扫描所有 Team 中"后台邀请且已过期"的成员。
 
-        定义为：仍处于 invited / joined 状态、``is_admin_invited`` 为 True 的
+        定义为：已确认 joined、``is_admin_invited`` 为 True 的
         TeamEmailMapping，且全部满足：
         - ``mapping.created_at >= auto_kick_admin_invited_enabled_since``：仅扫
           开关启用之后新发出的邀请，开关启用前已存在的成员永远豁免；
-        - ``now >= mapping.created_at + auto_kick_admin_invited_period_days``。
+        - ``now >= mapping.joined_at + auto_kick_admin_invited_period_days``。
         """
         try:
             enabled = await settings_service.get_setting(
@@ -1553,19 +1545,18 @@ class WarrantyService:
             now = get_now()
             cutoff = now - timedelta(days=period_days)
 
-            # 1. 拿出所有"开启之后创建"且仍在活跃状态、且 is_admin_invited 的映射；
-            #    只取 created_at <= cutoff（已经过期）的，不过期的不参与扫描。
+            # 仅扫描开启后邀请且已确认加入的成员，待确认时间不消耗使用期限。
             stmt = (
                 select(TeamEmailMapping, Team)
                 .join(Team, Team.id == TeamEmailMapping.team_id)
                 .where(
-                    TeamEmailMapping.status.in_(("invited", "joined")),
+                    TeamEmailMapping.status == "joined",
                     Team.rotation_mode == "off",
                     TeamEmailMapping.is_admin_invited.is_(True),
                     ~warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email),
-                    TeamEmailMapping.created_at.is_not(None),
+                    TeamEmailMapping.joined_at.is_not(None),
                     TeamEmailMapping.created_at >= enabled_since,
-                    TeamEmailMapping.created_at <= cutoff,
+                    TeamEmailMapping.joined_at <= cutoff,
                 )
                 .order_by(TeamEmailMapping.team_id.asc(), TeamEmailMapping.id.asc())
             )
@@ -1592,7 +1583,7 @@ class WarrantyService:
                 owner_email = self.team_service._normalize_member_email(team.email)
                 if owner_email and normalized == owner_email:
                     continue
-                expiry_at = mapping.created_at + timedelta(days=period_days)
+                expiry_at = mapping.joined_at + timedelta(days=period_days)
                 candidates.append({
                     "mapping_id": mapping.id,
                     "team_id": mapping.team_id,
@@ -1655,7 +1646,7 @@ class WarrantyService:
             )
             result = await db_session.execute(stmt)
             mapping = result.scalar_one_or_none()
-            if not mapping or mapping.status not in ("invited", "joined"):
+            if not mapping or mapping.status != "joined" or not mapping.joined_at:
                 return {
                     "success": True,
                     "team_id": team_id,
@@ -1673,6 +1664,11 @@ class WarrantyService:
                     "skip_reason": "not_admin_invited",
                     "error": None,
                 }
+
+            period = self._normalize_admin_invited_period_days(await settings_service.get_setting(
+                db_session, "auto_kick_admin_invited_period_days", "30"))
+            if mapping.joined_at + timedelta(days=period) > get_now():
+                return {"success": True, "category": "skipped", "skip_reason": "not_due", "error": None}
 
             if await is_warranty_member(db_session, team_id, normalized_email):
                 return {"success": True, "team_id": team_id, "email": normalized_email,

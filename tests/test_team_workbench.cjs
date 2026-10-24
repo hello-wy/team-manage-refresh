@@ -163,3 +163,46 @@ test('opening Team member management selects all seats while synchronizing', asy
     assert.equal(env.element('memberPanelJoined').hidden, true);
     assert.equal(env.element('memberPanelInvite').hidden, true);
 });
+
+test('seat previews separate warranty deadline, Team departure and pending activation', () => {
+    const env = seatsHarness();
+    env.seats.update({seat_layout: [{kind: 'standard', label: '标准席位', paid: 4, remaining: 1, seat_type: 'default', slots: [
+        {state: 'joined', label: 'protected@example.com', detail: '已加入', seat_status: 'warranty', status_label: '质保中',
+            status_reason: '免小时级及额度清退，Team 到期后下线', server_now: '2026-10-24T12:00:00',
+            warranty_expires_at: '2026-11-23T12:00:00', auto_kick_at: '2026-11-10T12:00:00', team_expires_at: '2026-11-10T12:00:00'},
+        {state: 'invited', label: 'pending@example.com', seat_status: 'invited', status_label: '等待确认邀请',
+            status_reason: '确认加入后开始计时', team_expires_at: '2026-11-10T12:00:00'},
+        {state: 'reserved', label: '已占用 / 预留', detail: '待同步确认'},
+        {state: 'available', label: '邀请账号', detail: '空闲席位'},
+    ]}]});
+    const html = env.element('memberSeatsBoard').innerHTML;
+    assert.match(html, /质保中/);
+    assert.match(html, /质保剩余/);
+    assert.match(html, /质保截止 2026-11-23 12:00/);
+    assert.match(html, /Team 到期下线 2026-11-10 12:00/);
+    assert.match(html, /确认加入后开始计时/);
+    assert.match(html, /未邀请/);
+    assert.doesNotMatch(html, /NaN/);
+    assert.equal((html.match(/btn-invite-seat/g) || []).length, 1);
+});
+
+test('expired warranty and hourly usage show accurate status without claiming removal', () => {
+    const env = seatsHarness();
+    env.seats.update({seat_layout: [{kind: 'premium', label: '高级席位', paid: 2, remaining: 0, seat_type: 'premium', slots: [
+        {state: 'joined', label: 'timed@example.com', seat_status: 'timed', status_label: '定时使用中',
+            status_reason: '按使用时长下线', server_now: '2026-10-24T12:00:00', auto_kick_at: '2026-10-24T14:00:00'},
+        {state: 'joined', label: 'old@example.com', seat_status: 'warranty', status_label: '质保中',
+            status_reason: 'Team 到期后下线', server_now: '2026-10-24T12:00:00', warranty_expires_at: '2026-10-23T12:00:00'},
+    ]}]});
+    const html = env.element('memberSeatsBoard').innerHTML;
+    assert.match(html, /定时使用中/);
+    assert.match(html, /本轮剩余 2 小时/);
+    assert.match(html, /质保已结束/);
+    assert.doesNotMatch(html, />质保中</);
+});
+
+test('Team action menu no longer exposes warranty routing as a seat entitlement switch', () => {
+    const env = menuHarness();
+    env.click(env.trigger('1'));
+    assert.doesNotMatch(env.menu.innerHTML, /质保车位|data-action="warranty"/);
+});

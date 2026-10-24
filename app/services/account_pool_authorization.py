@@ -79,13 +79,15 @@ class AccountPoolAuthorizationService:
             str(result.get("phone_rental_error") or ""),
         )
 
-    async def scan_entry(self, session, entry_id: int) -> dict[str, Any]:
+    async def scan_entry(self, session, entry_id: int, *, identifier: str = "") -> dict[str, Any]:
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             raise AccountPoolAuthorizationError("账号不存在")
         credentials = await self._credentials.get_credentials(session, entry.email)
         self._validate_credentials(credentials)
         request = self._request(entry, credentials, "", session)
+        if identifier:
+            request = replace(request, identifier=identifier)
         try:
             return await self._login.verify_credentials(request)
         except OpenAIAutomaticLoginError as exc:

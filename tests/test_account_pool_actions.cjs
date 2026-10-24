@@ -105,15 +105,17 @@ test('quota refresh updates only its cell and re-enables retry after an error', 
 test('single account liveness posts only the chosen owner and restores retry after failure', async () => {
     const {context} = runtime();
     const calls = [], toasts = [];
+    context.AbortSignal = AbortSignal;
+    context.document.querySelectorAll = () => [];
     context.showToast = (...args) => toasts.push(args);
     context.refreshAccountPoolTable = async () => calls.push('refresh');
     context.fetch = async (url, options) => {
         calls.push([url, options.method]);
         return {ok: true, json: async () => ({success: true, status: 'alive', message: 'Token verified'})};
     };
-    const button = {disabled: false, dataset: {entryId: '-2', email: 'owner@example.com'}};
+    const button = {disabled: false, dataset: {entryId: '-2', email: 'owner@example.com'}, closest: () => null};
     await context.checkAccountPoolEntryLiveness(button);
-    assert.deepEqual(calls, [['/admin/account-pool/-2/liveness', 'POST'], 'refresh']);
+    assert.deepEqual(calls, [['/admin/account-pool/-2/liveness', 'POST']]);
     assert.equal(button.disabled, false);
     context.fetch = async () => {throw new Error('network unavailable');};
     await context.checkAccountPoolEntryLiveness(button);
@@ -139,4 +141,69 @@ test('workbench member removal waits for the page dialog and cancellation sends 
     env.dialog().controls['[data-confirm]'].click();
     await removal;
     assert.equal(calls, 1);
+});
+
+test('16688 import requires confirmation and sends only the entry ID to the backend', async () => {
+    const env = runtime(), calls = [], messages = [];
+    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    env.context.fetch = async (url, options) => {
+        calls.push({url, options});
+        assert.equal(button.disabled, true);
+        assert.equal(button.textContent, '补货中…');
+        return {ok: true, json: async () => ({success: true, message: '已成功补货至 16688'})};
+    };
+    env.context.showToast = (...args) => messages.push(args);
+    const pending = env.context.importAccountPool16688(button);
+    assert.equal(calls.length, 0);
+    assert.match(env.dialog().controls.p.textContent, /邮箱---密码---2FA/);
+    env.dialog().controls['[data-confirm]'].click();
+    await pending;
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/admin/account-pool/7/import-16688');
+    assert.equal(calls[0].options.method, 'POST');
+    assert.equal(calls[0].options.body, undefined);
+    assert.equal(calls[0].options.cache, 'no-store');
+    assert.deepEqual(messages, [['已成功补货至 16688', 'success']]);
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, '导入 16688');
+});
+
+test('16688 cancel and duplicate clicks never submit another export', async () => {
+    const env = runtime();
+    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    env.context.fetch = () => { throw Error('No request expected'); };
+    const pending = env.context.importAccountPool16688(button);
+    await env.context.importAccountPool16688(button);
+    env.dialog().controls['[data-cancel]'].click();
+    await pending;
+    assert.equal(button.disabled, false);
+});
+
+test('16688 errors restore the button and do not retry uncertain imports', async () => {
+    const env = runtime(), messages = [];
+    let calls = 0;
+    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    env.context.fetch = async () => {
+        calls++;
+        return {ok: false, json: async () => ({success: false, error: '补货结果未确认，请先核对库存'})};
+    };
+    env.context.showToast = (...args) => messages.push(args);
+    const pending = env.context.importAccountPool16688(button);
+    env.dialog().controls['[data-confirm]'].click();
+    await pending;
+    assert.equal(calls, 1);
+    assert.match(messages[0][0], /未确认/);
+    assert.equal(button.disabled, false);
+});
+
+test('network interruptions in 16688 export show an uncertain result instead of encouraging a blind retry', async () => {
+    const env = runtime(), messages = [];
+    const button = {dataset: {entryId: '7', email: 'member@example.com'}, textContent: '导入 16688', disabled: false};
+    env.context.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    env.context.showToast = (...args) => messages.push(args);
+    const pending = env.context.importAccountPool16688(button);
+    env.dialog().controls['[data-confirm]'].click();
+    await pending;
+    assert.match(messages[0][0], /结果未确认.*核对库存/);
+    assert.equal(button.disabled, false);
 });

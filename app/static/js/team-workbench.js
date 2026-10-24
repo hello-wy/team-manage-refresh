@@ -15,11 +15,8 @@
     }
 
     function menuItems(trigger) {
-        const warranty = trigger.dataset.warranty;
         const deviceAuthEnabled = trigger.dataset.deviceAuth === 'true';
         const items = [];
-        if (warranty) items.push(['warranty', warranty === 'true' ? 'shield-off' : 'shield-check',
-            warranty === 'true' ? '关闭质保车位' : '开启质保车位']);
         items.push(['device-auth', 'badge-check', deviceAuthEnabled ? '设备验证已开启' : '开启设备验证', deviceAuthEnabled]);
         items.push(['push', 'send', '推送母号到 sub2api'], ['export', 'download', '导出 JSON'], null,
             ['delete', 'trash-2', '删除 Team', false, 'is-danger']);
@@ -62,9 +59,8 @@
         const trigger = activeTrigger;
         closeMenu(true);
         if (!trigger) return;
-        const {id, email, warranty, deviceAuth} = trigger.dataset;
-        if (action === 'warranty') toggleTeamWarrantySeat(id, warranty === 'true');
-        else if (action === 'device-auth') enableDeviceAuth(id, deviceAuth === 'true');
+        const {id, email, deviceAuth} = trigger.dataset;
+        if (action === 'device-auth') enableDeviceAuth(id, deviceAuth === 'true');
         else if (action === 'push') pushTeamToSub2api(id, email);
         else if (action === 'export') exportTeamJson(id, email);
         else if (action === 'delete') deleteTeam(Number(id), email);

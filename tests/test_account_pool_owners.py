@@ -82,7 +82,9 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
             options = await account_pool_service.list_invite_options(1, db)
             self.assertEqual([item["id"] for item in options], [member.id])
             rows = await account_pool_service.rows_by_ids(db, [owner.id])
-            self.assertEqual((await attach_rotation_status(db, rows))[0]["rotation"]["label"], "所有者")
+            rotation = (await attach_rotation_status(db, rows))[0]["rotation"]
+            self.assertEqual(rotation["label"], "不参与轮转")
+            self.assertEqual(rotation["detail"], "所有者")
             self.assertIsNotNone(await db.get(AccountPoolEntry, owner.id))
 
     async def test_recently_joined_account_cannot_be_invited_again(self):
