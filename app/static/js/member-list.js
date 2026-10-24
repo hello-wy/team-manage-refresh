@@ -107,6 +107,8 @@ function applyMemberListSnapshot(teamId, data) {
     memberExistingEmails = new Set(members.map(member => (member.email || '').toLowerCase()));
     const autoKickHours = document.getElementById('memberAutoKickHours');
     if (autoKickHours && data.member_auto_kick_hours) autoKickHours.value = String(data.member_auto_kick_hours);
+    const rotationRounds = document.getElementById('memberRotationRounds');
+    if (rotationRounds && Number.isInteger(data.rotation_rounds)) rotationRounds.value = String(data.rotation_rounds);
     document.getElementById('memberSeatBalanceError').textContent = memberSeatBalance?.success
         ? '' : memberSeatBalance?.error || '余额暂不可用，无法保存或邀请。';
     const summary = document.getElementById('memberSeatSummary');

@@ -156,6 +156,16 @@ class SeatDeparturePolicyTests(unittest.IsolatedAsyncioTestCase):
             InviteRequest(team_id=1, email=EMAIL, seat_type='premium'))
         self.assertEqual(result['error_code'], 'warranty_standard_only')
 
+    async def test_quota_rotation_remote_actions_cannot_mutate_standard_seats(self):
+        await self.sync('standard')
+        action = RotationAction(team_id=1, email=EMAIL, action_type='remove',
+                                idempotency_key='standard-remove')
+        remote = SimpleNamespace(delete_team_member=AsyncMock(), update_member_seat_type=AsyncMock())
+        with self.assertRaisesRegex(RuntimeError, '仅允许处理高级席位'):
+            await _execute_remote(self.db, self.team, action, mapping=self.mapping, team_service=remote)
+        remote.delete_team_member.assert_not_awaited()
+        remote.update_member_seat_type.assert_not_awaited()
+
     async def test_warranty_blocks_auto_upgrade_and_cancels_old_action(self):
         await self.warranty()
         await self.sync()

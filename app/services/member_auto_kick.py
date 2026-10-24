@@ -1,12 +1,13 @@
 """Team-level auto-kick hours, per-member participation and due-member scanning."""
 import logging
+import json
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict
 
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import RotationAction, Team, TeamEmailMapping
+from app.models import RotationAction, Team, TeamEmailMapping, TeamReplacementQueue
 from app.services.member_auto_kick_policy import (
     EXPIRY_POLICIES, MAX_AUTO_KICK_HOURS, MIN_AUTO_KICK_HOURS, OWNER_ROLE, auto_kick_enabled_condition, participates,
     record_failure, refresh_deadline, set_participation, team_auto_kick_hours,
@@ -28,10 +29,15 @@ class DueMember:
     team_id: int
     user_id: str
     email: str
+    mapping_id: int
+    seat_type: str | None
+    rotation_lane: str | None
+    rotation_round: int
 
 
 DeleteMember = Callable[..., Awaitable[Dict[str, object]]]
 CompleteReplacement = Callable[[int, str, AsyncSession], Awaitable[str]]
+ReplaceMember = Callable[[int, str, str, int, frozenset[int], AsyncSession], Awaitable[dict]]
 
 
 def schedule_payload(mapping) -> Dict[str, object]:
@@ -53,20 +59,27 @@ def schedule_payload(mapping) -> Dict[str, object]:
 
 
 class MemberAutoKickService:
-    async def update_team_hours(self, team_id: int, hours: int, db_session: AsyncSession) -> Dict[str, object]:
+    async def update_team_hours(
+        self, team_id: int, hours: int, db_session: AsyncSession,
+        rounds: int | None = None,
+    ) -> Dict[str, object]:
         team = await db_session.get(Team, team_id)
         if not team:
             return {"success": False, "error": "Team 不存在"}
         if not MIN_AUTO_KICK_HOURS <= hours <= MAX_AUTO_KICK_HOURS:
             return {"success": False,
                     "error": f"自动下线时长必须在 {MIN_AUTO_KICK_HOURS} 到 {MAX_AUTO_KICK_HOURS} 小时之间"}
+        if rounds is not None and not 0 <= rounds <= 1000:
+            return {"success": False, "error": "每个高级席位轮次必须在 0 到 1000 之间，0 表示不限制"}
         team.member_auto_kick_hours = hours
+        if rounds is not None:
+            team.rotation_rounds = rounds
         mappings = await self._joined_mappings(team_id, db_session)
         await protect_team_mappings(db_session, team_id, mappings)
         for mapping in mappings:
             refresh_deadline(mapping, hours, team=team)
         await db_session.commit()
-        return {"success": True, "hours": hours,
+        return {"success": True, "hours": hours, "rounds": int(team.rotation_rounds or 0),
                 "message": f"已设置为高级席位本次使用 {hours} 小时后自动下线，标准席位仍按 Team 到期时间下线"}
 
     async def update_member_participation(
@@ -103,6 +116,7 @@ class MemberAutoKickService:
         self,
         db_session: AsyncSession,
         delete_member: DeleteMember,
+        replace_member: ReplaceMember | None = None,
     ) -> Dict[str, int | bool]:
         due_members = await self._due_members(db_session)
         stats: Dict[str, int | bool] = {
@@ -111,6 +125,9 @@ class MemberAutoKickService:
             "kicked": 0,
             "failed": 0,
         }
+        if replace_member:
+            stats.update({"replacement_invited": 0, "replacement_waiting": 0,
+                          "replacement_failed": 0, "rotation_finished": 0})
         for member in due_members:
             try:
                 if not await scheduled_departure_allowed(db_session, member.team_id, member.email):
@@ -142,7 +159,122 @@ class MemberAutoKickService:
             stats["kicked"] = int(stats["kicked"]) + 1
             logger.info("成员到期下线已确认: team=%s email=%s method=%s",
                         member.team_id, member.email, result.get("removal_method"))
+            if replace_member:
+                replacement_status = await self._replace_after_departure(
+                    member, db_session, replace_member,
+                )
+                key = {
+                    "invited": "replacement_invited",
+                    "waiting": "replacement_waiting",
+                    "failed": "replacement_failed",
+                    "finished": "rotation_finished",
+                }.get(replacement_status)
+                if key:
+                    stats[key] = int(stats[key]) + 1
 
+        stats["success"] = stats["failed"] == 0 and stats.get("replacement_failed", 0) == 0
+        return stats
+
+    async def _replace_after_departure(self, member, db_session, replace_member):
+        """为已到期的高级席位创建并执行一次可重试的补位任务。"""
+        if member.seat_type != "premium":
+            return None
+        team = await db_session.get(Team, member.team_id)
+        if not team:
+            return "failed"
+        if team.rotation_mode != "auto":
+            return None
+        current_round = max(1, int(member.rotation_round or 1))
+        max_rounds = max(0, int(team.rotation_rounds or 0))
+        if max_rounds and current_round >= max_rounds:
+            return "finished"
+        lane_key = member.rotation_lane or f"mapping:{member.mapping_id}"
+        next_round = current_round + 1
+        existing = (await db_session.execute(select(TeamReplacementQueue).where(
+            TeamReplacementQueue.team_id == member.team_id,
+            TeamReplacementQueue.lane_key == lane_key,
+        ))).scalar_one_or_none()
+        if existing:
+            return await self._attempt_replacement(existing, db_session, replace_member)
+        queue = TeamReplacementQueue(
+            team_id=member.team_id, seat_type="premium", lane_key=lane_key,
+            next_round=next_round,
+        )
+        db_session.add(queue)
+        await db_session.commit()
+        return await self._attempt_replacement(queue, db_session, replace_member)
+
+    async def _attempt_replacement(self, queue, db_session, replace_member):
+        queue_id = queue.id
+        queue_team_id = queue.team_id
+        queue_seat_type = queue.seat_type
+        queue_lane = queue.lane_key or f"queue:{queue_id}"
+        queue_round = int(queue.next_round or 1)
+        team = await db_session.get(Team, queue_team_id)
+        if not team or team.rotation_mode != "auto":
+            await db_session.delete(queue)
+            await db_session.commit()
+            return "finished"
+        max_rounds = max(0, int(team.rotation_rounds or 0))
+        if max_rounds and queue_round > max_rounds:
+            await db_session.delete(queue)
+            await db_session.commit()
+            return "finished"
+        try:
+            excluded_ids = frozenset(
+                int(value) for value in json.loads(queue.excluded_entry_ids or "[]")
+                if str(value).isdigit()
+            )
+        except (TypeError, ValueError):
+            excluded_ids = frozenset()
+        try:
+            result = await replace_member(
+                queue_team_id, queue_seat_type, queue_lane,
+                queue_round, excluded_ids, db_session,
+            )
+        except Exception as exc:
+            await db_session.rollback()
+            result = {"success": False, "error": str(exc)}
+        current = await db_session.get(TeamReplacementQueue, queue_id)
+        if result.get("success") and result.get("status") == "invited":
+            if current:
+                await db_session.delete(current)
+            await db_session.commit()
+            logger.info("自动补位邀请已发送: team=%s lane=%s round=%s email=%s",
+                        queue_team_id, queue_lane, queue_round, result.get("email"))
+            return "invited"
+        if current:
+            current.last_attempt_at = get_now()
+            current.last_error_code = result.get("error_code") or result.get("status") or "no_candidate"
+            candidate_id = result.get("candidate_id")
+            if candidate_id and str(candidate_id).isdigit():
+                try:
+                    attempted = set(json.loads(current.excluded_entry_ids or "[]"))
+                except (TypeError, ValueError):
+                    attempted = set()
+                attempted.add(int(candidate_id))
+                current.excluded_entry_ids = json.dumps(sorted(attempted))
+            await db_session.commit()
+        return "waiting" if result.get("status") == "no_candidate" else "failed"
+
+    async def process_pending_replacements(
+        self, db_session: AsyncSession, replace_member: ReplaceMember,
+    ) -> Dict[str, int | bool]:
+        ids = list((await db_session.execute(
+            select(TeamReplacementQueue.id).where(
+                TeamReplacementQueue.seat_type == "premium",
+            ).order_by(TeamReplacementQueue.id.asc())
+        )).scalars().all())
+        stats: Dict[str, int | bool] = {
+            "success": True, "scanned": len(ids), "invited": 0,
+            "waiting": 0, "failed": 0, "finished": 0,
+        }
+        for queue_id in ids:
+            queue = await db_session.get(TeamReplacementQueue, queue_id)
+            if not queue:
+                continue
+            status = await self._attempt_replacement(queue, db_session, replace_member)
+            stats[status] = int(stats[status]) + 1
         stats["success"] = stats["failed"] == 0
         return stats
 
@@ -249,6 +381,10 @@ class MemberAutoKickService:
                 mapping.team_id,
                 mapping.upstream_user_id,
                 mapping.email,
+                mapping.id,
+                mapping.seat_type,
+                getattr(mapping, "rotation_lane", None),
+                int(getattr(mapping, "rotation_round", 1) or 1),
             )
             for mapping in mappings
         ]

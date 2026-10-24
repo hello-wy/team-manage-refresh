@@ -79,6 +79,15 @@ class MemberRotationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("所有者", result["error"])
         self.team_service.delete_team_member.assert_not_awaited()
 
+    async def test_standard_member_is_not_rotated(self):
+        self.team_service.get_team_members.return_value["members"][0]["seat_type"] = "standard"
+
+        result = await self.service.rotate(1, "user-1", "old@example.com", object())
+
+        self.assertFalse(result["success"])
+        self.assertIn("高级席位", result["error"])
+        self.team_service.delete_team_member.assert_not_awaited()
+
     async def test_kick_success_without_candidate_is_explicit_partial_result(self):
         self.account_pool.invite_replacement.return_value = {
             "success": True,

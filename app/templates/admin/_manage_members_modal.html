@@ -18,7 +18,7 @@
                 <div class="member-summary-bar">
                     <div id="memberSeatSummary" class="member-seat-summary" role="status" aria-live="polite">正在读取席位数量...</div>
                     <div class="member-auto-kick-settings">
-                        <span class="member-auto-kick-title" title="仅控制高级席位，确认接受邀请后计时，可单独设置不参与自动下线。标准席位保留到 Team 到期，已有成员后不可更换席位类型，可手动踢出。所有者免下线。">
+                        <span class="member-auto-kick-title" title="仅控制高级席位，接受邀请后开始计时；开启自动轮转时到期自动踢出并邀请下一账号。轮转上限按席位账号数计算，标准席位保持不动。">
                             <i data-lucide="clock-3" aria-hidden="true"></i> 高级自动下线
                         </span>
                         <div class="member-auto-kick-controls">
@@ -26,6 +26,10 @@
                             <input id="memberAutoKickHours" class="form-control" type="number" value="2"
                                 min="1" max="8760" step="1" inputmode="numeric">
                             <span>小时</span>
+                            <label for="memberRotationRounds">轮转上限</label>
+                            <input id="memberRotationRounds" class="form-control" type="number" value="0"
+                                min="0" max="1000" step="1" inputmode="numeric" title="每个高级席位最多加入的账号数，0 表示不限制">
+                            <span>个账号</span>
                             <button id="memberAutoKickSaveBtn" type="button" class="btn btn-sm btn-primary"
                                 onclick="saveMemberAutoKickHours()">保存</button>
                         </div>

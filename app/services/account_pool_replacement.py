@@ -6,7 +6,11 @@ from app.models import MemberAuthorization, TeamEmailMapping
 from app.utils.time_utils import get_now
 
 
-async def mark_replacement_pending(db_session, team_id: int, email: str) -> None:
+async def mark_replacement_pending(
+    db_session, team_id: int, email: str, *,
+    rotation_lane: str | None = None,
+    rotation_round: int = 1,
+) -> None:
     mapping = (await db_session.execute(
         select(TeamEmailMapping).where(
             TeamEmailMapping.team_id == team_id,
@@ -21,6 +25,9 @@ async def mark_replacement_pending(db_session, team_id: int, email: str) -> None
         db_session.add(mapping)
     mapping.join_source = "rotation"
     mapping.replacement_export_pending = True
+    if rotation_lane:
+        mapping.rotation_lane = rotation_lane
+    mapping.rotation_round = max(1, int(rotation_round or 1))
 
     authorization = (await db_session.execute(
         select(MemberAuthorization).where(

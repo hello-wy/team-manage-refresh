@@ -20,7 +20,32 @@
 .rotation-quota-content { display: inline-block; vertical-align: top; }
 .rotation-member-actions { white-space: nowrap; text-align: right; }
 .rotation-member-action-disabled { color: var(--text-muted); display: inline-flex; padding: 0.4rem; }
-.rotation-result:not(:empty) { margin: 0.5rem 0; }
+.rotation-protected-seat { color: var(--success); font-weight: 600; }
+.rotation-result:not(:empty) {
+    margin: 0.5rem 0;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border-base);
+    border-radius: 0.4rem;
+    background: var(--surface-elev-1);
+    color: var(--text-main);
+}
+.rotation-history { margin-top: 0.75rem; }
+.rotation-history summary { cursor: pointer; color: var(--text-secondary); }
+.rotation-actions { display: grid; gap: 0.5rem; margin-top: 0.65rem; }
+.rotation-action-item {
+    display: grid;
+    grid-template-columns: minmax(9rem, 1.2fr) minmax(12rem, 1.8fr) auto minmax(15rem, 2.5fr);
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border-base);
+    border-radius: 0.45rem;
+    background: var(--bg-surface);
+}
+.rotation-action-meta { color: var(--text-secondary); font-size: 0.78rem; }
+.rotation-action-email { font-weight: 600; overflow-wrap: anywhere; }
+.rotation-action-detail { color: var(--text-secondary); font-size: 0.82rem; overflow-wrap: anywhere; }
+.rotation-action-badge { white-space: nowrap; }
 .rotation-page .rotation-table-container {
     display: block;
     width: 100%;
@@ -49,10 +74,15 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    border-radius: 50%;
+    gap: 0.2rem;
+    min-height: 1.35rem;
+    padding: 0 0.38rem;
+    border-radius: 0.35rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1;
 }
+.rotation-identity-icon span { white-space: nowrap; }
 .rotation-identity-icon svg {
     width: 0.85rem;
     height: 0.85rem;
@@ -65,4 +95,8 @@
     .rotation-page-header { flex-direction: row; }
     .rotation-quota-content { min-width: 170px; }
     .rotation-quota-refresh { margin-left: 0.5rem; }
+}
+@media (max-width: 720px) {
+    .rotation-action-item { grid-template-columns: 1fr auto; }
+    .rotation-action-detail { grid-column: 1 / -1; }
 }

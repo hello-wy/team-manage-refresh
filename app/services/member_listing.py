@@ -160,6 +160,7 @@ class MemberListingService:
             "total_seats": team.total_seats, "team_status": team.effective_status,
             "total": effective,
             "member_auto_kick_hours": team_auto_kick_hours(team),
+            "rotation_rounds": int(team.rotation_rounds or 0),
             "error": None,
         }
         if "pagination" in context.members:

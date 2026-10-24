@@ -190,7 +190,7 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         status = "invited"
     current = active[0] if len(team_options) == 1 else (None, None)
     seat_type = next((mapping.seat_type for mapping, _ in joined if mapping.seat_type), None)
-    current_team = current[1] if status == "joined" else workspace_team or current[1]
+    current_team = current[1] if status == "joined" else None
     current_usage = usages.get(current_team.id) if current_team else None
     row = {
         "id": entry.id,
@@ -218,10 +218,10 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         "export_job_error": job.error if job else None,
     }
     row.update(_workspace_data(entry, workspace_team, saved, teams))
-    # 当前已加入 Team 的额度优先于历史个人空间/导出选择；不修改用户的空间选择。
-    quota_team = current[1] if status == "joined" else workspace_team
-    row["quota_workspace_id"] = (quota_team.account_id if status == "joined" else
-                                 entry.workspace_id or (quota_team.account_id if quota_team else ""))
+    # Quota is meaningful for the current Team membership only. Keep the saved
+    # workspace and OAuth JSON for export/rejoin flows without querying its quota.
+    quota_team = current[1] if status == "joined" else None
+    row["quota_workspace_id"] = quota_team.account_id if quota_team else ""
     row["quota_team_id"] = quota_team.id if quota_team else None
     return row
 

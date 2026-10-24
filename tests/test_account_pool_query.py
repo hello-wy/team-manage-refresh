@@ -54,7 +54,7 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         return [row['email'] for row in listing['entries']]
 
     async def test_default_group_order_is_stable_across_pages_and_keeps_owners_unique(self):
-        whole = await self.listing()
+        whole = await self.listing(sort_by='team')
         self.assertEqual(whole['total'], 7)
         emails = self.emails(whole)
         self.assertEqual(emails[:5], ['owner1@example.com', 'premium@example.com', 'conflict@example.com', 'standard@example.com', 'owner2@example.com'])
@@ -65,10 +65,20 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             for index, entry in enumerate(reversed(entries)):
                 entry.updated_at = self.now + timedelta(days=index + 1)
             await db.commit()
-        self.assertEqual(self.emails(await self.listing()), emails)
-        pages = [await self.listing(page=i, per_page=2) for i in range(1, 5)]
+        self.assertEqual(self.emails(await self.listing(sort_by='team')), emails)
+        pages = [await self.listing(sort_by='team', page=i, per_page=2) for i in range(1, 5)]
         self.assertEqual([email for page in pages for email in self.emails(page)], emails)
-        self.assertEqual((await self.listing(page=999, per_page=2))['current_page'], 4)
+        self.assertEqual((await self.listing(sort_by='team', page=999, per_page=2))['current_page'], 4)
+
+    async def test_default_id_sort_is_numeric_and_synthetic_owners_follow(self):
+        listing = await self.listing()
+        persisted = [row['id'] for row in listing['entries'] if row['id'] > 0]
+        self.assertEqual(persisted, sorted(persisted))
+        self.assertTrue(all(row['id'] < 0 for row in listing['entries'][len(persisted):]))
+        descending = await self.listing(sort_by='id', sort_order='desc')
+        descending_ids = [row['id'] for row in descending['entries']]
+        descending_pool_ids = [entry_id for entry_id in descending_ids if entry_id > 0]
+        self.assertEqual(descending_pool_ids, sorted(descending_pool_ids, reverse=True))
 
     async def test_team_and_seat_must_match_same_membership(self):
         self.assertEqual(set(self.emails(await self.listing(team_filter='1', seat_filter='premium'))),
@@ -166,7 +176,7 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(load.call_args.args[1]), 2)
             self.assertEqual(listing['team_filter'], '')
             self.assertEqual(listing['seat_filter'], '')
-            self.assertEqual(listing['sort_by'], 'team')
+            self.assertEqual(listing['sort_by'], 'id')
             self.assertEqual(listing['rotation_filter'], '')
             self.assertEqual(listing['liveness_filter'], '')
 

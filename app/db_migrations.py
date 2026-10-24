@@ -213,6 +213,13 @@ def run_auto_migration():
             )
             migrations_applied.append("teams.pending_replacements")
 
+        if not column_exists(cursor, "teams", "rotation_rounds"):
+            logger.info("添加 teams.rotation_rounds 字段")
+            cursor.execute(
+                "ALTER TABLE teams ADD COLUMN rotation_rounds INTEGER NOT NULL DEFAULT 0"
+            )
+            migrations_applied.append("teams.rotation_rounds")
+
         if not table_exists(cursor, "team_replacement_queue"):
             logger.info("创建 team_replacement_queue 表")
             cursor.execute(
@@ -221,6 +228,9 @@ def run_auto_migration():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     team_id INTEGER NOT NULL,
                     seat_type VARCHAR(20) NOT NULL DEFAULT 'standard',
+                    lane_key VARCHAR(100),
+                    next_round INTEGER NOT NULL DEFAULT 1,
+                    excluded_entry_ids TEXT NOT NULL DEFAULT '[]',
                     created_at DATETIME NOT NULL,
                     FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
                 )
@@ -235,6 +245,8 @@ def run_auto_migration():
         if table_exists(cursor, "team_replacement_queue"):
             for column_name, column_type in {
                 "last_error_code": "VARCHAR(100)", "last_attempt_at": "DATETIME",
+                "lane_key": "VARCHAR(100)", "next_round": "INTEGER NOT NULL DEFAULT 1",
+                "excluded_entry_ids": "TEXT NOT NULL DEFAULT '[]'",
             }.items():
                 if not column_exists(cursor, "team_replacement_queue", column_name):
                     cursor.execute(f"ALTER TABLE team_replacement_queue ADD COLUMN {column_name} {column_type}")
@@ -269,6 +281,8 @@ def run_auto_migration():
                     missing_sync_count INTEGER NOT NULL DEFAULT 0,
                     is_admin_invited BOOLEAN NOT NULL DEFAULT 0,
                     replacement_export_pending BOOLEAN NOT NULL DEFAULT 0,
+                    rotation_lane VARCHAR(100),
+                    rotation_round INTEGER NOT NULL DEFAULT 1,
                     created_at DATETIME,
                     updated_at DATETIME,
                     FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
@@ -310,6 +324,8 @@ def run_auto_migration():
             "auto_kick_retry_at": "DATETIME",
             "last_invited_at": "DATETIME",
             "replacement_export_pending": "BOOLEAN NOT NULL DEFAULT 0",
+            "rotation_lane": "VARCHAR(100)",
+            "rotation_round": "INTEGER NOT NULL DEFAULT 1",
         }
         for column_name, column_type in mapping_columns.items():
             if table_exists(cursor, "team_email_mappings") and not column_exists(

@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from sqlalchemy import select
+
+from app.models import Team, TeamEmailMapping
 from app.services.member_authorization import MemberAuthorizationError
 from app.services.sub2api import Sub2apiError
 from app.utils.seats import normalize_seat_type
@@ -21,12 +24,36 @@ class MemberRotationService:
             return {"success": False, "error": "成员不存在或成员列表已变化，请刷新后重试"}
         if member.get("role") == "account-owner":
             return {"success": False, "error": "所有者账号不支持轮转"}
+        if normalize_seat_type(member.get("seat_type")) != "premium":
+            return {"success": False, "error": "仅高级席位支持轮转，标准席位保持不动"}
+
+        team = mapping = None
+        if hasattr(db_session, "get") and hasattr(db_session, "execute"):
+            team = await db_session.get(Team, team_id)
+            mapping = (await db_session.execute(select(TeamEmailMapping).where(
+                TeamEmailMapping.team_id == team_id,
+                TeamEmailMapping.email == member["email"],
+                TeamEmailMapping.status == "joined",
+            ))).scalar_one_or_none()
+        current_round = max(1, int(getattr(mapping, "rotation_round", 1) or 1))
+        max_rounds = max(0, int(getattr(team, "rotation_rounds", 0) or 0))
+        if mapping:
+            lane_key = getattr(mapping, "rotation_lane", None) or f"mapping:{mapping.id}"
+        else:
+            lane_key = f"member:{team_id}:{user_id}"
 
         deleted = await self.team_service.delete_team_member(
             team_id, user_id, db_session, email=member["email"]
         )
         if not deleted.get("success"):
             return {"success": False, "error": deleted.get("error") or "踢出当前成员失败"}
+
+        if max_rounds and current_round >= max_rounds:
+            return {
+                "success": True, "completed": False, "status": "rotation_finished",
+                "kicked_email": member["email"], "replacement_email": None,
+                "message": f"已踢出 {member['email']}；该高级席位已达到 {max_rounds} 个账号的轮转上限，不再邀请替补",
+            }
 
         seat_type = self._replacement_seat_type(member.get("seat_type"))
         replacement = await self.account_pool.invite_replacement(
@@ -38,6 +65,8 @@ class MemberRotationService:
                 )
             ),
             seat_type=seat_type or "standard",
+            rotation_lane=lane_key,
+            rotation_round=current_round + 1,
         )
         if replacement.get("status") != "invited":
             return self._partial_result(

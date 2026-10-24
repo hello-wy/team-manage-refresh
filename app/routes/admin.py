@@ -274,6 +274,7 @@ class MemberSeatTypeRequest(BaseModel):
 
 class MemberAutoKickHoursRequest(BaseModel):
     hours: int = Field(..., description="高级席位确认加入后自动下线的小时数，标准席位按 Team 到期下线")
+    rounds: Optional[int] = Field(None, ge=0, le=1000, description="每个高级席位允许加入的账号数，0 表示不限制")
 
 
 class MemberAutoKickParticipationRequest(BaseModel):
@@ -476,7 +477,7 @@ async def account_pool_page(
     current_user: dict = Depends(require_admin),
     team_filter: str = "",
     seat_filter: str = "",
-    sort_by: str = "team",
+    sort_by: str = "id",
     rotation_filter: str = "",
     liveness_filter: str = "",
     sort_order: str = "asc",
@@ -1631,7 +1632,9 @@ async def update_team_auto_kick_hours(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    result = await member_auto_kick_service.update_team_hours(team_id, payload.hours, db)
+    result = await member_auto_kick_service.update_team_hours(
+        team_id, payload.hours, db, rounds=payload.rounds,
+    )
     return JSONResponse(content=result, status_code=200 if result["success"] else 400)
 
 

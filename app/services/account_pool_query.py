@@ -9,6 +9,7 @@ from app.utils.team_names import team_display_name
 LIVENESS_FILTER_OPTIONS = {"alive": "正常", "abnormal": "异常", "unchecked": "未检测"}
 
 SORT_OPTIONS = {
+    "id": "ID",
     "team": "Team / 席位",
     "deadline": "下线时间优先",
     "newest": "最近添加",
@@ -29,7 +30,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     await ensure_team_owners_in_pool(db)
     rotation_filter = rotation_filter if rotation_filter in ROTATION_FILTER_OPTIONS else ""
     liveness_filter = liveness_filter if liveness_filter in LIVENESS_FILTER_OPTIONS else ""
-    sort_by = sort_by if sort_by in SORT_OPTIONS else "team"
+    sort_by = sort_by if sort_by in SORT_OPTIONS else "id"
     sort_order = "desc" if sort_order == "desc" else "asc"
     seat_filter = seat_filter if seat_filter in ("standard", "premium", "unknown") else ""
     status_filter = status_filter if status_filter in ("joined", "not_joined", "invited", "unassigned", "conflict") else ""
@@ -148,6 +149,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
         return column.desc() if sort_order == "desc" else column.asc()
 
     orders = {
+        "id": [identities.c.id < 0, direction(identities.c.id)],
         "team": [groups.c.team_id.is_(None), direction(groups.c.team_id), direction(primary_seat_rank),
                  groups.c.deadline.is_(None), direction(groups.c.deadline)],
         "deadline": [groups.c.deadline.is_(None), direction(groups.c.deadline), direction(groups.c.team_id)],

@@ -148,5 +148,6 @@ class AccountPoolOwnerTests(unittest.IsolatedAsyncioTestCase):
                 "status": "unavailable", "error": "缺少授权",
             })) as check:
                 response = await refresh_account_pool_usage(member.id, db, {})
-            self.assertIsNone(check.await_args.args[0])
-            self.assertIn("待授权", json.loads(response.body)["html"])
+            check.assert_not_awaited()
+            self.assertEqual(json.loads(response.body)["status"], "not_joined")
+            self.assertIn("-", json.loads(response.body)["html"])

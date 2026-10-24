@@ -155,6 +155,46 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.engine.dispose()
 
+    async def test_unjoined_accounts_keep_saved_workspace_but_do_not_query_its_quota(self):
+        from app.services.account_pool_quota import refresh_pool_quotas
+        from app.main import templates
+
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(
+                email="idle@example.com", workspace_id="old-personal",
+                workspace_status="personal_account", export_json_encrypted=self.payload("old-personal"),
+            )
+            db.add(entry)
+            await db.commit()
+
+            row = (await build_pool_entry_data(db, [entry]))[0]
+            self.assertEqual(row["status"], "unassigned")
+            self.assertEqual(row["workspace_id"], "old-personal")
+            self.assertFalse(row["quota_workspace_id"])
+            usage_service = unittest.mock.MagicMock()
+            usage_service.check_many = AsyncMock(side_effect=AssertionError("unjoined quota must not be queried"))
+            refreshed = await refresh_pool_quotas(db, [row], usage_service=usage_service)
+            usage_service.check_many.assert_not_awaited()
+            self.assertEqual(refreshed[0]["usage"]["status"], "not_joined")
+            self.assertIn("-", templates.get_template("admin/account_pool/_quota.html").render(
+                entry=refreshed[0],
+            ))
+
+            team = Team(email="owner@example.com", account_id="team-b", access_token_encrypted="unused")
+            db.add(team)
+            await db.flush()
+            db.add(TeamEmailMapping(team_id=team.id, email=entry.email, status="invited"))
+            await db.commit()
+            invited = (await build_pool_entry_data(db, [entry]))[0]
+            self.assertEqual(invited["status"], "invited")
+            self.assertFalse(invited["quota_workspace_id"])
+            refreshed_invite = await refresh_pool_quotas(db, [invited], usage_service=usage_service)
+            self.assertEqual(refreshed_invite[0]["usage"]["status"], "invited")
+            rendered = templates.get_template("admin/account_pool/_quota.html").render(
+                entry=refreshed_invite[0],
+            )
+            self.assertIn("等待加入 Team", rendered)
+
     @staticmethod
     def payload(space="team-a", token="member-token"):
         return encryption_service.encrypt_token(json.dumps({"accounts": [{
