@@ -52,7 +52,7 @@ from app.services.sub2api import (
 from app.services.encryption import encryption_service
 from app.services.member_auto_kick import member_auto_kick_service
 from app.services.member_rotation import MemberRotationService
-from app.services.seat_snapshot import attach_seat_snapshots
+from app.services.seat_snapshot import attach_seat_snapshots, refresh_list_seat_balance
 from app.services.replacement_export import ReplacementExportService
 from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, QuotaSnapshot, RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool_export import AccountPoolExportService, selected_workspace
@@ -1531,6 +1531,22 @@ async def team_members_list(
 
 class MemberSyncRequest(BaseModel):
     cursor: Optional[str] = None
+
+
+@router.post("/teams/{team_id}/seats/balance")
+async def refresh_team_list_seat_balance(
+    team_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    try:
+        result = await refresh_list_seat_balance(team_service, team_id, db)
+        return JSONResponse(content=result, status_code=200 if result["success"] else 400,
+                            headers={"Cache-Control": "no-store"})
+    except Exception:
+        logger.exception("自动读取 Team %s 席位余额失败", team_id)
+        return JSONResponse(content={"success": False, "error": "席位余额读取失败，请稍后重试"},
+                            status_code=500, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/teams/{team_id}/members/sync")

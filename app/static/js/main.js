@@ -2399,7 +2399,7 @@ async function viewMembers(teamId, teamEmail = '') {
 
     // 设置基本信息
     document.getElementById('modalTeamEmail').textContent = teamEmail;
-    selectMemberTab('joined');
+    selectMemberTab('seats');
 
     // 打开模态框
     showModal('manageMembersModal');
@@ -2432,7 +2432,10 @@ function updateTeamSeatKinds(teamId, seatBalance) {
     if (!balance?.standard?.known || !balance?.premium?.known) return;
     const usage = document.getElementById(`team-seat-usage-${teamId}`);
     if (!usage) return;
+    if (seatBalance.observed_at) usage.dataset.seatBalanceObservedAt = seatBalance.observed_at;
+    usage.dataset.seatBalanceState = 'done';
     usage.querySelector('.team-seat-kinds, .team-seat-hint')?.remove();
+    usage.querySelector('.team-seat-retry')?.remove();
     usage.insertAdjacentHTML('beforeend', renderTeamSeatKinds(balance));
 }
 

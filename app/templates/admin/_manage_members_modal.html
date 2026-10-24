@@ -38,7 +38,11 @@
                 </div>
 
                 <div class="member-tabs" role="tablist" aria-label="成员视图">
-                    <button type="button" role="tab" id="memberTabJoined" class="member-tab is-active" aria-selected="true"
+                    <button type="button" role="tab" id="memberTabSeats" class="member-tab is-active" aria-selected="true"
+                        aria-controls="memberPanelSeats" onclick="selectMemberTab('seats')">
+                        全部席位
+                    </button>
+                    <button type="button" role="tab" id="memberTabJoined" class="member-tab" aria-selected="false"
                         aria-controls="memberPanelJoined" onclick="selectMemberTab('joined')">
                         已加入 <span id="memberJoinedCount" class="member-tab-count">0</span>
                     </button>
@@ -52,7 +56,11 @@
                     </button>
                 </div>
 
-                <section id="memberPanelJoined" class="member-tab-panel" role="tabpanel" aria-labelledby="memberTabJoined">
+                <section id="memberPanelSeats" class="member-tab-panel" role="tabpanel" aria-labelledby="memberTabSeats">
+                    <div id="memberSeatsBoard"><p class="member-seats-message">正在同步完整席位信息...</p></div>
+                </section>
+
+                <section id="memberPanelJoined" class="member-tab-panel" role="tabpanel" aria-labelledby="memberTabJoined" hidden>
                     <div class="table-container member-table-scroll">
                         <table class="data-table">
                             <thead>

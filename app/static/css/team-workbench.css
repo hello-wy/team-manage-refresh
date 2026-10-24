@@ -1,0 +1,22 @@
+.team-row-actions { gap: .35rem; }
+.team-seat-retry { padding: 0; border: 0 !important; box-shadow: none !important; background: transparent; color: var(--text-muted); font: inherit; font-size: .72rem; text-align: left; cursor: pointer; }
+.team-seat-retry:hover { color: var(--primary); text-decoration: underline; }
+.team-row-actions .btn-team-more { gap: .3rem; padding: .4rem .6rem; color: var(--text-muted); background: transparent; border-color: var(--border-base); }
+.team-row-actions .btn-team-more:hover, .team-row-actions .btn-team-more[aria-expanded="true"] { color: var(--primary); background: var(--primary-soft); border-color: var(--primary); }
+.team-row-menu { position: fixed; inset: auto; z-index: 10000; width: 244px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); margin: 0; padding: .45rem; overflow-y: auto; box-sizing: border-box; border: 1px solid var(--border-base); border-radius: 14px; background: var(--bg-surface); color: var(--text-main); box-shadow: 0 8px 16px rgba(15, 23, 42, .06), 0 24px 60px rgba(15, 23, 42, .16); }
+.team-row-menu[hidden] { display: none; }
+.team-row-menu-header { display: grid; gap: .2rem; padding: .55rem .65rem .65rem; border-bottom: 1px solid var(--border-base); margin-bottom: .3rem; }
+.team-row-menu-title { font-size: .77rem; font-weight: 700; }
+.team-row-menu-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: .7rem; }
+.team-row-menu button { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 40px; padding: .6rem .65rem; border: 0; border-radius: 8px; background: transparent; color: var(--text-main); font: inherit; font-size: .79rem; text-align: left; cursor: pointer; }
+.team-row-menu button:hover:not(:disabled), .team-row-menu button:focus-visible { background: var(--bg-muted); outline: none; }
+.team-row-menu button:focus-visible { box-shadow: inset 0 0 0 2px var(--primary); }
+.team-row-menu button:disabled { color: var(--text-muted); opacity: .6; cursor: default; }
+.team-row-menu button i, .team-row-menu button svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); }
+.team-row-menu .is-danger, .team-row-menu .is-danger svg { color: var(--danger); }
+.team-row-menu .is-danger:hover, .team-row-menu .is-danger:focus-visible { background: var(--danger-soft); }
+.team-row-menu hr { margin: .3rem .4rem; border: 0; border-top: 1px solid var(--border-base); }
+@media (max-width: 768px) {
+    .team-row-actions .btn { min-height: 40px; }
+    .team-row-menu button { min-height: 44px; }
+}
