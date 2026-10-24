@@ -13,7 +13,8 @@ function harness() {
         if (!elements.has(id)) {
             const classes = new Set();
             elements.set(id, {
-                value: '', textContent: '', innerHTML: '', disabled: false,
+                value: '', textContent: '', innerHTML: '', disabled: false, attributes: {},
+                setAttribute(key, value) { this.attributes[key] = String(value); },
                 classList: {contains: key => classes.has(key), toggle: (key, on) => on ? classes.add(key) : classes.delete(key)},
             });
         }

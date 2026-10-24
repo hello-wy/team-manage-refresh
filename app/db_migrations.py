@@ -30,6 +30,22 @@ def column_exists(cursor, table_name, column_name):
     return column_name in columns
 
 
+def migrate_member_auto_kick_participation(cursor):
+    """Members only keep participating if the previous rules actually scheduled them."""
+    explicit_plan = ""
+    if column_exists(cursor, "team_email_mappings", "auto_kick_start_at"):
+        explicit_plan = " OR auto_kick_start_at IS NOT NULL"
+    cursor.execute(f"""
+        UPDATE team_email_mappings SET auto_kick_enabled = 0
+        WHERE status = 'joined' AND COALESCE(member_role, '') != 'account-owner' AND NOT (
+            auto_kick_at IS NOT NULL AND auto_kick_exempt = 0 AND (
+                seat_type IS NULL OR seat_type NOT IN ('standard', 'default')
+                OR standard_auto_kick_enabled = 1{explicit_plan}
+            )
+        )
+    """)
+
+
 def table_exists(cursor, table_name):
     """检查表是否存在"""
     cursor.execute(
@@ -277,6 +293,10 @@ def run_auto_migration():
             "auto_kick_exempt": "BOOLEAN NOT NULL DEFAULT 0",
             "standard_auto_kick_enabled": "BOOLEAN NOT NULL DEFAULT 0",
             "auto_kick_at": "DATETIME",
+            "auto_kick_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+            "auto_kick_failures": "INTEGER NOT NULL DEFAULT 0",
+            "auto_kick_last_error": "TEXT",
+            "auto_kick_retry_at": "DATETIME",
             "last_invited_at": "DATETIME",
             "replacement_export_pending": "BOOLEAN NOT NULL DEFAULT 0",
         }
@@ -289,6 +309,10 @@ def run_auto_migration():
                     f"ALTER TABLE team_email_mappings ADD COLUMN {column_name} {column_type}"
                 )
                 migrations_applied.append(f"team_email_mappings.{column_name}")
+
+        if "team_email_mappings.auto_kick_enabled" in migrations_applied:
+            migrate_member_auto_kick_participation(cursor)
+            migrations_applied.append("team_email_mappings.member_auto_kick_participation")
 
         cursor.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_team_email_unique

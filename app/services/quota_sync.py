@@ -5,9 +5,10 @@ import json
 from sqlalchemy import select
 
 from app.models import (AccountPoolEntry, AccountPoolHistory, AccountPoolWorkspace, QuotaSnapshot,
-                        RotationSeatSnapshot, Sub2apiExportRecord, Team, TeamEmailMapping)
+                        Sub2apiExportRecord, Team, TeamEmailMapping)
 from app.services.account_pool_team_usage import record_quota_observation
 from app.services.encryption import encryption_service
+from app.services.seat_snapshot import complete_balance, store_seat_snapshot
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -98,11 +99,8 @@ async def store_quota(db, *, email, space_id, seat_type, usage, team_id=None):
 
 async def refresh_team(db, team: Team, team_service, *, usage_service):
     members = await team_service.get_team_members(team.id, db)
-    balance = members.get("seat_balance") or {}
-    if not members.get("success") or not balance.get("success") or not all(
-        (balance.get("balance") or {}).get(kind, {}).get("known")
-        for kind in ("standard", "premium")
-    ):
+    balance = complete_balance(members.get("seat_balance"))
+    if not members.get("success") or balance is None:
         raise RuntimeError(members.get("error") or "成员列表或席位余额不完整")
     mappings = (await db.execute(select(TeamEmailMapping).where(
         TeamEmailMapping.team_id == team.id,
@@ -113,17 +111,7 @@ async def refresh_team(db, team: Team, team_service, *, usage_service):
         AccountPoolEntry.email == owner_email,
         AccountPoolEntry.deleted_at.is_(None),
     ))).scalar_one_or_none() if owner_email else None
-    seat_snapshot = await db.get(RotationSeatSnapshot, team.id)
-    if seat_snapshot is None:
-        seat_snapshot = RotationSeatSnapshot(team_id=team.id)
-        db.add(seat_snapshot)
-    standard = balance["balance"]["standard"]
-    premium = balance["balance"]["premium"]
-    seat_snapshot.standard_paid = standard["paid"]
-    seat_snapshot.standard_remaining = standard["remaining"]
-    seat_snapshot.premium_paid = premium["paid"]
-    seat_snapshot.premium_remaining = premium["remaining"]
-    seat_snapshot.observed_at = get_now()
+    await store_seat_snapshot(db, team.id, balance)
     keys = [(row.email, team.account_id) for row in mappings]
     if owner_entry and owner_email not in {row.email for row in mappings}:
         keys.append((owner_email, team.account_id))

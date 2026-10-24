@@ -287,15 +287,15 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(">所有者</span>", response.body.decode())
 
                 from app.models import TeamReplacementQueue
-                from app.utils.time_utils import get_now
                 db.add_all([AccountPoolEntry(email="candidate@example.com"),
-                            TeamReplacementQueue(team_id=team.id, seat_type="standard",
-                                                 last_error_code="seat_limit_exceeded", last_attempt_at=get_now())])
+                            TeamReplacementQueue(team_id=team.id, seat_type="standard")])
                 await db.commit()
                 response = await admin.account_pool_page(request, 1, 20, "candidate@", "", db, {"username": "admin"})
-                self.assertIn("等待标准席位空位", response.body.decode())
-                self.assertNotIn('data-replacement-at=""', response.body.decode())
-                self.assertNotIn("等待执行", response.body.decode())
+                body = response.body.decode()
+                self.assertIn(">空闲</span>", body)
+                self.assertIn("不会自动邀请", body)
+                self.assertNotIn("data-replacement-at", body)
+                self.assertNotIn("补位", body)
 
     async def test_multiple_teams_without_selected_workspace_are_not_guessed(self):
         async with self.sessions() as db:

@@ -9,9 +9,8 @@ from app.models import (QuotaSnapshot, RotationAction,
                         RotationMemberState, Team, TeamEmailMapping)
 from app.models import Sub2apiExportRecord
 from app.services.account_pool_replacement import mark_replacement_pending
-from app.services.quota_rotation_policy import ADMIN_ROLES, RotationDecision, next_action
+from app.services.quota_rotation_policy import ADMIN_ROLES, next_action
 from app.services.quota_sync import refresh_team
-from app.services.rotation_candidates import find_rotation_candidate
 from app.services.rotation_lease import acquire_lease, release_lease
 from app.utils.time_utils import get_now
 
@@ -22,7 +21,6 @@ OPEN_STATUSES = ("pending", "executing", "reconciling")
 class RotationDependencies:
     teams: object
     usage: object
-    pool: object
 
 
 async def load_rotation_data(db, team):
@@ -233,17 +231,6 @@ async def _run_locked(db, team, deps: RotationDependencies):
     await record_stages(db, team, mappings, snapshots=snapshots, states=states,
                         seat_balance=balance)
     decision = next_action(mappings, snapshots, states, balance)
-    if decision is None:
-        standard = members_result["seat_balance"]["balance"]["standard"]["remaining"]
-        if standard and not any(row.get("status") == "invited" for row in members_result["members"]):
-            candidate = await find_rotation_candidate(db, team, deps.pool)
-            if candidate:
-                decision = RotationDecision(candidate.email, "invite", "标准席位空缺")
-            else:
-                if team.rotation_mode == "dry_run":
-                    return {"status": "preview", "next_action": None,
-                            "blocked_reason": "暂无符合资格的标准席位候选账号"}
-                return {"status": "blocked", "reason": "暂无符合资格的标准席位候选账号"}
     if team.rotation_mode == "dry_run":
         return {"status": "preview", "next_action": vars(decision) if decision else None}
     if decision is None:
@@ -253,19 +240,4 @@ async def _run_locked(db, team, deps: RotationDependencies):
         if blocked:
             return blocked
     mapping = next((row for row in mappings if row.email == decision.email), None)
-    if decision.action != "invite":
-        return await execute_action(db, team, decision, mapping=mapping, team_service=deps.teams)
-    resource = f"candidate:{decision.email}"
-    holder = await acquire_lease(db, resource)
-    if not holder:
-        return {"status": "candidate_busy"}
-    try:
-        active = (await db.execute(select(TeamEmailMapping.id).where(
-            TeamEmailMapping.email == decision.email,
-            TeamEmailMapping.status.in_(("joined", "invited")),
-        ).limit(1))).scalar_one_or_none()
-        if active:
-            return {"status": "candidate_busy"}
-        return await execute_action(db, team, decision, mapping=mapping, team_service=deps.teams)
-    finally:
-        await release_lease(db, resource, holder)
+    return await execute_action(db, team, decision, mapping=mapping, team_service=deps.teams)

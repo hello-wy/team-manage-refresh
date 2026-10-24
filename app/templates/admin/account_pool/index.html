@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20260927-filters">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20261023-no-replacement">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -142,13 +142,12 @@
                         {% set rotation = entry.rotation or {} %}
                         <td data-label="轮转状态">
                             <div class="account-pool-rotation"{% if rotation.reason %} title="{{ rotation.reason }}"{% endif %}>
-                                <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'candidate' %}account-pool-candidate-badge{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
+                                <span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label or '待分配' }}</span>
                                 {% if rotation.exit_at %}
                                 <small class="account-pool-replacement-countdown" data-exit-at="{{ rotation.exit_at }}">下线时间 {{ rotation.exit_at|format_datetime }}</small>
                                 {% else %}
                                 {% if rotation.team_id %}<small>{{ rotation.team_name }} #{{ rotation.team_id }}</small>{% endif %}
-                                {% if rotation.replacement_at %}<small class="account-pool-replacement-countdown" data-replacement-at="{{ rotation.replacement_at }}">预计上线 {{ rotation.replacement_at|format_datetime }}</small>
-                                {% elif rotation.label not in ['等待排队', '所有者'] %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
+                                {% if rotation.label != '所有者' %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
                                 {% endif %}
                             </div>
                         </td>
@@ -290,7 +289,7 @@
 <script src="/static/js/account-pool-confirm.js?v=20260927-shared"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
-<script src="/static/js/account-pool.js?v=20261015-credential-editor"></script>
+<script src="/static/js/account-pool.js?v=20261023-no-replacement"></script>
 <script src="/static/js/account-pool-quota.js?v=20261015-1"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>

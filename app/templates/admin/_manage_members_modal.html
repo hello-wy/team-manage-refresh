@@ -6,93 +6,54 @@
                     <h3 id="modalTeamName">Team 成员管理</h3>
                     <small id="modalTeamEmail" class="text-muted" style="display: block; margin-top: 4px;"></small>
                 </div>
-                <button class="modal-close" onclick="hideModal('manageMembersModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="member-sync-toolbar">
-                    <p id="memberSyncStatus" class="text-muted" role="status" aria-live="polite"></p>
-                    <button type="button" class="btn btn-sm btn-secondary member-balance-refresh" onclick="loadModalMemberList(window.currentTeamId)">
-                        <i data-lucide="refresh-cw" aria-hidden="true"></i> 刷新余额
+                <div class="member-modal-header-actions">
+                    <button type="button" class="btn btn-sm btn-secondary member-balance-refresh" onclick="loadModalMemberList(window.currentTeamId)"
+                        title="重新同步成员与席位余额">
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i> 刷新
                     </button>
+                    <button class="modal-close" onclick="hideModal('manageMembersModal')" aria-label="关闭">&times;</button>
                 </div>
-                <div class="member-overview">
+            </div>
+            <div class="modal-body member-modal-body">
+                <div class="member-summary-bar">
                     <div id="memberSeatSummary" class="member-seat-summary" role="status" aria-live="polite">正在读取席位数量...</div>
                     <div class="member-auto-kick-settings">
-                        <span class="member-overview-icon member-overview-icon-clock" aria-hidden="true">
-                            <i data-lucide="clock-3"></i>
+                        <span class="member-auto-kick-title" title="从成员加入 Team 的时间开始计算；可在成员列表中逐个设置是否参与，Team 所有者不会自动下线。">
+                            <i data-lucide="clock-3" aria-hidden="true"></i> 自动下线
                         </span>
-                        <div class="member-auto-kick-content">
-                            <strong title="按成员实际加入时间计算；标准席位默认不会自动下线，可逐个手动开启；Team 所有者不会自动下线。">成员自动下线</strong>
-                            <div class="member-auto-kick-controls">
-                                <label for="memberAutoKickHours">加入后</label>
-                                <input id="memberAutoKickHours" class="form-control" type="number" value="2"
-                                    min="1" max="8760" step="1" inputmode="numeric"
-                                    aria-describedby="memberAutoKickHelp">
-                                <span>小时</span>
-                                <button id="memberAutoKickSaveBtn" type="button" class="btn btn-primary"
-                                    onclick="saveMemberAutoKickSettings()">
-                                    <i data-lucide="clock-3"></i> 保存
-                                </button>
-                            </div>
-                            <small id="memberAutoKickHelp" class="text-muted">标准席位默认不会自动下线，可逐个手动开启；所有者不会自动下线。</small>
+                        <div class="member-auto-kick-controls">
+                            <label for="memberAutoKickHours">加入后</label>
+                            <input id="memberAutoKickHours" class="form-control" type="number" value="2"
+                                min="1" max="8760" step="1" inputmode="numeric">
+                            <span>小时</span>
+                            <button id="memberAutoKickSaveBtn" type="button" class="btn btn-sm btn-primary"
+                                onclick="saveMemberAutoKickHours()">保存</button>
                         </div>
                     </div>
                 </div>
-                <div class="text-muted member-seat-hint">
-                    <span><i data-lucide="info" aria-hidden="true"></i>剩余席位已扣除邀请及待确认操作的预留。</span>
+                <div class="member-meta-line">
+                    <span id="memberSyncStatus" class="text-muted" role="status" aria-live="polite"></span>
+                    <span class="text-muted member-seat-hint">剩余席位已扣除邀请及待确认操作的预留</span>
+                    <span id="memberSeatBalanceError" class="text-muted" role="status"></span>
                 </div>
-                <p id="memberSeatBalanceError" class="text-muted" role="status"></p>
-                <!-- 原生折叠控件同时支持鼠标、键盘和屏幕阅读器。 -->
-                <details class="member-invite-panel">
-                    <summary class="member-invite-summary">
-                        <span class="member-overview-icon member-overview-icon-invite" aria-hidden="true">
-                            <i data-lucide="user-plus"></i>
-                        </span>
-                        <span class="member-invite-summary-copy">
-                            <strong>新增成员</strong>
-                            <small class="member-invite-collapsed-copy">点击展开邀请成员</small>
-                            <small class="member-invite-expanded-copy">填写邮箱或从账号号池选择</small>
-                        </span>
-                        <i data-lucide="chevron-down" class="member-invite-chevron" aria-hidden="true"></i>
-                    </summary>
-                    <form id="addMemberForm" class="member-invite-form" onsubmit="handleAddMember(event)">
-                        <div class="form-group member-invite-emails">
-                            <label for="memberEmails">新增成员邮箱</label>
-                            <textarea id="memberEmails" name="memberEmails" class="form-control" rows="4"
-                                oninput="updateMemberInviteAvailability()"
-                                placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com"></textarea>
-                            <small class="form-text">每行一个邮箱，或用逗号分隔；自动去重。</small>
-                        </div>
-                        <div class="form-group member-invite-seat">
-                            <label for="inviteSeatType">邀请席位类型</label>
-                            <select id="inviteSeatType" name="seatType" class="form-control" onchange="updateMemberInviteAvailability()">
-                                <option value="default">标准席位</option>
-                                <option value="premium">高级席位</option>
-                            </select>
-                            <small class="form-text">本批次所有邮箱使用所选类型。</small>
-                            <small id="memberInviteQuotaHint" class="form-text" aria-live="polite">正在读取余额...</small>
-                        </div>
-                        <div class="form-group member-pool-picker">
-                            <label for="memberPoolEmail">从账号号池选择</label>
-                            <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
-                                <option value="">正在读取可用账号...</option>
-                            </select>
-                            <small id="memberPoolEmailHint" class="form-text" aria-live="polite">上方显示 7 天内加入过的账号，下方显示 7 天内没有加入过的账号，均可选择。</small>
-                        </div>
-                        <div class="member-invite-actions">
-                            <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn" disabled>
-                                <i data-lucide="user-plus"></i> 发送邀请
-                            </button>
-                        </div>
-                    </form>
-                </details>
 
+                <div class="member-tabs" role="tablist" aria-label="成员视图">
+                    <button type="button" role="tab" id="memberTabJoined" class="member-tab is-active" aria-selected="true"
+                        aria-controls="memberPanelJoined" onclick="selectMemberTab('joined')">
+                        已加入 <span id="memberJoinedCount" class="member-tab-count">0</span>
+                    </button>
+                    <button type="button" role="tab" id="memberTabInvited" class="member-tab" aria-selected="false"
+                        aria-controls="memberPanelInvited" onclick="selectMemberTab('invited')">
+                        邀请中 <span id="memberInvitedCount" class="member-tab-count">0</span>
+                    </button>
+                    <button type="button" role="tab" id="memberTabInvite" class="member-tab" aria-selected="false"
+                        aria-controls="memberPanelInvite" onclick="selectMemberTab('invite')">
+                        <i data-lucide="user-plus" aria-hidden="true"></i> 邀请成员
+                    </button>
+                </div>
 
-
-                <!-- 已加入成员 -->
-                <div class="content-section" style="margin-bottom: 1.5rem;">
-                    <h4 style="margin-bottom: 1rem; color: var(--success);">已加入成员</h4>
-                    <div class="table-container" style="max-height: 250px; overflow-y: auto; margin: 0;">
+                <section id="memberPanelJoined" class="member-tab-panel" role="tabpanel" aria-labelledby="memberTabJoined">
+                    <div class="table-container member-table-scroll">
                         <table class="data-table">
                             <thead>
                                 <tr>
@@ -109,19 +70,18 @@
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </section>
 
-                <!-- 待加入成员 -->
-                <div class="content-section" style="margin: 0;">
+                <section id="memberPanelInvited" class="member-tab-panel" role="tabpanel" aria-labelledby="memberTabInvited" hidden>
                     <div class="member-invited-header">
-                        <h4>待加入成员 (邀请中)</h4>
+                        <span class="text-muted">已发送邀请、尚未加入的成员</span>
                         <button id="copyInvitedMemberCredentialsBtn" type="button" class="btn btn-sm btn-secondary"
                             onclick="window.invitedMemberCredentials.copy()" title="每行复制账号----密码----2fa（密钥）" disabled>
                             <i data-lucide="copy" aria-hidden="true"></i>
                             <span id="copyInvitedMemberCredentialsLabel">批量复制账号</span>
                         </button>
                     </div>
-                    <div class="table-container" style="max-height: 250px; overflow-y: auto; margin: 0;">
+                    <div class="table-container member-table-scroll">
                         <table class="data-table">
                             <thead>
                                 <tr>
@@ -137,7 +97,40 @@
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </section>
+
+                <section id="memberPanelInvite" class="member-tab-panel member-invite-tab" role="tabpanel" aria-labelledby="memberTabInvite" hidden>
+                <form id="addMemberForm" class="member-invite-form" onsubmit="handleAddMember(event)">
+                    <div class="form-group member-invite-emails">
+                        <label for="memberEmails">新增成员邮箱</label>
+                        <textarea id="memberEmails" name="memberEmails" class="form-control" rows="4"
+                            oninput="updateMemberInviteAvailability()"
+                            placeholder="每行一个邮箱，也支持用逗号分隔&#10;user1@example.com&#10;user2@example.com"></textarea>
+                        <small class="form-text">每行一个邮箱，或用逗号分隔；自动去重。</small>
+                    </div>
+                    <div class="form-group member-invite-seat">
+                        <label for="inviteSeatType">邀请席位类型</label>
+                        <select id="inviteSeatType" name="seatType" class="form-control" onchange="updateMemberInviteAvailability()">
+                            <option value="default">标准席位</option>
+                            <option value="premium">高级席位</option>
+                        </select>
+                        <small class="form-text">本批次所有邮箱使用所选类型。</small>
+                        <small id="memberInviteQuotaHint" class="form-text" aria-live="polite">正在读取余额...</small>
+                    </div>
+                    <div class="form-group member-pool-picker">
+                        <label for="memberPoolEmail">从账号号池选择</label>
+                        <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
+                            <option value="">正在读取可用账号...</option>
+                        </select>
+                        <small id="memberPoolEmailHint" class="form-text" aria-live="polite">上方显示 7 天内加入过的账号，下方显示 7 天内没有加入过的账号，均可选择。</small>
+                    </div>
+                    <div class="member-invite-actions">
+                        <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn" disabled>
+                            <i data-lucide="user-plus"></i> 发送邀请
+                        </button>
+                    </div>
+                </form>
+                </section>
             </div>
         </div>
     </div>

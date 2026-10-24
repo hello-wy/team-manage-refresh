@@ -78,8 +78,8 @@ class MemberBatchTests(unittest.IsolatedAsyncioTestCase):
             TeamEmailMapping.email == "member11@example.com",
         ))).scalar_one()
         self.assertEqual(mapping.member_name, "Member 11")
-        self.assertIsNone(mapping.auto_kick_at)
-        self.assertTrue(final["members"][-1]["auto_kick_exempt"])
+        self.assertIsNotNone(mapping.auto_kick_at)
+        self.assertTrue(final["members"][-1]["auto_kick_enabled"])
 
     async def test_partial_sync_does_not_mark_unseen_members_missing(self):
         later = TeamEmailMapping(team_id=1, email="member11@example.com", status="joined",

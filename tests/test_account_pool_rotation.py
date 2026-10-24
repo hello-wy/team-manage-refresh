@@ -6,13 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.database import Base
 from app.models import (
-    AccountPoolEntry, AccountPoolHistory, MemberAuthorization, QuotaSnapshot,
-    RotationAction, RotationMemberState, RotationSeatSnapshot, Sub2apiExportRecord,
+    AccountPoolEntry, QuotaSnapshot, RotationAction, RotationSeatSnapshot, Sub2apiExportRecord,
     Team, TeamEmailMapping, TeamReplacementQueue,
 )
-from app.services.account_pool import account_pool_service
 from app.services.account_pool_rotation import attach_rotation_status
-from app.services.rotation_candidates import find_rotation_candidate
 from app.utils.time_utils import get_now
 
 
@@ -27,14 +24,14 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.engine.dispose()
 
-    async def team(self, db, id=1, mode="auto", standard=1, premium=1, fresh=True):
+    async def team(self, db, id=1, mode="auto", standard=1, premium=1):
         team = Team(id=id, email=f"owner-{id}@example.com", account_id=f"space-{id}",
                     team_name=f"Team {id}", access_token_encrypted="unused",
                     rotation_mode=mode, status="active")
         db.add(team)
         db.add(RotationSeatSnapshot(team_id=id, standard_paid=4, premium_paid=2,
                                     standard_remaining=standard, premium_remaining=premium,
-                                    observed_at=self.now - timedelta(minutes=0 if fresh else 6)))
+                                    observed_at=self.now))
         await db.flush()
         return team
 
@@ -44,114 +41,48 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
         await db.flush()
         return entry
 
-    def quota(self, db, email, space="space-1", seat="standard", remaining=0, fresh=True):
+    def quota(self, db, email, space="space-1", seat="standard", remaining=0):
         db.add(QuotaSnapshot(email=email, team_space_id=space, observed_seat_type=seat,
                              weekly_remaining=remaining, weekly_limit=100, status="ok",
-                             observed_at=self.now - timedelta(minutes=0 if fresh else 6)))
+                             observed_at=self.now))
 
     async def view(self, db, *entries):
         rows = [{"id": e.id, "email": e.email} for e in entries]
         return {row["email"]: row["rotation"] for row in await attach_rotation_status(db, rows)}
 
-    async def test_full_pool_fifo_is_independent_of_page_and_does_not_double_assign(self):
+    async def test_idle_accounts_are_never_predicted_to_join(self):
         async with self.sessions() as db:
-            await self.team(db, 1)
-            await self.team(db, 2)
-            first = await self.entry(db, "first", 0)
-            second = await self.entry(db, "second", 1)
-            third = await self.entry(db, "third", 2)
-            await db.commit()
-            all_rows = await self.view(db, first, second, third)
-            page = await self.view(db, second)
-            self.assertEqual(all_rows[first.email]["team_id"], 1)
-            self.assertEqual(all_rows[second.email]["team_id"], 2)
-            self.assertEqual(page[second.email], all_rows[second.email])
-            self.assertEqual(all_rows[third.email]["label"], "等待排队")
-            self.assertIsNone(all_rows[third.email]["team_id"])
-
-    async def test_candidate_restrictions_match_executor(self):
-        async with self.sessions() as db:
-            team = await self.team(db)
-            entries = [await self.entry(db, name, i) for i, name in enumerate(
-                ("cooldown", "exported", "uncertain", "old-quota", "zero-quota", "eligible"))]
-            db.add(TeamEmailMapping(team_id=1, email=entries[0].email, status="removed",
-                                    last_invited_at=self.now - timedelta(days=1)))
-            db.add(Sub2apiExportRecord(email=entries[1].email, team_space_id="space-1", team_id=1))
-            db.add(MemberAuthorization(team_id=1, account_id="space-1", email=entries[2].email,
-                                       sub2api_import_uncertain=True))
-            for entry in entries[3:]:
-                db.add(AccountPoolHistory(account_pool_id=entry.id, team_id=1,
-                                           joined_at=self.now - timedelta(days=10)))
-            self.quota(db, entries[3].email, remaining=80, fresh=False)
-            self.quota(db, entries[4].email, remaining=0)
-            self.quota(db, entries[5].email, remaining=80)
-            await db.commit()
-            actual = await find_rotation_candidate(db, team, account_pool_service)
-            views = await self.view(db, *entries)
-            self.assertEqual(actual.email, entries[5].email)
-            self.assertEqual(views[actual.email]["team_id"], 1)
-            for entry in entries[:5]:
-                self.assertIsNone(views[entry.email]["team_id"])
-                self.assertEqual(views[entry.email]["label"], "等待资格恢复")
-            self.assertIn("7 天", views[entries[0].email]["reason"])
-
-    async def test_stale_seats_or_no_rotation_do_not_invent_a_target(self):
-        async with self.sessions() as db:
-            await self.team(db, fresh=False)
+            await self.team(db, id=1, mode="auto", standard=2)
             await self.team(db, id=2, mode="off")
-            entry = await self.entry(db, "candidate")
+            db.add(TeamReplacementQueue(team_id=2, seat_type="standard"))
+            idle = await self.entry(db, "idle")
             await db.commit()
-            view = (await self.view(db, entry))[entry.email]
+            view = (await self.view(db, idle))[idle.email]
+            self.assertEqual(view["label"], "空闲")
+            self.assertEqual(view["kind"], "idle")
             self.assertIsNone(view["team_id"])
-            self.assertIn("最新席位", view["reason"])
+            self.assertIn("不会自动邀请", view["reason"])
+            self.assertNotIn("replacement_at", view)
 
-    async def test_dry_run_does_not_claim_candidates_from_auto_teams(self):
-        async with self.sessions() as db:
-            await self.team(db, id=1, mode="dry_run")
-            await self.team(db, id=2)
-            first = await self.entry(db, "first", 0)
-            second = await self.entry(db, "second", 1)
-            await db.commit()
-            views = await self.view(db, first, second)
-            self.assertEqual(views[first.email]["team_id"], 2)
-            self.assertEqual(views[first.email]["label"], "预计加入")
-            self.assertEqual(views[second.email]["team_id"], 1)
-            self.assertEqual(views[second.email]["label"], "仅预览")
-
-    async def test_pending_actions_block_team_and_reserve_account(self):
+    async def test_pending_actions_show_upstream_confirmation(self):
         async with self.sessions() as db:
             await self.team(db, id=1)
-            await self.team(db, id=2)
-            first = await self.entry(db, "pending")
-            second = await self.entry(db, "available", 1)
-            db.add(RotationAction(team_id=1, email=first.email, action_type="invite",
+            pending = await self.entry(db, "pending")
+            idle = await self.entry(db, "idle", 1)
+            db.add(RotationAction(team_id=1, email=pending.email, action_type="invite",
                                    status="reconciling", idempotency_key="pending-invite"))
             await db.commit()
-            views = await self.view(db, first, second)
-            self.assertEqual(views[first.email]["label"], "邀请确认中")
-            self.assertEqual(views[first.email]["team_id"], 1)
-            self.assertEqual(views[second.email]["team_id"], 2)
+            views = await self.view(db, pending, idle)
+            self.assertEqual(views[pending.email]["label"], "邀请确认中")
+            self.assertEqual(views[pending.email]["team_id"], 1)
+            self.assertEqual(views[idle.email]["label"], "空闲")
 
-    async def test_legacy_replacement_queue_preserves_seat_type_and_fifo(self):
-        async with self.sessions() as db:
-            await self.team(db, mode="off")
-            for kind in ("premium", "standard"):
-                db.add(TeamReplacementQueue(team_id=1, seat_type=kind))
-            first = await self.entry(db, "first", 0)
-            second = await self.entry(db, "second", 1)
-            await db.commit()
-            views = await self.view(db, first, second)
-            self.assertIn("高级席位", views[first.email]["reason"])
-            self.assertIn("标准席位", views[second.email]["reason"])
-            self.assertEqual(views[first.email]["team_id"], 1)
-
-    async def test_member_stages_do_not_pretend_to_move_between_teams(self):
+    async def test_member_stages_stay_in_their_team(self):
         async with self.sessions() as db:
             await self.team(db, id=1)
-            await self.team(db, id=2)
             entries = []
             cases = [("standard", "standard", None, 0, "待升高级"),
-                     ("premium", "premium", None, 0, "待退出后匹配"),
+                     ("premium", "premium", None, 0, "等待退出"),
                      ("owner", "premium", "account-owner", 0, "待降标准"),
                      ("using", "standard", None, 50, "继续使用"),
                      ("exported", "premium", None, 0, "轮转受阻")]
@@ -166,84 +97,52 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             views = await self.view(db, *entries)
             for entry, case in zip(entries, cases):
                 self.assertEqual(views[entry.email]["label"], case[-1])
-                self.assertEqual(views[entry.email]["team_id"], None if case[0] == "premium" else 1)
+                self.assertEqual(views[entry.email]["team_id"], 1)
+            self.assertIn("不会自动补位", views[entries[1].email]["reason"])
 
-    async def test_legacy_queue_without_fresh_capacity_predicts_one_per_seat(self):
-        async with self.sessions() as db:
-            await self.team(db, mode="off", fresh=False)
-            db.add_all([TeamReplacementQueue(team_id=1, seat_type="premium"),
-                        TeamReplacementQueue(team_id=1, seat_type="standard")])
-            first = await self.entry(db, "first", 0)
-            second = await self.entry(db, "second", 1)
-            await db.commit()
-            views = await self.view(db, first, second)
-            self.assertEqual(views[first.email]["label"], "候选补位")
-            self.assertEqual(views[first.email]["team_id"], 1)
-            self.assertIn("等待席位余额确认", views[first.email]["reason"])
-            self.assertEqual(views[second.email]["team_id"], 1)
-
-    async def test_queue_reports_recent_execution_blocker_without_fake_countdown(self):
-        async with self.sessions() as db:
-            await self.team(db, mode="off", fresh=False)
-            item = TeamReplacementQueue(team_id=1, seat_type="standard", last_attempt_at=self.now,
-                                        last_error_code="seat_limit_exceeded")
-            db.add_all([item, TeamReplacementQueue(team_id=1, seat_type="premium")])
-            first = await self.entry(db, "first")
-            second = await self.entry(db, "second", 1)
-            await db.commit()
-            for code, expected in (("seat_limit_exceeded", "等待标准席位空位"),
-                                   ("seat_balance_unavailable", "等待席位余额确认"),
-                                   ("ghost_success", "邀请未在上游确认"),
-                                   ("upstream_failed", "上次邀请失败")):
-                item.last_error_code = code
-                await db.commit()
-                views = await self.view(db, first, second)
-                self.assertEqual(views[first.email]["label"], "候选补位")
-                self.assertIn(expected, views[first.email]["reason"])
-                self.assertIsNone(views[first.email]["replacement_at"])
-                self.assertEqual(views[second.email]["team_id"], 1)
-            item.last_attempt_at = self.now - timedelta(minutes=6)
-            await db.commit()
-            view = (await self.view(db, first))[first.email]
-            self.assertIn("等待席位余额确认", view["reason"])
-            self.assertNotIn("邀请失败", view["reason"])
-
-    async def test_zero_standard_capacity_does_not_block_premium_prediction(self):
-        async with self.sessions() as db:
-            await self.team(db, mode="off", standard=0, premium=2)
-            db.add_all([TeamReplacementQueue(team_id=1, seat_type="standard"),
-                        TeamReplacementQueue(team_id=1, seat_type="premium")])
-            first = await self.entry(db, "first")
-            second = await self.entry(db, "second", 1)
-            await db.commit()
-            views = await self.view(db, first, second)
-            self.assertEqual(views[first.email]["label"], "候选补位")
-            self.assertIn("等待标准席位空位", views[first.email]["reason"])
-            self.assertIsNone(views[first.email]["replacement_at"])
-            self.assertEqual(views[second.email]["team_id"], 1)
-
-    async def test_invited_conflicted_and_exempt_members(self):
+    async def test_invited_conflicted_non_participating_and_pending_members(self):
         async with self.sessions() as db:
             await self.team(db, mode="off")
             await self.team(db, id=2, mode="off")
             invited = await self.entry(db, "invited")
             conflict = await self.entry(db, "conflict")
             exempt = await self.entry(db, "exempt")
+            kept = await self.entry(db, "kept")
             db.add_all([
                 TeamEmailMapping(team_id=1, email=invited.email, status="invited"),
                 TeamEmailMapping(team_id=1, email=conflict.email, status="joined"),
                 TeamEmailMapping(team_id=2, email=conflict.email, status="joined"),
-                TeamEmailMapping(team_id=1, email=exempt.email, status="joined", auto_kick_exempt=True),
+                TeamEmailMapping(team_id=1, email=exempt.email, status="joined", auto_kick_enabled=False),
+                TeamEmailMapping(team_id=2, email=kept.email, status="joined", upstream_user_id="user-kept"),
             ])
             await db.commit()
-            views = await self.view(db, invited, conflict, exempt)
+            views = await self.view(db, invited, conflict, exempt, kept)
             self.assertEqual(views[invited.email]["label"], "待接受邀请")
             self.assertEqual(views[invited.email]["team_id"], 1)
             self.assertEqual(views[conflict.email]["label"], "归属冲突")
             self.assertIsNone(views[conflict.email]["team_id"])
             self.assertEqual(views[exempt.email]["label"], "保留当前 Team")
+            self.assertEqual(views[exempt.email]["reason"], "未参与自动下线")
+            self.assertEqual(views[kept.email]["label"], "待确认下线计划")
 
-    async def test_preview_is_read_only_and_uses_batched_queries(self):
+    async def test_timed_exit_counts_down_without_scheduling_a_replacement(self):
+        async with self.sessions() as db:
+            await self.team(db, mode="off", standard=0)
+            leaving = await self.entry(db, "leaving")
+            idle = await self.entry(db, "idle", 1)
+            deadline = self.now + timedelta(minutes=25)
+            db.add(TeamEmailMapping(team_id=1, email=leaving.email, status="joined",
+                                    standard_auto_kick_enabled=True, seat_type="standard",
+                                    upstream_user_id="user-1", member_role="standard-user",
+                                    auto_kick_at=deadline))
+            await db.commit()
+            views = await self.view(db, leaving, idle)
+            self.assertEqual(views[leaving.email]["label"], "定时下线")
+            self.assertTrue(views[leaving.email]["exit_at"].startswith(deadline.isoformat()))
+            self.assertIn("不会自动补位", views[leaving.email]["reason"])
+            self.assertEqual(views[idle.email]["label"], "空闲")
+
+    async def test_status_is_read_only_and_uses_batched_queries(self):
         async with self.sessions() as db:
             await self.team(db)
             entries = [await self.entry(db, f"member-{i}", i) for i in range(50)]
@@ -256,49 +155,11 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
                 await self.view(db, *entries)
             finally:
                 event.remove(self.engine.sync_engine, "before_cursor_execute", capture)
-            self.assertEqual(len(statements), 11)
+            self.assertEqual(len(statements), 6)
             self.assertTrue(all(statement.lstrip().upper().startswith("SELECT") for statement in statements))
             self.assertFalse(db.new or db.dirty or db.deleted)
             self.assertEqual((await db.execute(select(RotationAction))).scalars().all(), [])
 
-    async def test_scheduled_replacement_counts_down_to_member_exit_without_inviting(self):
-        async with self.sessions() as db:
-            await self.team(db, mode="off", standard=0, fresh=False)
-            candidate = await self.entry(db, "candidate")
-            leaving = await self.entry(db, "leaving")
-            deadline = self.now + timedelta(minutes=25)
-            db.add_all([
-                TeamEmailMapping(team_id=1, email="leaving@example.com", status="joined",
-                                 standard_auto_kick_enabled=True,
-                                 seat_type="standard", upstream_user_id="user-1", member_role="standard-user", auto_kick_at=deadline),
-                TeamEmailMapping(team_id=1, email="owner-1@example.com", status="joined",
-                                 seat_type="premium", upstream_user_id="owner", auto_kick_at=self.now,
-                                 member_role="account-owner"),
-            ])
-            await db.commit()
-            views = await self.view(db, candidate, leaving)
-            view = views[candidate.email]
-            self.assertEqual(view["label"], "候选补位")
-            self.assertEqual(view["kind"], "candidate")
-            self.assertTrue(view["scheduled_replacement"])
-            self.assertTrue(view["replacement_at"].startswith(deadline.isoformat()))
-            self.assertEqual(views[leaving.email]["exit_at"], view["replacement_at"])
-            self.assertEqual(views[leaving.email]["label"], "定时下线")
-            self.assertEqual((await db.execute(select(RotationAction))).scalars().all(), [])
-            self.assertFalse(db.new or db.dirty)
 
-    async def test_live_vacancy_has_priority_over_future_scheduled_replacement(self):
-        async with self.sessions() as db:
-            await self.team(db, 1, mode="off")
-            await self.team(db, 2)
-            first = await self.entry(db, "first")
-            second = await self.entry(db, "second", 1)
-            db.add(TeamEmailMapping(team_id=1, email="leaving@example.com", status="joined",
-                                   upstream_user_id="user-1", seat_type="premium", member_role="standard-user",
-                                   auto_kick_at=self.now + timedelta(hours=1)))
-            await db.commit()
-            views = await self.view(db, first, second)
-            self.assertEqual(views[first.email]["team_id"], 2)
-            self.assertEqual(views[second.email]["team_id"], 1)
-            self.assertIn("高级席位", views[second.email]["reason"])
-            self.assertIn("replacement_at", views[second.email])
+if __name__ == "__main__":
+    unittest.main()
