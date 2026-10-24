@@ -3,8 +3,8 @@
                                     {% if entry.is_owner %}<div><dt>所有者 Team</dt><dd>{% for team in entry.owner_teams %}{{ team.name }}{% if not loop.last %}、{% endif %}{% endfor %}</dd></div>{% endif %}
                                     <div><dt>当前 2FA 验证码</dt><dd>{% if entry.is_virtual_owner %}未保存{% else %}<totp-code data-email="{{ entry.email }}"></totp-code>{% endif %}</dd></div>
                                     <div><dt>最近加入时间</dt><dd>{{ entry.joined_at|format_datetime }}</dd></div>
-                                    <div><dt>验活检查时间</dt><dd>{{ entry.liveness_checked_at|format_datetime }}</dd></div>
-                                    <div><dt>验活详情</dt><dd>{{ entry.liveness_message or '暂无详情' }}</dd></div>
+                                    <div><dt>验活检查时间</dt><dd data-liveness-checked>{{ entry.liveness_checked_at|format_datetime }}</dd></div>
+                                    <div><dt>验活详情</dt><dd data-liveness-message>{{ entry.liveness_message or '暂无详情' }}</dd></div>
                                     <div><dt>额度检查时间</dt><dd>{{ team_usage.quota_checked_at|default(none)|format_datetime }}</dd></div>
                                     <div><dt>额度读取结果</dt><dd>{{ usage.get('error') or ('读取成功' if usage.get('status') == 'ok' else '尚未获取额度') }}</dd></div>
                                     <div><dt>轮转状态</dt><dd>{{ rotation.label or '待分配' }}{% if rotation.team_id %} · {{ rotation.team_name }} #{{ rotation.team_id }}{% endif %}{% if rotation.reason %} · {{ rotation.reason }}{% endif %}</dd></div>
@@ -21,7 +21,6 @@
                                     {% else %}<span class="account-pool-team-name">{{ current_team_label }}</span>{% endif %}
                                 </div>
                                 <div class="account-pool-detail-actions">
-                                <button type="button" class="btn btn-sm btn-secondary account-pool-entry-liveness" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}"><i data-lucide="activity" aria-hidden="true"></i> 单独验活</button>
                                 {% if entry.is_virtual_owner %}<p class="text-muted">所有者使用 Team Token 验活。可在上方补充登录密码和 2FA 密钥，保存后可重新登录。</p>{% else %}
                                 {% if entry.is_owner %}<p class="text-muted">所有者不参与跨 Team 补位，禁止加入其他 Team、删除或更换 2FA。</p>{% endif %}
                                 <button

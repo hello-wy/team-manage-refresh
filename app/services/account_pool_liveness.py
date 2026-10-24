@@ -1,5 +1,5 @@
-"""Scheduled OAuth verification and workspace refresh for account-pool entries."""
-import json
+"""Verify a single account without logging in to every workspace or exporting JSON."""
+import asyncio
 import logging
 
 from sqlalchemy import func, select, update
@@ -15,39 +15,67 @@ from app.utils.time_utils import get_now
 
 logger = logging.getLogger(__name__)
 INVALID_ACCOUNT_CODES = frozenset({"invalid_username_or_password", "account_deactivated"})
+CHECK_TIMEOUT_SECONDS = 60
+
+
+class LivenessCheckInProgressError(ValueError):
+    pass
 
 
 class AccountPoolLivenessService:
-    def __init__(self, credential_service, authorization_service: AccountPoolAuthorizationService, team_service=None):
+    def __init__(self, credential_service, authorization_service: AccountPoolAuthorizationService, team_service=None,
+                 *, timeout_seconds=CHECK_TIMEOUT_SECONDS):
         self._credentials = credential_service
         self._authorization = authorization_service
-        self._owners = AccountPoolOwnerLivenessService(team_service) if team_service else None
+        self._timeout_seconds = timeout_seconds
+        self._owners = AccountPoolOwnerLivenessService(team_service, timeout_seconds=timeout_seconds) if team_service else None
+        self._checking = set()
 
     async def check_entry(self, session: AsyncSession, entry_id: int) -> str | None:
+        model = Team if entry_id < 0 else AccountPoolEntry
+        record = await session.get(model, abs(entry_id))
+        if record is None or (entry_id > 0 and record.deleted_at is not None):
+            return None
+        email = record.email.strip().lower()
+        if email in self._checking:
+            raise LivenessCheckInProgressError("该账号正在验活，请等待本次检查完成")
+        self._checking.add(email)
+        try:
+            return await self._check_entry(session, entry_id)
+        finally:
+            self._checking.discard(email)
+
+    async def _check_entry(self, session: AsyncSession, entry_id: int) -> str | None:
         if entry_id < 0:
             return await self._owners.check(session, -entry_id) if self._owners else None
         entry = await session.get(AccountPoolEntry, entry_id)
         if entry is None or entry.deleted_at is not None:
             return None
         version = (entry.password_encrypted, entry.two_factor_secret_encrypted)
-        credentials = await self._credentials.get_credentials(session, entry.email)
-        if not credentials or not credentials["password"]:
-            if self._owners:
-                owner_team_id = (await session.execute(select(Team.id).where(
-                    func.lower(func.trim(Team.email)) == entry.email.strip().lower(),
-                ).order_by(Team.id))).scalars().first()
-                if owner_team_id:
-                    return await self._owners.check(session, owner_team_id)
-            return await self._save_failure(session, entry_id, version, "missing", "未保存登录密码")
         try:
-            return await self._refresh_workspaces(session, entry, version)
+            credentials = await self._credentials.get_credentials(session, entry.email)
+            if not credentials or not credentials["password"]:
+                if self._owners:
+                    owner_team_id = (await session.execute(select(Team.id).where(
+                        func.lower(func.trim(Team.email)) == entry.email.strip().lower(),
+                    ).order_by(Team.id))).scalars().first()
+                    if owner_team_id:
+                        return await self._owners.check(session, owner_team_id)
+                return await self._save_status(session, entry_id, version, "missing", "未保存登录密码")
+            await asyncio.wait_for(
+                self._authorization.scan_entry(session, entry_id, identifier=f"account-pool-liveness-{entry_id}"),
+                timeout=self._timeout_seconds,
+            )
+            return await self._save_status(session, entry_id, version, "alive", "密码、2FA 登录验证通过")
+        except asyncio.TimeoutError:
+            return await self._save_status(session, entry_id, version, "error", "验活超时，请检查网络或代理后重试")
         except AccountPoolAuthorizationError as exc:
             message = str(exc)
             status = "invalid" if any(code in message for code in INVALID_ACCOUNT_CODES) else "error"
-            return await self._save_failure(session, entry_id, version, status, message)
+            return await self._save_status(session, entry_id, version, status, message)
         except Exception:
             logger.exception("账号验活异常: entry_id=%s", entry_id)
-            return await self._save_failure(
+            return await self._save_status(
                 session,
                 entry_id,
                 version,
@@ -55,28 +83,7 @@ class AccountPoolLivenessService:
                 "检测请求异常，请查看服务端日志",
             )
 
-    async def _refresh_workspaces(self, session, entry, version) -> str | None:
-        scan = await self._authorization.scan_entry(session, entry.id)
-        options = [item for item in scan.get("available_workspaces", []) if item.get("id")]
-        if not options:
-            options = [{"id": scan.get("workspace_id") or "", "is_personal": False}]
-        ids = [str(item["id"]) for item in options]
-        selected = entry.workspace_id if entry.workspace_id in ids else next(
-            (str(item["id"]) for item in options if not item.get("is_personal")), ids[0]
-        )
-        ordered = [selected, *(workspace_id for workspace_id in ids if workspace_id != selected)]
-        for index, workspace_id in enumerate(ordered):
-            result = await self._authorization.login_entry(session, entry.id, workspace_id)
-            saved = await self._authorization.save_result(
-                session, entry.id, result, credential_version=version,
-                liveness=("alive", "密码、2FA 与 OAuth 登录验证通过") if index == 0 else None,
-                update_current=index == 0, workspace_state=scan,
-            )
-            if not saved:
-                return None
-        return "alive"
-
-    async def _save_failure(
+    async def _save_status(
         self,
         session: AsyncSession,
         entry_id: int,
@@ -85,8 +92,6 @@ class AccountPoolLivenessService:
         message: str,
     ) -> str | None:
         now = get_now()
-        state = {"status": "workspace_error", "error": message}
-        entry = await session.get(AccountPoolEntry, entry_id)
         saved = await session.execute(
             update(AccountPoolEntry)
             .where(
@@ -99,10 +104,6 @@ class AccountPoolLivenessService:
                 liveness_status=status,
                 liveness_message=message,
                 liveness_checked_at=now,
-                workspace_status="workspace_error",
-                workspace_checked_at=now,
-                workspace_state_json=(entry.workspace_state_json if entry and entry.workspace_state_json
-                                      else json.dumps(state, ensure_ascii=False)),
             )
         )
         await session.commit()
@@ -126,7 +127,10 @@ class AccountPoolLivenessService:
         counts = {"alive": 0, "invalid": 0, "error": 0, "missing": 0}
         for entry_id in entry_ids:
             async with sessions() as session:
-                status = await self.check_entry(session, entry_id)
+                try:
+                    status = await self.check_entry(session, entry_id)
+                except LivenessCheckInProgressError:
+                    continue
             if status is not None:
                 counts[status] += 1
         return counts

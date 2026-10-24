@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from app.models import AccountPoolEntry, TeamEmailMapping
+from app.models import AccountPoolEntry, Team, TeamEmailMapping
 from app.services.account_pool_authorization import AccountPoolAuthorizationError
 from app.services.member_identity import credential_identity
 from app.utils.time_utils import get_now
@@ -54,7 +54,9 @@ class AccountPoolMemberExit:
             TeamEmailMapping.email == target.email,
         ).execution_options(populate_existing=True))).scalar_one_or_none()
         if mapping and await is_warranty_member(target.db, target.team.id, target.email):
-            protect_mapping(mapping)
+            # Team 可能在成员登录期间被续费，不使用 target 上的旧缓存。
+            team = await target.db.get(Team, target.team.id, populate_existing=True)
+            protect_mapping(mapping, team)
         return mapping
 
     @staticmethod
@@ -62,7 +64,7 @@ class AccountPoolMemberExit:
         return bool(mapping and mapping.status == "joined"
                     and mapping.upstream_user_id == user_id
                     and mapping.member_role != "account-owner"
-                    and mapping.auto_kick_enabled is not False
+                    and (mapping.departure_policy == "team_expiry" or mapping.auto_kick_enabled is not False)
                     and mapping.auto_kick_at
                     and mapping.auto_kick_at <= get_now())
 

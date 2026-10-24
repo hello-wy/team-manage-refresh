@@ -2153,6 +2153,10 @@ function renderMemberAutoKickTime(member) {
     if (member.role === 'account-owner') {
         return '<span class="member-auto-kick-time text-muted">不会自动下线</span>';
     }
+    if (member.status === 'invited') return '<span class="member-auto-kick-time text-muted">确认加入后计时</span>';
+    if (member.departure_policy === 'team_expiry') {
+        return `<span class="member-auto-kick-time">${member.auto_kick_at ? `${formatDateTime(member.auto_kick_at)} · Team 到期下线` : 'Team 到期时间待同步'}</span>`;
+    }
     if (member.auto_kick_enabled === false) {
         return '<span class="member-auto-kick-time text-muted">不参与</span>';
     }
@@ -2169,7 +2173,7 @@ function renderMemberAutoKickTime(member) {
 }
 
 function renderMemberAutoKickControl(teamId, member) {
-    if (member.role === 'account-owner' || !member.user_id) return '';
+    if (member.role === 'account-owner' || !member.user_id || member.departure_policy === 'team_expiry') return '';
     const enabled = member.auto_kick_enabled !== false;
     const label = enabled ? '不参与自动下线' : '参与自动下线';
     return `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary member-auto-kick-toggle"
@@ -2216,7 +2220,7 @@ async function saveMemberAutoKickHours() {
         showToast('请输入 1 到 8760 之间的整数小时', 'error');
         return;
     }
-    if (!await confirmPageAction(`所有参与自动下线的成员将改为加入后 ${hours} 小时下线，已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
+    if (!await confirmPageAction(`定时成员将改为本次使用开始后 ${hours} 小时下线（高级升级从确认生效时起算，质保成员仍在 Team 到期下线），已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
     button.disabled = true;
     try {
         const result = await apiCall(`/admin/teams/${teamId}/members/auto-kick`, {

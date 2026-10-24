@@ -2,6 +2,7 @@
 兑换码管理服务
 用于管理兑换码的生成、验证、使用和查询
 """
+from app.services.member_lifecycle import activate_joined_redemptions, service_start
 import logging
 import secrets
 import string
@@ -627,10 +628,10 @@ class RedemptionService:
                 if expiration_mode == WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM
                 else first_record
             )
-            base_time = base_record.redeemed_at or get_now()
-            redemption_code.used_at = base_time
+            redemption_code.used_at = base_record.redeemed_at or get_now()
+            base_time = service_start(redemption_code, remaining_records, expiration_mode)
             days = self._effective_warranty_days(redemption_code)
-            redemption_code.warranty_expires_at = base_time + timedelta(days=days)
+            redemption_code.warranty_expires_at = base_time + timedelta(days=days) if base_time else None
         else:
             redemption_code.used_at = latest_record.redeemed_at or get_now()
             redemption_code.warranty_expires_at = None
@@ -1080,6 +1081,7 @@ class RedemptionService:
                 team_id=team_id,
                 account_id=account_id,
                 is_warranty_redemption=bool(redemption_code.has_warranty),
+                activation_pending=True,
             )
 
             db_session.add(redemption_record)
@@ -1087,6 +1089,7 @@ class RedemptionService:
             mappings = (await db_session.scalars(select(TeamEmailMapping).where(
                 TeamEmailMapping.team_id == team_id,
             ))).all()
+            await activate_joined_redemptions(db_session, team_id, mappings)
             await protect_team_mappings(db_session, team_id, mappings)
             await db_session.commit()
 
@@ -1721,19 +1724,13 @@ class RedemptionService:
                     # 取消质保后，残留的到期时间会让 UI 仍显示"未到期"，要清掉。
                     redemption_code.warranty_expires_at = None
                 elif redemption_code.used_at:
-                    # 重算质保到期时间：起算点严格按当前模式取（refresh_on_redeem
-                    # 用 used_at；first_use 用 min(redeemed_at) 作为起算点）。
-                    if expiration_mode == WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM:
-                        start_time = redemption_code.used_at
-                    else:
-                        first_use_result = await db_session.execute(
-                            select(func.min(RedemptionRecord.redeemed_at))
-                            .where(RedemptionRecord.code == redemption_code.code)
-                        )
-                        start_time = first_use_result.scalar() or redemption_code.used_at
-                    if start_time:
-                        days = self._effective_warranty_days(redemption_code)
-                        redemption_code.warranty_expires_at = start_time + timedelta(days=days)
+                    # 新记录按确认入组起算；历史记录保留原有模式，不提前激活待确认邀请。
+                    records = (await db_session.scalars(select(RedemptionRecord).where(
+                        RedemptionRecord.code == redemption_code.code,
+                    ))).all()
+                    start_time = service_start(redemption_code, records, expiration_mode)
+                    days = self._effective_warranty_days(redemption_code)
+                    redemption_code.warranty_expires_at = start_time + timedelta(days=days) if start_time else None
 
                 # 同步 status：如果新到期时间已过，直接置为 expired，避免下一轮扫描漏掉。
                 self._sync_code_status_fields(redemption_code)

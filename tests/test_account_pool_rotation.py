@@ -73,7 +73,8 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
                                    status="reconciling", idempotency_key="pending-invite"))
             await db.commit()
             views = await self.view(db, pending, idle)
-            self.assertEqual(views[pending.email]["label"], "邀请确认中")
+            self.assertEqual(views[pending.email]["label"], "处理中")
+            self.assertIn("邀请确认中", views[pending.email]["reason"])
             self.assertEqual(views[pending.email]["team_id"], 1)
             self.assertEqual(views[idle.email]["label"], "空闲")
 
@@ -95,8 +96,10 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             db.add(Sub2apiExportRecord(email=entries[-1].email, team_space_id="space-1", team_id=1))
             await db.commit()
             views = await self.view(db, *entries)
-            for entry, case in zip(entries, cases):
-                self.assertEqual(views[entry.email]["label"], case[-1])
+            for entry, case, label in zip(entries, cases, ["待轮转", "待下线", "待轮转", "使用中", "需关注"]):
+                self.assertEqual(views[entry.email]["label"], label)
+                self.assertEqual(views[entry.email]["detail"], case[-1])
+                self.assertIn(case[-1], views[entry.email]["reason"])
                 self.assertEqual(views[entry.email]["team_id"], 1)
             self.assertIn("不会自动补位", views[entries[1].email]["reason"])
 
@@ -119,11 +122,13 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
             views = await self.view(db, invited, conflict, exempt, kept)
             self.assertEqual(views[invited.email]["label"], "待接受邀请")
             self.assertEqual(views[invited.email]["team_id"], 1)
-            self.assertEqual(views[conflict.email]["label"], "归属冲突")
+            self.assertEqual(views[conflict.email]["label"], "需关注")
+            self.assertIn("归属冲突", views[conflict.email]["reason"])
             self.assertIsNone(views[conflict.email]["team_id"])
-            self.assertEqual(views[exempt.email]["label"], "保留当前 Team")
-            self.assertEqual(views[exempt.email]["reason"], "未参与自动下线")
-            self.assertEqual(views[kept.email]["label"], "待确认下线计划")
+            self.assertEqual(views[exempt.email]["label"], "不参与轮转")
+            self.assertIn("未参与自动下线", views[exempt.email]["reason"])
+            self.assertEqual(views[kept.email]["label"], "需关注")
+            self.assertIn("待确认下线计划", views[kept.email]["reason"])
 
     async def test_timed_exit_counts_down_without_scheduling_a_replacement(self):
         async with self.sessions() as db:
@@ -137,7 +142,8 @@ class AccountPoolRotationTests(unittest.IsolatedAsyncioTestCase):
                                     auto_kick_at=deadline))
             await db.commit()
             views = await self.view(db, leaving, idle)
-            self.assertEqual(views[leaving.email]["label"], "定时下线")
+            self.assertEqual(views[leaving.email]["label"], "待下线")
+            self.assertIn("定时下线", views[leaving.email]["reason"])
             self.assertTrue(views[leaving.email]["exit_at"].startswith(deadline.isoformat()))
             self.assertIn("不会自动补位", views[leaving.email]["reason"])
             self.assertEqual(views[idle.email]["label"], "空闲")

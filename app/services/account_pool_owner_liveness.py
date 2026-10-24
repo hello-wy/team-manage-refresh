@@ -1,4 +1,5 @@
 """Verify owners with their own Team token when no password is stored."""
+import asyncio
 import logging
 
 from sqlalchemy import update
@@ -10,8 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 class AccountPoolOwnerLivenessService:
-    def __init__(self, teams):
+    def __init__(self, teams, *, timeout_seconds=60):
         self.teams = teams
+        self.timeout_seconds = timeout_seconds
 
     async def check(self, session, team_id):
         team = await session.get(Team, team_id)
@@ -19,7 +21,8 @@ class AccountPoolOwnerLivenessService:
             return None
         version = (team.email, team.account_id, team.access_token_encrypted)
         status, message = "error", "所有者授权检测异常，请重试"
-        try:
+        async def verify():
+            nonlocal version, status, message
             token = await self.teams.ensure_access_token(team, session)
             # Token refresh may commit; guard the result against subsequent edits.
             version = (team.email, team.account_id, team.access_token_encrypted)
@@ -46,6 +49,11 @@ class AccountPoolOwnerLivenessService:
                     status = "invalid" if invalid else "error"
                     message = ("所有者 Token 已失效，请在工作台更新授权" if invalid else
                                "所有者授权检测请求失败，请稍后重试")
+
+        try:
+            await asyncio.wait_for(verify(), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            message = "所有者验活超时，请检查网络或代理后重试"
         except Exception:
             logger.exception("所有者验活异常: team_id=%s", team_id)
             await session.rollback()

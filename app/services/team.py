@@ -27,7 +27,10 @@ from app.services.account_pool_team_usage import record_seat_switch
 from app.services.sub2api_cleanup import enqueue_member_cleanup
 from app.services.member_profile import normalize_member_profiles
 from app.services.member_auto_kick_policy import refresh_deadline, reset_for_new_join, team_auto_kick_hours
-from app.services.warranty_member_protection import is_warranty_member, protect_mapping, protect_team_mappings
+from app.services.warranty_member_protection import (
+    is_warranty_member, protect_mapping, protect_team_mappings, scheduled_departure_allowed,
+)
+from app.services.member_lifecycle import activate_joined_redemptions
 from app.services.member_listing import MemberListingService
 from app.services.member_identity import load_member_identities
 from app.services.member_name_identity import resolve_pool_member_emails
@@ -545,6 +548,7 @@ class TeamService:
                 email=normalized_email,
                 status=status,
                 source=source,
+                join_source=source if source in {"redeem", "admin_add", "auto_replacement"} else None,
                 last_seen_at=current_time,
                 missing_sync_count=0,
                 is_admin_invited=bool(is_admin_invited) if is_admin_invited else False,
@@ -552,10 +556,12 @@ class TeamService:
             )
             db_session.add(mapping)
             if await is_warranty_member(db_session, team_id, normalized_email):
-                protect_mapping(mapping)
+                protect_mapping(mapping, await db_session.get(Team, team_id))
             return mapping
 
         mapping.status = status
+        if source in {"redeem", "admin_add", "auto_replacement"}:
+            mapping.join_source = source
         mapping.source = source
         mapping.last_seen_at = current_time
         mapping.missing_sync_count = 0
@@ -564,13 +570,14 @@ class TeamService:
             mapping.member_role = None
             mapping.seat_type = None
             mapping.joined_at = None
+            mapping.usage_started_at = None
             mapping.auto_kick_at = None
         if is_admin_invited:
             mapping.is_admin_invited = True
         if invited_at:
             mapping.last_invited_at = invited_at
         if await is_warranty_member(db_session, team_id, normalized_email):
-            protect_mapping(mapping)
+            protect_mapping(mapping, await db_session.get(Team, team_id))
         return mapping
 
     async def get_reinvite_retry_at(
@@ -670,6 +677,7 @@ class TeamService:
                 db_session.add(mapping)
             current_mappings[email] = mapping
         active_emails = normalized_joined | normalized_invited
+        await activate_joined_redemptions(db_session, team_id, list(current_mappings.values()))
         await protect_team_mappings(db_session, team_id, list(current_mappings.values()))
         if member_identities_complete:
             self._mark_missing_mappings(existing_mappings, active_emails, seen_at)
@@ -709,6 +717,8 @@ class TeamService:
 
     def _apply_joined_mapping(self, mapping, member, team, seen_at) -> None:
         was_joined = mapping.status == TEAM_EMAIL_STATUS_JOINED
+        previous_joined_at = mapping.joined_at
+        previous_seat = normalize_seat_type(mapping.seat_type)
         if not was_joined or (
             member.get("id") and mapping.upstream_user_id
             and member["id"] != mapping.upstream_user_id
@@ -728,11 +738,17 @@ class TeamService:
         seat_type = normalize_seat_type(member.get("seat_type"))
         mapping.seat_type = seat_type if seat_type != "unknown" else None
         joined_at = self._parse_remote_datetime(member.get("created_time"))
-        if mapping.replacement_export_pending and not was_joined:
+        if not was_joined and mapping.replacement_export_pending:
             joined_at = seen_at
-        elif mapping.joined_at and joined_at:
+        elif not was_joined and mapping.last_invited_at:
+            joined_at = joined_at if joined_at and joined_at >= mapping.last_invited_at else seen_at
+        if mapping.joined_at and joined_at:
             joined_at = max(mapping.joined_at, joined_at)
         mapping.joined_at = joined_at or mapping.joined_at
+        if not mapping.usage_started_at or mapping.usage_started_at == previous_joined_at:
+            mapping.usage_started_at = mapping.joined_at
+        if was_joined and previous_seat == "standard" and seat_type == "premium":
+            mapping.usage_started_at = seen_at
         refresh_deadline(mapping, team_auto_kick_hours(team))
 
     @staticmethod
@@ -745,6 +761,7 @@ class TeamService:
         mapping.member_role = None
         mapping.seat_type = None
         mapping.joined_at = None
+        mapping.usage_started_at = None
         mapping.auto_kick_at = None
 
     @staticmethod
@@ -1306,7 +1323,8 @@ class TeamService:
         max_members: Optional[int] = None,
         team_name: Optional[str] = None,
         status: Optional[str] = None,
-        pool_type: Optional[str] = None
+        pool_type: Optional[str] = None,
+        warranty_seat_enabled: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         更新 Team 信息
@@ -1344,6 +1362,9 @@ class TeamService:
             if email:
                 team.email = email
             
+            if warranty_seat_enabled is not None:
+                team.warranty_seat_enabled = bool(warranty_seat_enabled)
+
             if team_name is not None:
                 team.team_name = team_name
 
@@ -2892,8 +2913,8 @@ class TeamService:
             if verified is None:
                 return {"success": False, "error": "成员自退已返回成功，但无法完成成员快照复核"}
             logger.warning("成员自退返回成功但快照仍存在，转母号兜底: team=%s user=%s", team.id, user_id)
-        if member_exit and await is_warranty_member(db_session, team.id, email):
-            return {"success": False, "error": "质保兑换成员不参与自动踢出"}
+        if member_exit and not await scheduled_departure_allowed(db_session, team.id, email):
+            return {"success": False, "error": "质保成员仅在 Team 到期后下线，取消旧计划"}
         return await self._delete_as_owner(team, user_id, email=email,
                                            access_token=access_token, db_session=db_session)
 

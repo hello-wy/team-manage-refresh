@@ -19,6 +19,32 @@ async function copyAccountPoolCredential(email) {
     }
 }
 
+async function importAccountPool16688(button) {
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    const originalText = button.textContent;
+    try {
+        if (!await confirmAccountPoolAction(`将 ${button.dataset.email} 按“邮箱---密码---2FA”格式补货至系统设置中的 16688 商品吗？`)) return;
+        button.textContent = '补货中…';
+        let response, result;
+        try {
+            response = await fetch(`/admin/account-pool/${button.dataset.entryId}/import-16688`, {
+                method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            });
+            result = await response.json();
+        } catch {
+            throw new Error('16688 补货结果未确认，请先到 16688 核对库存');
+        }
+        if (!response.ok || !result.success) throw new Error(result.error || '16688 补货失败');
+        showToast(result.message, 'success');
+    } catch (error) {
+        showToast(error.message || '16688 补货结果未确认，请先到 16688 核对库存', 'error');
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+}
+
 async function deleteAccountPoolEntry(entryId, email) {
     if (!await confirmAccountPoolAction(`确定永久删除 ${email} 吗？账号信息和加入历史都会从数据库删除，且无法恢复。`)) return;
     try {
@@ -34,43 +60,64 @@ async function deleteAccountPoolEntry(entryId, email) {
     }
 }
 
-async function runAccountPoolLiveness() {
-    const button = document.getElementById('accountPoolLivenessBtn');
-    if (!button) return;
-    button.disabled = true;
-    button.querySelector('span').textContent = '验活中...';
-    try {
-        const response = await fetch('/admin/account-pool/liveness', {
-            method: 'POST',
-            credentials: 'same-origin',
-        });
-        const payload = await response.json();
-        if (!response.ok || !payload.success) throw new Error(payload.error || '验活失败');
-        showToast(payload.message, 'success');
-        await refreshAccountPoolTable();
-    } catch (error) {
-        showToast(error.message || '验活失败', 'error');
-    } finally {
-        button.disabled = false;
-        button.querySelector('span').textContent = '立即验活';
-    }
+const accountPoolLivenessChecks = new Map();
+
+function updateAccountPoolLiveness(entryId, state) {
+    document.querySelectorAll('.account-pool-liveness[data-entry-id]').forEach(cell => {
+        if (cell.dataset.entryId !== String(entryId)) return;
+        const checking = state.status === 'checking';
+        const badge = cell.querySelector('.status-badge');
+        badge.textContent = checking ? '验活中' : state.status === 'alive' ? '正常' : state.status ? '异常' : '未检测';
+        badge.className = `status-badge ${checking ? 'status-pending' : state.status === 'alive' ? 'status-active' : state.status ? 'status-error' : 'status-banned'}`;
+        cell.dataset.status = state.status || '';
+        cell.dataset.checkedAt = state.checkedAt || '';
+        cell.setAttribute('aria-busy', String(checking));
+        cell.title = state.message;
+        cell.querySelector('.account-pool-liveness-message').textContent = state.message;
+        const time = cell.querySelector('.account-pool-liveness-time');
+        time.textContent = state.checkedAt ? accountPoolFormatDate(state.checkedAt) : '';
+        time.hidden = !state.checkedAt;
+        const button = cell.querySelector('.account-pool-entry-liveness');
+        button.disabled = checking;
+        button.textContent = checking ? '检查中' : '验活';
+        const row = cell.closest('[data-account-pool-row]');
+        const detail = row?.querySelector('[data-liveness-message]');
+        const checked = row?.querySelector('[data-liveness-checked]');
+        if (detail) detail.textContent = state.message;
+        if (checked) checked.textContent = time.textContent || '-';
+    });
 }
 
 async function checkAccountPoolEntryLiveness(button) {
-    if (button.disabled) return;
+    const entryId = button.dataset.entryId;
+    if (button.disabled || accountPoolLivenessChecks.has(entryId)) return;
+    const cell = button.closest('.account-pool-liveness');
+    const previous = {status: cell?.dataset.status || '', message: cell?.title || '尚未验活', checkedAt: cell?.dataset.checkedAt};
+    const state = {status: 'checking', message: '正在验证此账号，请稍候…'};
+    accountPoolLivenessChecks.set(entryId, state);
     button.disabled = true;
-    showToast(`正在验活 ${button.dataset.email}…`, 'info');
+    updateAccountPoolLiveness(entryId, state);
     try {
-        const response = await fetch(`/admin/account-pool/${button.dataset.entryId}/liveness`, {
+        const response = await fetch(`/admin/account-pool/${entryId}/liveness`, {
             method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            signal: AbortSignal.timeout(75000),
         });
         const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.error || result.detail || '验活失败');
-        showToast(result.message, result.status === 'alive' ? 'success' : 'warning');
-        await refreshAccountPoolTable();
+        if (!response.ok || !result.success) {
+            if (result.code === 'checking') {
+                updateAccountPoolLiveness(entryId, previous);
+                showToast(result.error, 'info');
+                return;
+            }
+            throw new Error(result.error || result.detail || '验活失败');
+        }
+        updateAccountPoolLiveness(entryId, {status: result.status, message: result.message, checkedAt: result.checked_at});
     } catch (error) {
-        showToast(error.message || '验活失败，请重试', 'error');
+        const message = error.name === 'TimeoutError' ? '验活请求超时，请稍后重试' : error.message || '验活失败，请重试';
+        updateAccountPoolLiveness(entryId, {status: 'error', message});
+        showToast(message, 'error');
     } finally {
+        accountPoolLivenessChecks.delete(entryId);
         button.disabled = false;
     }
 }
@@ -460,7 +507,7 @@ function initAccountPoolColumnDropdown() {
 let accountPoolTableRequest = null;
 let accountPoolRequestedUrl = null;
 
-function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter, seatFilter, sortBy} = {}) {
+function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter, seatFilter, rotationFilter, sortBy} = {}) {
     const url = new URL('/admin/account-pool', window.location.origin);
     const current = new URLSearchParams(accountPoolRequestedUrl?.search ?? window.location.search);
     const searchInput = document.querySelector('#accountPoolSearchForm input[name="search"]');
@@ -473,6 +520,7 @@ function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter
         status_filter: statusFilter ?? current.get('status_filter') ?? '',
         team_filter: teamFilter ?? current.get('team_filter') ?? '',
         seat_filter: seatFilter ?? current.get('seat_filter') ?? '',
+        rotation_filter: rotationFilter ?? current.get('rotation_filter') ?? '',
         sort_by: sortBy ?? current.get('sort_by') ?? sort?.value ?? 'team',
     })) url.searchParams.set(key, String(value));
     return url;
@@ -483,7 +531,7 @@ function syncAccountPoolFilters(fragment, url) {
     const nextFilters = fragment.getElementById('accountPoolFilters');
     if (filters && nextFilters) filters.replaceChildren(...nextFilters.childNodes);
     const form = document.getElementById('accountPoolSearchForm');
-    for (const key of ['search', 'team_filter', 'seat_filter', 'status_filter', 'sort_by', 'per_page']) {
+    for (const key of ['search', 'team_filter', 'seat_filter', 'rotation_filter', 'status_filter', 'sort_by', 'per_page']) {
         if (form?.elements[key]) form.elements[key].value = url.searchParams.get(key) || '';
     }
     const sort = document.getElementById('accountPoolSort');
@@ -497,10 +545,15 @@ function initAccountPoolFilters() {
         event.preventDefault();
         const params = new URL(link.href).searchParams;
         const kind = link.dataset.filterKind;
-        const filters = kind === 'reset' ? {teamFilter: '', seatFilter: '', statusFilter: '', search: ''}
+        const filters = kind === 'reset' ? {teamFilter: '', seatFilter: '', rotationFilter: '', statusFilter: '', search: ''}
             : kind === 'team' ? {teamFilter: params.get('team_filter') || '', statusFilter: ''}
             : {seatFilter: params.get('seat_filter') || ''};
         refreshAccountPoolTable({page: 1, ...filters});
+    });
+    document.getElementById('accountPoolFilters')?.addEventListener('change', event => {
+        if (event.target.id === 'accountPoolRotationFilter') {
+            refreshAccountPoolTable({page: 1, rotationFilter: event.target.value});
+        }
     });
     document.getElementById('accountPoolSort')?.addEventListener('change', event => {
         refreshAccountPoolTable({page: 1, sortBy: event.target.value});
@@ -547,12 +600,12 @@ async function refreshAccountPoolTable(options = {}) {
             return;
         }
         const nextPage = documentFragment.getElementById('accountPoolSearchForm');
-        for (const key of ['team_filter', 'seat_filter', 'status_filter', 'sort_by', 'per_page']) {
+        for (const key of ['team_filter', 'seat_filter', 'rotation_filter', 'status_filter', 'sort_by', 'per_page']) {
             if (nextPage?.elements[key]) url.searchParams.set(key, nextPage.elements[key].value);
         }
         url.searchParams.set('page', nextRegion.dataset.currentPage);
         const previous = new URLSearchParams(window.location.search);
-        if (['team_filter', 'seat_filter', 'status_filter', 'search'].some(key =>
+        if (['team_filter', 'seat_filter', 'rotation_filter', 'status_filter', 'search'].some(key =>
             (previous.get(key) || '') !== (url.searchParams.get(key) || ''))) {
             window.clearAccountPoolSelection?.();
         }
@@ -630,11 +683,17 @@ function initAccountPoolActionTooltips() {
 }
 
 function initAccountPoolRowActions() {
+    document.querySelectorAll('.account-pool-16688-button').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => importAccountPool16688(button));
+    });
     document.querySelectorAll('.account-pool-entry-liveness').forEach(button => {
         if (button.dataset.bound === 'true') return;
         button.dataset.bound = 'true';
         button.addEventListener('click', () => checkAccountPoolEntryLiveness(button));
     });
+    for (const [entryId, state] of accountPoolLivenessChecks) updateAccountPoolLiveness(entryId, state);
     updateAccountPoolCountdowns();
     window.initAccountPoolQuota?.();
     document.querySelectorAll('.account-pool-history-btn').forEach(button => {
@@ -748,7 +807,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     document.getElementById('accountPoolForm')?.addEventListener('submit', submitAccountPoolForm);
-    document.getElementById('accountPoolLivenessBtn')?.addEventListener('click', runAccountPoolLiveness);
     initAccountPoolRowActions();
     initAccountPoolExportJobs();
     initAccountPoolPageSizeControl();

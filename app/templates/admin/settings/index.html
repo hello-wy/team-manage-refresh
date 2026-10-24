@@ -38,6 +38,7 @@
             <a href="#settings-team-import" class="settings-nav-pill settings-nav-link" data-target="settings-team-import">Team 导入</a>
             <a href="#settings-cliproxyapi" class="settings-nav-pill settings-nav-link" data-target="settings-cliproxyapi">CliproxyAPI 推送</a>
             <a href="#settings-sub2api" class="settings-nav-pill settings-nav-link" data-target="settings-sub2api">sub2api 导出</a>
+            <a href="#settings-16688" class="settings-nav-pill settings-nav-link" data-target="settings-16688">16688 补货</a>
         </div>
         <div class="settings-nav-group">
             <div class="settings-nav-group-title">账户与外观</div>
@@ -204,7 +205,7 @@
                 <input type="checkbox" id="warrantyAutoKickEnabled" name="enabled" {% if (warranty_auto_kick_enabled or 'false')|lower in ['1','true','yes','on'] %}checked{% endif %}>
                 <span>启用兑换码过期自动踢人</span>
             </label>
-            <p class="form-help">开启后扫描过期且仍绑定 Team 的普通兑换码，按下方"使用期限"自动踢人并销毁兑换码及历史记录。<strong>使用质保兑换码入组的成员不参与自动踢出，质保到期后仍然免踢。</strong>开关启用之前已使用的普通兑换码永久豁免，只对此后新兑换的普通码生效。</p>
+            <p class="form-help">开启后扫描过期且仍绑定 Team 的普通兑换码，按下方"使用期限"自动踢人并销毁兑换码及历史记录。<strong>质保兑换成员免小时级及额度清退，当前 Team 到期后下线；质保截止仅影响售后换组。</strong>开关启用之前已使用的普通兑换码永久豁免，只对此后新兑换的普通码生效。</p>
             {% if warranty_auto_kick_enabled_since %}
             <p class="form-help" style="color: var(--accent-color, #2563eb);">生效起点：{{ warranty_auto_kick_enabled_since }}</p>
             {% endif %}
@@ -221,7 +222,7 @@
             <label for="autoKickUsagePeriodDays">兑换码使用期限 (天)</label>
             <input type="number" id="autoKickUsagePeriodDays" name="usage_period_days"
                 value="{{ auto_kick_usage_period_days or '30' }}" min="1" max="3650" class="form-control">
-            <p class="form-help">仅作用于普通兑换码，起算方式沿用"质保时长计算方式"。质保兑换成员不参与自动踢出。</p>
+            <p class="form-help">仅作用于普通兑换码，起算方式沿用"质保时长计算方式"。质保兑换成员免小时级清退，当前 Team 到期后下线。</p>
         </div>
 
         <div class="form-group">
@@ -249,7 +250,7 @@
                 <input type="checkbox" id="autoKickAdminInvitedEnabled" name="admin_invited_enabled" {% if (auto_kick_admin_invited_enabled or 'false')|lower in ['1','true','yes','on'] %}checked{% endif %}>
                 <span>启用后台邀请过期踢人（管理员手工邀请也按期限到期）</span>
             </label>
-            <p class="form-help">仅扫"开关启用之后"新发出的后台邀请，超过下方期限自动踢出。开关启用之前已邀请的成员永久豁免。</p>
+            <p class="form-help">仅扫"开关启用之后"新发出并已确认加入的后台邀请，确认加入后超过下方期限自动踢出。开关启用之前已邀请的成员永久豁免。</p>
             {% if auto_kick_admin_invited_enabled_since %}
             <p class="form-help" style="color: var(--accent-color, #2563eb);">生效起点：{{ auto_kick_admin_invited_enabled_since }}</p>
             {% endif %}
@@ -259,7 +260,7 @@
             <label for="autoKickAdminInvitedPeriodDays">后台邀请使用期限 (天)</label>
             <input type="number" id="autoKickAdminInvitedPeriodDays" name="admin_invited_period_days"
                 value="{{ auto_kick_admin_invited_period_days or '30' }}" min="1" max="3650" class="form-control">
-            <p class="form-help">从"邀请发出时刻"起算，超过该期限的后台邀请会被自动踢人扫描清退。需要继续使用请重新邀请。</p>
+            <p class="form-help">从"确认加入时刻"起算；待确认邀请不计时，已加入成员超过期限后自动清退。需要继续使用请重新邀请。</p>
         </div>
 
         <p class="form-help">该操作不可恢复，开启前请确认售后流程允许自动清退成员并销毁兑换码。</p>
@@ -337,6 +338,36 @@
 </div>
 
 <!-- 界面风格 -->
+<div class="content-section settings-panel" id="settings-16688">
+    <div class="section-header"><h3>16688 补货配置</h3></div>
+    <form id="stock16688Form" class="settings-form">
+        <div class="form-group">
+            <label for="stock16688Gateway">API 网关</label>
+            <input type="url" id="stock16688Gateway" class="form-control" required
+                value="{{ stock_16688_gateway or 'https://www.16688.com.cn/openApi' }}" placeholder="https://www.16688.com.cn/openApi">
+        </div>
+        <div class="form-group">
+            <label for="stock16688AppId">App ID</label>
+            <input type="text" id="stock16688AppId" class="form-control" required maxlength="255"
+                value="{{ stock_16688_app_id or '' }}" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label for="stock16688Secret">Secret</label>
+            <input type="password" id="stock16688Secret" class="form-control" maxlength="4096" autocomplete="new-password"
+                placeholder="{{ '已配置，留空保持不变' if stock_16688_has_secret else '请输入应用 Secret' }}">
+            <p class="form-help">Secret 加密保存，不会回显；留空保留当前配置。</p>
+        </div>
+        <div class="form-group">
+            <label for="stock16688GoodsNo">补货商品编号</label>
+            <input type="text" id="stock16688GoodsNo" class="form-control" required maxlength="255"
+                value="{{ stock_16688_goods_no or '' }}" placeholder="例如 G10001">
+            <p class="form-help">填写 16688 自营卡密商品的 goods_no。号池中“待接受邀请”账户可在操作列点击“导入 16688”，以邮箱---密码---2FA 格式单条补货，相同卡密自动去重。</p>
+        </div>
+        <button type="submit" class="btn btn-primary">保存 16688 配置</button>
+        <a href="https://www.16688.com.cn/api/purchase/docs/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">接口文档</a>
+    </form>
+</div>
+
 <div class="content-section settings-panel" id="settings-sub2api">
     <div class="section-header"><h3>sub2api 导出配置</h3></div>
     <form id="sub2apiForm" class="settings-form">
@@ -545,6 +576,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/stock-16688-settings.js?v=20261024-16688"></script>
 <script>
     // 系统设置分区导航（单屏切换）
     (function initSettingsPanels() {

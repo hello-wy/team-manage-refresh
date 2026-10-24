@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.models import MemberAuthorization, Team
 from app.services.member_auto_kick import schedule_payload
+from app.services.member_seat_status import decorate_seat_status
 from app.services.member_auto_kick_policy import team_auto_kick_hours
 from app.services.member_sync_cursor import fetch_sync_members
 from app.services.seat_snapshot import build_seat_layout, complete_balance, store_seat_snapshot
@@ -128,7 +129,8 @@ class MemberListingService:
         ))).scalars().all()
         authorizations = {record.email: record for record in records}
         mappings = await self.teams._team_mapping_index(team.id, db)
-        return [self._decorate_member(member, authorizations, mappings=mappings) for member in members]
+        decorated = [self._decorate_member(member, authorizations, mappings=mappings) for member in members]
+        return await decorate_seat_status(db, team, decorated)
 
     @staticmethod
     def _decorate_member(member, authorizations, *, mappings):
@@ -147,6 +149,8 @@ class MemberListingService:
         effective = await self._persist(context, all_members)
         balance = await self._balance(context)
         decorated = await self._decorate(context, all_members)
+        # 余额接口失败不应回滚已确认的入组、服务起点与下线规则。
+        await context.db.commit()
         team = context.team
         result = {
             "success": True, "members": decorated,

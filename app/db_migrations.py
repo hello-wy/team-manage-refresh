@@ -145,6 +145,14 @@ def run_auto_migration():
             migrations_applied.append("redemption_records.is_warranty_redemption")
 
         # 检查并添加 Token 刷新相关字段
+        for column, definition in (
+            ("activation_pending", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("service_started_at", "DATETIME"),
+        ):
+            if not column_exists(cursor, "redemption_records", column):
+                cursor.execute(f"ALTER TABLE redemption_records ADD COLUMN {column} {definition}")
+                migrations_applied.append(f"redemption_records.{column}")
+
         if not column_exists(cursor, "teams", "refresh_token_encrypted"):
             logger.info("添加 teams.refresh_token_encrypted 字段")
             cursor.execute("ALTER TABLE teams ADD COLUMN refresh_token_encrypted TEXT")
@@ -285,6 +293,9 @@ def run_auto_migration():
             migrations_applied.append("team_email_mappings.is_admin_invited")
 
         mapping_columns = {
+            "join_source": "VARCHAR(20)",
+            "departure_policy": "VARCHAR(20) NOT NULL DEFAULT 'timed'",
+            "usage_started_at": "DATETIME",
             "upstream_user_id": "VARCHAR(255)",
             "member_role": "VARCHAR(50)",
             "member_name": "VARCHAR(255)",

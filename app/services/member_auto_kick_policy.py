@@ -18,7 +18,8 @@ def team_auto_kick_hours(team):
 
 
 def participates(mapping):
-    return mapping.member_role != OWNER_ROLE and mapping.auto_kick_enabled is not False
+    return mapping.member_role != OWNER_ROLE and (
+        getattr(mapping, "departure_policy", None) == "team_expiry" or mapping.auto_kick_enabled is not False)
 
 
 def has_auto_kick_schedule(mapping):
@@ -38,8 +39,10 @@ def _reset_failures(mapping):
 
 
 def refresh_deadline(mapping, hours):
-    deadline = (mapping.joined_at + timedelta(hours=hours)
-                if participates(mapping) and mapping.joined_at else None)
+    if getattr(mapping, "departure_policy", None) == "team_expiry":
+        return
+    start = getattr(mapping, "usage_started_at", None) or mapping.joined_at
+    deadline = start + timedelta(hours=hours) if participates(mapping) and start else None
     if deadline != mapping.auto_kick_at:
         mapping.auto_kick_at = deadline
         _reset_failures(mapping)
@@ -53,6 +56,8 @@ def set_participation(mapping, enabled, hours):
 
 
 def reset_for_new_join(mapping):
+    mapping.departure_policy = "timed"
+    mapping.usage_started_at = None
     mapping.auto_kick_enabled = True
     mapping.auto_kick_exempt = False
     mapping.auto_kick_at = None

@@ -1,4 +1,5 @@
 import json
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -107,8 +108,21 @@ class OwnerLivenessTests(unittest.IsolatedAsyncioTestCase):
             async with self.sessions() as db:
                 response = await admin.check_account_pool_entry_liveness(-1, db, {})
                 self.assertEqual(json.loads(response.body)['status'], 'alive')
+                self.assertIsNotNone(json.loads(response.body)['checked_at'])
                 self.assertEqual(response.headers['cache-control'], 'no-store')
                 with self.assertRaises(HTTPException) as missing:
                     await admin.check_account_pool_entry_liveness(-999, db, {})
                 self.assertEqual(missing.exception.status_code, 404)
         self.remote.assert_awaited_once()
+
+    async def test_owner_timeout_is_reported_and_retry_succeeds(self):
+        self.service._owners.timeout_seconds = 0.01
+        async def stalled(*args, **kwargs):
+            await asyncio.Event().wait()
+        self.remote.side_effect = stalled
+        async with self.sessions() as db:
+            self.assertEqual(await self.service.check_entry(db, -1), 'error')
+            self.assertIn('超时', (await db.get(Team, 1)).owner_liveness_message)
+        self.remote.side_effect = None
+        async with self.sessions() as db:
+            self.assertEqual(await self.service.check_entry(db, -1), 'alive')

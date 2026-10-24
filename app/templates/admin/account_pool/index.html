@@ -4,7 +4,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20261023-no-replacement">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20261024-single-liveness">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -57,7 +57,20 @@
                     {% for value, label in [('', '全部席位'), ('premium', '高级'), ('standard', '标准'), ('unknown', '未分配 / 未知')] %}
                     <a data-filter-kind="seat" href="{{ filter_url(seat_filter=value) }}" class="account-pool-filter-chip {{ 'is-active' if seat_filter == value }}" {% if seat_filter == value %}aria-current="true"{% endif %}>{{ label }}</a>
                     {% endfor %}
-                    {% if team_filter or seat_filter or search or status_filter %}<a data-filter-kind="reset" class="account-pool-filter-reset" href="{{ filter_url(team_filter='', seat_filter='', search='', status_filter='') }}"><i data-lucide="rotate-ccw"></i> 重置筛选</a>{% endif %}
+                </div>
+            </div>
+            <div class="account-pool-filter-row" role="group" aria-label="按轮转状态筛选">
+                <label class="account-pool-filter-label" for="accountPoolRotationFilter">轮转状态</label>
+                <div class="account-pool-filter-options">
+                    <div class="account-pool-sort">
+                        <select id="accountPoolRotationFilter" name="rotation_filter" form="accountPoolSearchForm" aria-label="轮转状态">
+                            <option value="">全部状态</option>
+                            {% for value, label in rotation_filter_options.items() %}
+                            <option value="{{ value }}" {% if rotation_filter == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% if team_filter or seat_filter or rotation_filter or search or status_filter %}<a data-filter-kind="reset" class="account-pool-filter-reset" href="{{ filter_url(team_filter='', seat_filter='', rotation_filter='', search='', status_filter='') }}"><i data-lucide="rotate-ccw"></i> 重置筛选</a>{% endif %}
                 </div>
             </div>
         </div>
@@ -74,7 +87,6 @@
                 {% for value, label in sort_options.items() %}<option value="{{ value }}" {% if sort_by == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
             </select></label>
             <div class="account-pool-toolbar-actions">
-                <button type="button" class="btn btn-secondary btn-sm" id="accountPoolLivenessBtn"><i data-lucide="activity"></i> 立即验活</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="accountPoolBatchHistory"><i data-lucide="history"></i> 2FA 记录</button>
                 <div class="dropdown-wrapper">
                     <button id="accountPoolColumnToggleBtn" type="button" class="btn btn-secondary btn-sm dropdown-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="accountPoolColumnToggleDropdown"><i data-lucide="columns"></i> 列设置</button>
@@ -128,8 +140,13 @@
                             </div>
                         </td>
                         <td data-label="验活状态">
-                            <div class="account-pool-liveness" title="{{ entry.liveness_message or '尚未验活' }}">
-                                <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status == 'invalid' %}status-error{% elif entry.liveness_status == 'error' %}status-pending{% else %}status-banned{% endif %}">{% if entry.liveness_status == 'alive' %}正常{% elif entry.liveness_status == 'invalid' %}凭据无效{% elif entry.liveness_status == 'error' %}检测异常{% elif entry.liveness_status == 'missing' %}缺少密码{% else %}未检测{% endif %}</span>
+                            <div class="account-pool-liveness" data-entry-id="{{ entry.id }}" data-status="{{ entry.liveness_status or '' }}" data-checked-at="{{ entry.liveness_checked_at.isoformat() if entry.liveness_checked_at else '' }}" title="{{ entry.liveness_message or '尚未验活' }}" aria-busy="false">
+                                <div class="account-pool-liveness-actions">
+                                    <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status %}status-error{% else %}status-banned{% endif %}" role="status" aria-live="polite">{{ '正常' if entry.liveness_status == 'alive' else '异常' if entry.liveness_status else '未检测' }}</span>
+                                    <button type="button" class="account-pool-entry-liveness" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="验活 {{ entry.email }}">验活</button>
+                                </div>
+                                <small class="account-pool-liveness-message">{{ entry.liveness_message or '点击验活检查此账号' }}</small>
+                                <small class="account-pool-liveness-time"{% if not entry.liveness_checked_at %} hidden{% endif %}>{{ entry.liveness_checked_at|format_datetime }}</small>
                             </div>
                         </td>
                         <td data-label="额度">
@@ -147,7 +164,7 @@
                                 <small class="account-pool-replacement-countdown" data-exit-at="{{ rotation.exit_at }}">下线时间 {{ rotation.exit_at|format_datetime }}</small>
                                 {% else %}
                                 {% if rotation.team_id %}<small>{{ rotation.team_name }} #{{ rotation.team_id }}</small>{% endif %}
-                                {% if rotation.label != '所有者' %}<small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>{% endif %}
+                                <small class="account-pool-rotation-reason">{{ rotation.reason or '等待轮转扫描' }}</small>
                                 {% endif %}
                             </div>
                         </td>
@@ -198,6 +215,13 @@
                                     >
                                 </button>
                                 </span>
+                                {% if rotation.can_import_16688 and not entry.is_owner %}
+                                <span class="account-pool-action" data-pool-tooltip="将邮箱---密码---2FA 补货至 16688">
+                                    <button type="button" class="btn btn-sm btn-secondary account-pool-16688-button"
+                                        data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}"
+                                        aria-label="将 {{ entry.email }} 导入 16688">导入 16688</button>
+                                </span>
+                                {% endif %}
                                 <span class="account-pool-action" data-pool-tooltip="更多操作与账号详情">
                                     <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="{{ entry.email }} 的更多操作">更多</button>
                                 </span>
@@ -214,7 +238,7 @@
             </table>
         </div>
         {% else %}
-        <div class="account-pool-empty">{{ '没有符合条件的账号，请调整筛选或搜索。' if team_filter or seat_filter or search or status_filter else '暂无账号，点击「导入账号」开始添加。' }}</div>
+        <div class="account-pool-empty">{{ '没有符合条件的账号，请调整筛选或搜索。' if team_filter or seat_filter or rotation_filter or search or status_filter else '暂无账号，点击「导入账号」开始添加。' }}</div>
         {% endif %}
 
         {% if total > 0 %}
@@ -289,7 +313,7 @@
 <script src="/static/js/account-pool-confirm.js?v=20260927-shared"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
-<script src="/static/js/account-pool.js?v=20261023-no-replacement"></script>
+<script src="/static/js/account-pool.js?v=20261024-single-liveness"></script>
 <script src="/static/js/account-pool-quota.js?v=20261015-1"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>

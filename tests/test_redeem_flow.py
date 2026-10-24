@@ -1588,20 +1588,22 @@ class AdminInvitedExpiredKickTests(unittest.IsolatedAsyncioTestCase):
             session.add(TeamEmailMapping(
                 team_id=950,
                 email="expired@example.com",
-                status="invited",
+                status="joined",
                 source="admin_add",
                 is_admin_invited=True,
                 created_at=cutoff + timedelta(days=1),
+                joined_at=cutoff + timedelta(days=1),
                 last_seen_at=get_now(),
             ))
             # 2) 开关后发出、还没过期的 admin 邀请 → 跳过
             session.add(TeamEmailMapping(
                 team_id=950,
                 email="fresh@example.com",
-                status="invited",
+                status="joined",
                 source="admin_add",
                 is_admin_invited=True,
                 created_at=get_now() - timedelta(days=5),
+                joined_at=get_now() - timedelta(days=5),
                 last_seen_at=get_now(),
             ))
             # 3) 开关后过来的兑换码用户 → 不被 admin_invited 扫描捕获
@@ -1612,16 +1614,18 @@ class AdminInvitedExpiredKickTests(unittest.IsolatedAsyncioTestCase):
                 source="redeem",
                 is_admin_invited=False,
                 created_at=cutoff + timedelta(days=1),
+                joined_at=cutoff + timedelta(days=1),
                 last_seen_at=get_now(),
             ))
             # 4) 开关之前的 admin 邀请 → 永久豁免
             session.add(TeamEmailMapping(
                 team_id=950,
                 email="legacy@example.com",
-                status="invited",
+                status="joined",
                 source="admin_add",
                 is_admin_invited=True,
                 created_at=cutoff - timedelta(days=10),
+                joined_at=cutoff - timedelta(days=10),
                 last_seen_at=get_now(),
             ))
             # 5) Team owner 邮箱（防御性兜底）
@@ -1632,8 +1636,12 @@ class AdminInvitedExpiredKickTests(unittest.IsolatedAsyncioTestCase):
                 source="sync",
                 is_admin_invited=False,
                 created_at=cutoff + timedelta(days=1),
+                joined_at=cutoff + timedelta(days=1),
                 last_seen_at=get_now(),
             ))
+            # 等待确认再久也不从邀请时间扣除服务期限。
+            session.add(TeamEmailMapping(team_id=950, email="pending@example.com", status="invited",
+                source="admin_add", is_admin_invited=True, created_at=cutoff + timedelta(days=1)))
             await session.commit()
 
             service = WarrantyService()

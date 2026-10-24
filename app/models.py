@@ -167,6 +167,10 @@ class TeamEmailMapping(Base):
     email = Column(String(255), nullable=False, comment="成员邮箱(统一存小写)")
     status = Column(String(20), default="invited", nullable=False, comment="状态: invited/joined/removed")
     source = Column(String(20), default="sync", nullable=False, comment="来源: redeem/admin_add/sync/api")
+    join_source = Column(String(20), comment="本次入组来源，不被同步覆盖")
+    departure_policy = Column(String(20), nullable=False, default="timed", server_default="timed",
+                              comment="清退规则: timed/team_expiry")
+    usage_started_at = Column(DateTime, comment="当前使用周期起点，升级高级席位后重新起算")
     is_admin_invited = Column(
         Boolean,
         default=False,
@@ -527,6 +531,9 @@ class RedemptionRecord(Base):
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=False, comment="Team ID")
     account_id = Column(String(100), nullable=False, comment="Account ID")
     redeemed_at = Column(DateTime, default=get_now, comment="兑换时间")
+    activation_pending = Column(Boolean, nullable=False, default=False, server_default="0",
+                                comment="兑换邀请尚未确认，使用期限尚未开始")
+    service_started_at = Column(DateTime, comment="本次兑换确认加入后的服务起点")
     is_warranty_redemption = Column(Boolean, default=False, comment="是否为质保兑换")
 
     # 关系

@@ -56,7 +56,7 @@ from app.services.seat_snapshot import attach_seat_snapshots, refresh_list_seat_
 from app.services.replacement_export import ReplacementExportService
 from app.models import AccountPoolEntry, AccountPoolExportJob, AccountPoolWorkspace, QuotaSnapshot, RedemptionCode, RedemptionRecord, RenewalRequest, Team
 from app.services.account_pool_export import AccountPoolExportService, selected_workspace
-from app.services.account_pool_liveness import AccountPoolLivenessService
+from app.services.account_pool_liveness import AccountPoolLivenessService, LivenessCheckInProgressError
 from app.services.account_pool import account_pool_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.account_pool_rotation import attach_rotation_status
@@ -307,6 +307,7 @@ class TeamUpdateRequest(BaseModel):
     max_members: Optional[int] = Field(None, description="最大成员数")
     team_name: Optional[str] = Field(None, description="Team 名称")
     status: Optional[str] = Field(None, description="状态: active/full/expired/error/banned")
+    warranty_seat_enabled: Optional[bool] = Field(None, description="接收质保码，否则接收普通码")
 
 
 class WarrantySeatToggleRequest(BaseModel):
@@ -473,6 +474,7 @@ async def account_pool_page(
     team_filter: str = "",
     seat_filter: str = "",
     sort_by: str = "team",
+    rotation_filter: str = "",
 ):
     """账号号池页面。"""
     from app.main import templates
@@ -483,13 +485,15 @@ async def account_pool_page(
         per_page=per_page,
         search=search,
         status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,
+        rotation_filter=rotation_filter,
     )
     listing["entries"] = await _attach_account_pool_cached_usage(db, listing["entries"])
-    listing["entries"] = await attach_rotation_status(db, listing["entries"])
+    if not listing["rotation_filter"]:
+        listing["entries"] = await attach_rotation_status(db, listing["entries"])
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     from urllib.parse import urlencode
     def filter_url(**changes):
-        params = {key: listing[key] for key in ("per_page", "status_filter", "team_filter", "seat_filter", "sort_by")}
+        params = {key: listing[key] for key in ("per_page", "status_filter", "team_filter", "seat_filter", "rotation_filter", "sort_by")}
         params.update(page=1, search=search)
         params.update(changes)
         return "/admin/account-pool?" + urlencode(params)
@@ -760,9 +764,13 @@ async def check_account_pool_entry_liveness(
     current_user: dict = Depends(require_admin),
 ):
     """Check just this account, including owners represented by negative Team IDs."""
-    if not await account_pool_service.rows_by_ids(db, [entry_id]):
+    record = await db.get(Team if entry_id < 0 else AccountPoolEntry, abs(entry_id))
+    if record is None or (entry_id > 0 and record.deleted_at is not None):
         raise HTTPException(status_code=404, detail="账号不存在")
-    result = await account_pool_liveness_service.check_entry(db, entry_id)
+    try:
+        result = await account_pool_liveness_service.check_entry(db, entry_id)
+    except LivenessCheckInProgressError as exc:
+        return JSONResponse(status_code=409, content={"success": False, "error": str(exc), "code": "checking"})
     if result is None:
         return JSONResponse(status_code=409, content={"success": False, "error": "账号或凭据已变更，请刷新后重试"})
     rows = await account_pool_service.rows_by_ids(db, [entry_id])
@@ -772,6 +780,7 @@ async def check_account_pool_entry_liveness(
     return JSONResponse(content={
         "success": True, "status": result,
         "message": row.get("liveness_message") or "检测请求异常，请重试",
+        "checked_at": row["liveness_checked_at"].isoformat() if row.get("liveness_checked_at") else None,
     }, headers={"Cache-Control": "no-store"})
 
 
@@ -1110,7 +1119,8 @@ async def update_team(
             client_id=update_data.client_id,
             max_members=update_data.max_members,
             team_name=update_data.team_name,
-            status=update_data.status
+            status=update_data.status,
+            warranty_seat_enabled=update_data.warranty_seat_enabled
         )
         if not result["success"]:
             return JSONResponse(
@@ -2947,7 +2957,10 @@ async def settings_page(
         proxy_config = await settings_service.get_proxy_config(db)
         log_level = await settings_service.get_log_level(db)
 
+        from app.services.stock_16688 import public_settings
+
         context = await build_admin_base_context(request, db, current_user, "settings")
+        context.update(await public_settings(db))
         context.update({
             "proxy_enabled": proxy_config["enabled"],
             "proxy": proxy_config["proxy"],

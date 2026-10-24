@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -14,7 +15,7 @@ from app.models import AccountPoolEntry, AccountPoolWorkspace
 from app.services.account_pool import AccountPoolService
 from app.services.account_pool_credentials import AccountPoolCredentialService
 from app.services.account_pool_authorization import AccountPoolAuthorizationService
-from app.services.account_pool_liveness import AccountPoolLivenessService
+from app.services.account_pool_liveness import AccountPoolLivenessService, LivenessCheckInProgressError
 from app.services.encryption import encryption_service
 from app.services.openai_automatic_login import OpenAIAutomaticLoginError
 
@@ -98,41 +99,43 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
 
         entry = await self.read_account(entry_id)
         self.assertEqual(entry.liveness_status, "alive")
-        self.assertEqual(entry.workspace_id, "workspace-1")
-        self.assertEqual(entry.workspace_status, "workspace_ok")
-        self.assertIsNotNone(entry.export_json_encrypted)
+        self.assertIsNone(entry.workspace_id)
+        self.assertIsNone(entry.export_json_encrypted)
         self.assertIsInstance(entry.liveness_checked_at, datetime)
         self.assertEqual(listing["entries"][0]["liveness_status"], "alive")
-        self.assertTrue(listing["entries"][0]["json_saved"])
-        self.assertEqual(self.login.login.await_args.args[0].email, entry.email)
+        self.assertFalse(listing["entries"][0]["json_saved"])
+        self.login.verify_credentials.assert_awaited_once()
+        self.login.login.assert_not_awaited()
+        self.assertEqual(self.login.verify_credentials.await_args.args[0].email, entry.email)
+        self.assertEqual(self.login.verify_credentials.await_args.args[0].identifier,
+                         f"account-pool-liveness-{entry_id}")
 
-    async def test_refresh_saves_each_team_json_and_keeps_selected_team(self):
-        entry_id = await self.add_account(
-            "member@example.com----password----JBSWY3DPEHPK3PXP"
-        )
+    async def test_multiple_workspaces_use_one_verification_and_preserve_saved_exports(self):
+        entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
         self.login.verify_credentials.return_value = {
-            "status": "workspace_ok", "workspace_id": "team-a",
-            "available_workspaces": [
-                {"id": "team-a", "name": "Team A"},
-                {"id": "team-b", "name": "Team B"},
-            ],
+            "available_workspaces": [{"id": "team-a"}, {"id": "team-b"}, {"id": "personal"}],
         }
-        self.login.login.side_effect = lambda request: login_result(
-            request.email, workspace_id=request.account_id
-        )
         async with self.sessions() as session:
+            entry = await session.get(AccountPoolEntry, entry_id)
+            entry.workspace_id = "team-b"
+            entry.workspace_name = "Saved Team B"
+            entry.workspace_status = "workspace_ok"
+            entry.workspace_state_json = '{"saved": true}'
+            entry.export_json_encrypted = "saved-json"
+            session.add(AccountPoolWorkspace(account_pool_id=entry_id, workspace_id="team-b",
+                                             status="workspace_ok", export_json_encrypted="saved-workspace-json"))
+            await session.commit()
             self.assertEqual(await self.service.check_entry(session, entry_id), "alive")
-            rows = (await session.execute(select(AccountPoolWorkspace).where(
-                AccountPoolWorkspace.account_pool_id == entry_id
-            ))).scalars().all()
-            listing = await AccountPoolService(self.credentials).list_entries(session)
-
-        self.assertEqual({row.workspace_id for row in rows}, {"team-a", "team-b"})
-        self.assertTrue(all(row.export_json_encrypted for row in rows))
-        self.assertEqual(listing["entries"][0]["workspace_id"], "team-a")
-        self.assertEqual(len(listing["entries"][0]["workspace_options"]), 2)
-        self.assertEqual([call.args[0].account_id for call in self.login.login.await_args_list],
-                         ["team-a", "team-b"])
+            rows = (await session.scalars(select(AccountPoolWorkspace))).all()
+        entry = await self.read_account(entry_id)
+        self.assertEqual((entry.workspace_id, entry.workspace_name, entry.workspace_status),
+                         ("team-b", "Saved Team B", "workspace_ok"))
+        self.assertEqual(entry.export_json_encrypted, "saved-json")
+        self.assertEqual(entry.workspace_state_json, '{"saved": true}')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].export_json_encrypted, "saved-workspace-json")
+        self.login.verify_credentials.assert_awaited_once()
+        self.login.login.assert_not_awaited()
 
     async def test_team_list_refresh_uses_one_verification_without_json_login(self):
         entry_id = await self.add_account(
@@ -167,60 +170,27 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
         self.login.verify_credentials.assert_awaited_once()
         self.login.login.assert_not_awaited()
 
-    async def test_personal_account_is_persisted_without_team_plan(self):
-        entry_id = await self.add_account(
-            "personal@example.com----password----JBSWY3DPEHPK3PXP"
-        )
-        self.login.login.side_effect = lambda request: login_result(
-            request.email,
-            workspace_id="personal-account",
-            plan_type="free",
-            is_personal=True,
-        )
-        self.login.verify_credentials.return_value = {
-            "status": "personal_account", "workspace_id": "personal-account",
-            "available_workspaces": [{"id": "personal-account", "is_personal": True}],
-        }
-
+    async def test_personal_account_verification_does_not_require_team_or_export(self):
+        entry_id = await self.add_account("personal@example.com----password----JBSWY3DPEHPK3PXP")
+        self.login.verify_credentials.return_value = {"status": "personal_account", "available_workspaces": []}
         async with self.sessions() as session:
             self.assertEqual(await self.service.check_entry(session, entry_id), "alive")
-
         entry = await self.read_account(entry_id)
-        payload = json.loads(encryption_service.decrypt_token(entry.export_json_encrypted))
-        credentials = payload["accounts"][0]["credentials"]
-        self.assertEqual(entry.workspace_status, "personal_account")
-        self.assertEqual(entry.workspace_name, "个人账户")
-        self.assertEqual(credentials["plan_type"], "free")
-        self.assertEqual(credentials["chatgpt_account_id"], "personal-account")
+        self.assertEqual(entry.liveness_status, "alive")
+        self.assertIsNone(entry.export_json_encrypted)
+        self.login.login.assert_not_awaited()
 
-    async def test_refresh_ignores_saved_personal_id_and_discovers_team(self):
-        entry_id = await self.add_account(
-            "member@example.com----password----JBSWY3DPEHPK3PXP"
-        )
+    async def test_liveness_does_not_change_saved_workspace_selection(self):
+        entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
         async with self.sessions() as session:
             entry = await session.get(AccountPoolEntry, entry_id)
             entry.workspace_id = "personal-account"
             entry.workspace_status = "personal_account"
             await session.commit()
-
-        requests = []
-
-        def team_login(request):
-            requests.append(request)
-            return login_result(request.email, workspace_id="new-team", plan_type="team")
-
-        self.login.login.side_effect = team_login
-        self.login.verify_credentials.return_value = {
-            "status": "workspace_ok", "workspace_id": "new-team",
-            "available_workspaces": [{"id": "new-team", "name": "New Team"}],
-        }
-        async with self.sessions() as session:
             self.assertEqual(await self.service.check_entry(session, entry_id), "alive")
-
         entry = await self.read_account(entry_id)
-        self.assertEqual(requests[0].account_id, "new-team")
-        self.assertEqual(entry.workspace_id, "new-team")
-        self.assertEqual(entry.workspace_status, "workspace_ok")
+        self.assertEqual((entry.workspace_id, entry.workspace_status), ("personal-account", "personal_account"))
+        self.login.login.assert_not_awaited()
 
     async def test_invalid_credentials_are_distinct_from_network_failure(self):
         entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
@@ -324,12 +294,65 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
             await edit_during_check(request)
             return login_result()
 
-        self.login.login.side_effect = login_after_edit
+        self.login.verify_credentials.side_effect = login_after_edit
         async with self.sessions() as session:
             self.assertIsNone(await self.service.check_entry(session, entry_id))
         entry = await self.read_account(entry_id)
         self.assertIsNone(entry.liveness_status)
         self.assertIsNone(entry.liveness_checked_at)
+
+    async def test_timeout_is_saved_and_check_can_be_retried(self):
+        entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
+        self.service._timeout_seconds = 0.01
+        async def stalled(request):
+            await asyncio.Event().wait()
+        self.login.verify_credentials.side_effect = stalled
+        async with self.sessions() as session:
+            self.assertEqual(await self.service.check_entry(session, entry_id), "error")
+        entry = await self.read_account(entry_id)
+        self.assertIn("超时", entry.liveness_message)
+        self.assertIsNotNone(entry.liveness_checked_at)
+        self.login.verify_credentials.side_effect = None
+        async with self.sessions() as session:
+            self.assertEqual(await self.service.check_entry(session, entry_id), "alive")
+
+    async def test_concurrent_clicks_do_not_repeat_login_and_route_reports_busy(self):
+        from app.routes import admin
+        entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
+        started, release = asyncio.Event(), asyncio.Event()
+        async def stalled(request):
+            started.set()
+            await release.wait()
+            return {}
+        self.login.verify_credentials.side_effect = stalled
+        async with self.sessions() as first, self.sessions() as second:
+            task = asyncio.create_task(self.service.check_entry(first, entry_id))
+            try:
+                await started.wait()
+                with self.assertRaises(LivenessCheckInProgressError):
+                    await self.service.check_entry(second, entry_id)
+                with patch.object(admin, 'account_pool_liveness_service', self.service):
+                    response = await admin.check_account_pool_entry_liveness(entry_id, second, {})
+                    self.assertEqual(response.status_code, 409)
+                    self.assertEqual(json.loads(response.body)['code'], 'checking')
+            finally:
+                release.set()
+                await task
+        self.login.verify_credentials.assert_awaited_once()
+
+    async def test_transient_error_does_not_mark_workspace_broken(self):
+        entry_id = await self.add_account("member@example.com----password----JBSWY3DPEHPK3PXP")
+        async with self.sessions() as session:
+            entry = await session.get(AccountPoolEntry, entry_id)
+            entry.workspace_status = "workspace_ok"
+            entry.workspace_id = "saved-team"
+            entry.export_json_encrypted = "saved-json"
+            await session.commit()
+            self.login.verify_credentials.side_effect = OpenAIAutomaticLoginError("网络请求失败")
+            self.assertEqual(await self.service.check_entry(session, entry_id), "error")
+        entry = await self.read_account(entry_id)
+        self.assertEqual((entry.workspace_status, entry.workspace_id, entry.export_json_encrypted),
+                         ("workspace_ok", "saved-team", "saved-json"))
 
 
 class AccountPoolManualLivenessPageTests(unittest.IsolatedAsyncioTestCase):
@@ -367,7 +390,9 @@ class AccountPoolManualLivenessPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(b'account-pool-liveness', settings_response.body)
         self.assertIn('验活状态'.encode(), pool_response.body)
         self.assertIn('未检测'.encode(), pool_response.body)
-        self.assertIn('立即验活'.encode(), pool_response.body)
+        self.assertIn(b'account-pool-entry-liveness', pool_response.body)
+        self.assertIn(b'aria-live="polite"', pool_response.body)
+        self.assertNotIn(b'accountPoolLivenessBtn', pool_response.body)
         self.assertIn('列设置'.encode(), pool_response.body)
         self.assertIn(b'accountPoolColumnToggleDropdown', pool_response.body)
         self.assertIn(b'account-pool-workspace-scan-button', pool_response.body)

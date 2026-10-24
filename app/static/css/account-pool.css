@@ -78,9 +78,20 @@
     display: grid;
     gap: 0.25rem;
     min-width: 80px;
-    max-width: 120px;
+    max-width: 180px;
     justify-items: start;
 }
+
+.account-pool-liveness-actions { display: flex; align-items: center; gap: .5rem; white-space: nowrap; }
+.account-pool-entry-liveness { padding: .2rem .3rem; border: 0; border-radius: 4px; background: transparent; color: var(--primary); font: inherit; font-size: .8rem; cursor: pointer; }
+.account-pool-entry-liveness:hover { background: var(--bg-hover, #f1f5f9); }
+.account-pool-entry-liveness:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.account-pool-entry-liveness:disabled { opacity: .6; cursor: wait; }
+.account-pool-liveness-message { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: .75rem; line-height: 1.4; }
+.account-pool-liveness-time { font-size: .7rem; }
+.account-pool-liveness[aria-busy="true"] .status-badge::before { content: ''; width: .65em; height: .65em; margin-right: .35rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: pool-liveness-spin 1s linear infinite; }
+@keyframes pool-liveness-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .account-pool-liveness[aria-busy="true"] .status-badge::before { animation: none; } }
 
 .account-pool-liveness small {
     color: var(--text-muted);
@@ -569,7 +580,7 @@ body.admin-theme .account-pool-invite-button:disabled {
 .account-pool-import-panel .account-pool-form { display: grid; gap: 1rem; }
 .account-pool-import-actions { display: flex; gap: .6rem; justify-content: flex-end; }
 .account-pool-filters { display: grid; gap: .9rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--border-base); }
-.account-pool-filter-row { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: .75rem; align-items: start; }
+.account-pool-filter-row { display: grid; grid-template-columns: 4rem minmax(0, 1fr); gap: .75rem; align-items: start; }
 .account-pool-filter-label { padding-top: .4rem; color: var(--text-muted); font-size: .8rem; font-weight: 600; }
 .account-pool-filter-options { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; min-width: 0; }
 .account-pool-filter-chip { display: inline-flex; align-items: center; gap: .45rem; padding: .36rem .7rem; border: 1px solid transparent; border-radius: 6px; color: var(--text-secondary, var(--text-muted)); background: transparent; font-size: .83rem; line-height: 1.4; text-decoration: none; transition: background .15s, border-color .15s; }

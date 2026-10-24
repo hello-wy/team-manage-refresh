@@ -5,8 +5,9 @@ from unittest.mock import patch
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import AccountPoolEntry, Team, TeamEmailMapping
+from app.models import AccountPoolEntry, RotationAction, Team, TeamEmailMapping
 from app.services.account_pool import account_pool_service
+from app.services.account_pool_rotation import ROTATION_FILTER_OPTIONS, attach_rotation_status
 from app.utils.time_utils import get_now
 
 
@@ -120,8 +121,82 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as db:
             with patch.object(account_pool_service, 'rows_by_ids', wraps=account_pool_service.rows_by_ids) as load:
                 listing = await account_pool_service.list_entries(db, per_page=2, team_filter='9' * 200,
-                                                                 seat_filter='invalid', sort_by='invalid')
+                                                                 seat_filter='invalid', sort_by='invalid',
+                                                                 rotation_filter='invalid')
             self.assertEqual(len(load.call_args.args[1]), 2)
             self.assertEqual(listing['team_filter'], '')
             self.assertEqual(listing['seat_filter'], '')
             self.assertEqual(listing['sort_by'], 'team')
+            self.assertEqual(listing['rotation_filter'], '')
+
+    async def test_rotation_filter_matches_display_policy_for_every_option(self):
+        async with self.sessions() as db:
+            whole = await account_pool_service.list_entries(db)
+            rows = await attach_rotation_status(db, whole['entries'])
+        self.assertEqual(len(ROTATION_FILTER_OPTIONS), 8)
+        for key in ROTATION_FILTER_OPTIONS:
+            with self.subTest(status=key):
+                filtered = await self.listing(rotation_filter=key)
+                expected = [row['email'] for row in rows if row['rotation']['status'] == key]
+                self.assertEqual(self.emails(filtered), expected)
+                self.assertEqual(filtered['total'], len(expected))
+                self.assertTrue(all(row['rotation']['status'] == key for row in filtered['entries']))
+
+    async def test_rotation_filter_paginates_matches_globally_and_loads_one_page(self):
+        # Both owners, including the virtual owner, take priority over their mappings.
+        async with self.sessions() as db:
+            with patch.object(account_pool_service, 'rows_by_ids', wraps=account_pool_service.rows_by_ids) as load:
+                first = await account_pool_service.list_entries(db, rotation_filter='excluded', per_page=1)
+            self.assertEqual(len(load.call_args.args[1]), 1)
+        second = await self.listing(rotation_filter='excluded', per_page=1, page=999)
+        self.assertEqual(first['total'], 2)
+        self.assertEqual(first['total_pages'], 2)
+        self.assertEqual(self.emails(first), ['owner1@example.com'])
+        self.assertEqual(self.emails(second), ['owner2@example.com'])
+        self.assertEqual(second['current_page'], 2)
+
+    async def test_rotation_filter_combines_with_existing_filters_and_sort(self):
+        invited = await self.listing(rotation_filter='invited', team_filter='personal',
+                                     seat_filter='unknown', search='INVITED', sort_by='newest')
+        self.assertEqual(self.emails(invited), ['invited@example.com'])
+        self.assertEqual(invited['entries'][0]['rotation']['label'], '待接受邀请')
+        self.assertEqual(self.emails(await self.listing(rotation_filter='waiting_exit',
+                                                       team_filter='1', seat_filter='standard')),
+                         ['standard@example.com'])
+        empty = await self.listing(rotation_filter='invited', seat_filter='premium', page=999)
+        self.assertEqual((empty['total'], empty['total_pages'], empty['current_page']), (0, 1, 1))
+        self.assertEqual(empty['entries'], [])
+
+    async def test_rotation_filter_respects_action_and_conflict_priority(self):
+        async with self.sessions() as db:
+            db.add_all([
+                RotationAction(team_id=2, email='invited@example.com', action_type='invite',
+                               status='pending', idempotency_key='invite'),
+                RotationAction(team_id=1, email='conflict@example.com', action_type='remove',
+                               status='reconciling', idempotency_key='remove'),
+                RotationAction(team_id=1, email='owner1@example.com', action_type='remove',
+                               status='executing', idempotency_key='owner'),
+            ])
+            await db.commit()
+        self.assertEqual(self.emails(await self.listing(rotation_filter='invited')), [])
+        processing = await self.listing(rotation_filter='processing', sort_by='email')
+        self.assertEqual(self.emails(processing), ['conflict@example.com', 'invited@example.com'])
+        self.assertEqual([row['rotation']['detail'] for row in processing['entries']],
+                         ['退出确认中', '邀请确认中'])
+        self.assertEqual(self.emails(await self.listing(rotation_filter='attention')), [])
+        self.assertEqual(self.emails(await self.listing(rotation_filter='excluded')),
+                         ['owner1@example.com', 'owner2@example.com'])
+
+    async def test_page_renders_selected_rotation_and_preserves_it_in_links(self):
+        from starlette.requests import Request
+        from app.routes.admin import account_pool_page
+        request = Request({'type': 'http', 'method': 'GET', 'path': '/admin/account-pool',
+                           'query_string': b'rotation_filter=excluded', 'headers': []})
+        async with self.sessions() as db:
+            response = await account_pool_page(request, db=db, current_user={'username': 'admin'},
+                                               rotation_filter='excluded', per_page=1)
+        html = response.body.decode()
+        self.assertIn('value="excluded" selected', html)
+        self.assertIn('rotation_filter=excluded', response.context['filter_url'](page=2))
+        self.assertNotIn('rotation_filter=excluded', response.context['filter_url'](rotation_filter=''))
+        self.assertEqual(response.context['total'], 2)

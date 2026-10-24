@@ -1,9 +1,9 @@
-"""质保码入组成员的自动清退保护，不受质保到期时间影响。"""
+"""质保兑换成员免小时级/额度清退，只在当前 Team 订阅到期后下线。"""
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
-from app.models import RedemptionCode, RedemptionRecord
-from app.services.member_auto_kick_policy import set_participation
+from app.models import RedemptionCode, RedemptionRecord, Team
+from app.utils.time_utils import get_now
 
 
 def warranty_member_condition(team_id, email):
@@ -30,11 +30,26 @@ async def is_warranty_member(db, team_id, email):
     return bool(await db.scalar(select(warranty_member_condition(team_id, email))))
 
 
-def protect_mapping(mapping):
-    set_participation(mapping, False, 0)
-    mapping.auto_kick_failures = 0
-    mapping.auto_kick_last_error = None
-    mapping.auto_kick_retry_at = None
+def protect_mapping(mapping, team=None):
+    deadline = (team.expires_at if team and mapping.status == "joined"
+                and mapping.member_role != "account-owner" else None)
+    changed = mapping.auto_kick_at != deadline or mapping.departure_policy != "team_expiry"
+    mapping.departure_policy = "team_expiry"
+    mapping.auto_kick_enabled = False
+    mapping.auto_kick_exempt = True
+    mapping.auto_kick_at = deadline
+    if changed:
+        mapping.auto_kick_failures = 0
+        mapping.auto_kick_last_error = None
+        mapping.auto_kick_retry_at = None
+
+
+async def scheduled_departure_allowed(db, team_id, email):
+    if not await is_warranty_member(db, team_id, email):
+        return True
+    # 执行前从数据库重读，避免 Team 续费后仍执行旧的到期任务。
+    expiry = await db.scalar(select(Team.expires_at).where(Team.id == team_id))
+    return bool(expiry and expiry <= get_now())
 
 
 async def protect_team_mappings(db, team_id, mappings):
@@ -52,6 +67,8 @@ async def protect_team_mappings(db, team_id, mappings):
     )
     emails = (await db.scalars(recorded.union(used))).all()
     normalized = {email.strip().lower() for email in emails if email}
+    team = await db.get(Team, team_id)
     for mapping in mappings:
         if mapping.email.strip().lower() in normalized:
-            protect_mapping(mapping)
+            protect_mapping(mapping, team)
+            mapping.join_source = "redeem"

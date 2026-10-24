@@ -96,6 +96,8 @@ def build_seat_layout(members, balance=None):
         kind = normalize_seat_type(member.get("seat_type"))
         invited = member.get("status") == "invited"
         grouped[kind].append({
+            **{key: member.get(key) for key in ("seat_status", "status_label", "status_reason",
+                "warranty_expires_at", "team_expires_at", "auto_kick_at", "usage_started_at", "server_now")},
             "state": "invited" if invited else "joined",
             "label": member.get("email") or member.get("name") or "成员资料待同步",
             "detail": "邀请中" if invited else "所有者" if member.get("role") == "account-owner" else "已加入",
@@ -117,7 +119,7 @@ def build_seat_layout(members, balance=None):
             occupied = max(len(slots), paid - remaining)
             slots.extend({"state": "reserved", "label": "已占用 / 预留", "detail": "待同步确认"}
                          for _ in range(occupied - len(slots)))
-            slots.extend({"state": "available", "label": "邀请账号", "detail": "空闲席位"}
+            slots.extend({"state": "available", "label": "邀请账号", "detail": "未邀请 · 空闲席位"}
                          for _ in range(remaining))
         groups.append({"kind": kind, "label": label, "seat_type": value,
                        "paid": paid if known else None, "remaining": remaining if known else None,
