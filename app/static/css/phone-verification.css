@@ -32,6 +32,7 @@
 .phone-progress[hidden]{display:none}
 .phone-progress-heading{display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap;font-size:.9rem}
 .phone-progress-heading span{color:var(--text-muted);font-size:.8rem}
+.phone-progress-attempt{margin:.65rem 0 0;color:var(--text-muted);font-size:.85rem}
 .phone-progress-steps{list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;padding:0;margin:1rem 0 0;counter-reset:phone-step}
 .phone-progress-steps li{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--text-muted);counter-increment:phone-step}
 .phone-progress-steps li::before{content:counter(phone-step);display:grid;place-items:center;flex-shrink:0;width:24px;height:24px;border:1px solid var(--border-base);border-radius:50%;font-size:.75rem}

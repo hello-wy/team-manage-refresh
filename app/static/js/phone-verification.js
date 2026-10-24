@@ -44,6 +44,7 @@
   const progressPanel = document.getElementById('phoneProgress');
   const progressTitle = document.getElementById('phoneProgressTitle');
   const progressElapsed = document.getElementById('phoneProgressElapsed');
+  const progressAttempt = document.getElementById('phoneProgressAttempt');
   const progressSteps = document.getElementById('phoneProgressSteps');
   const stages = [
     ['login', '登录账号', '正在登录账号并验证密码和 2FA…'],
@@ -58,11 +59,14 @@
   const TIMER_INTERVAL_MS = 1000;
   let currentStep = null;
   let stageStartedAt = 0;
+  let numberAttempts = 0;
 
   function initializeProgress() {
     progressPanel.hidden = false;
     progressSteps.replaceChildren();
     currentStep = null;
+    numberAttempts = 0;
+    progressAttempt.textContent = '';
     stages.forEach(([key, label]) => {
       const item = document.createElement('li');
       item.dataset.stage = key;
@@ -74,13 +78,36 @@
     progressElapsed.textContent = '';
   }
 
+  function startNumberAttempt() {
+    numberAttempts += 1;
+    Array.from(progressSteps.children).forEach((item) => {
+      if (item.dataset.stage !== 'login') item.dataset.state = 'pending';
+      item.removeAttribute('aria-current');
+    });
+    currentStep = null;
+    progressAttempt.textContent = `第 ${numberAttempts} 次取号 · 已取消 ${numberAttempts - 1} 个超时号码`;
+  }
+
+  function showNumberCancellation() {
+    currentStep.dataset.state = 'warning';
+    stageStartedAt = Date.now();
+    progressTitle.textContent = '取消超时号码';
+    resultPanel.textContent = '等待验证码超时，正在取消当前号码；确认取消成功后将重新获取号码并继续接码…';
+    progressElapsed.textContent = '当前步骤已用时 0 秒';
+  }
+
   function updateProgress(stage) {
+    if (stage === 'cancel_number') {
+      showNumberCancellation();
+      return;
+    }
     const definition = stages.find(([key]) => key === stage);
     if (!definition) throw new Error('服务端返回了未知的验证步骤');
     if (currentStep) {
-      currentStep.dataset.state = 'done';
+      if (currentStep.dataset.state !== 'warning') currentStep.dataset.state = 'done';
       currentStep.removeAttribute('aria-current');
     }
+    if (stage === 'rent_number') startNumberAttempt();
     currentStep = Array.from(progressSteps.children).find((item) => item.dataset.stage === stage);
     currentStep.dataset.state = 'active';
     currentStep.setAttribute('aria-current', 'step');
@@ -118,7 +145,7 @@
       currentStep.dataset.state = 'error';
       currentStep.removeAttribute('aria-current');
     }
-    progressTitle.textContent = currentStep ? `${currentStep.textContent}未完成` : '请求未完成';
+    progressTitle.textContent = currentStep ? `${progressTitle.textContent}未完成` : '请求未完成';
     resultPanel.className = 'phone-result is-error';
     resultPanel.textContent = error.message;
   }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from urllib.parse import urljoin
 
 import httpx
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.encryption import encryption_service
 from app.services.openai_auth_protocol import AUTH_ORIGIN, auth_headers
 from app.services.settings import settings_service
-from app.services.operation_progress import report_progress
+from app.services.operation_progress import ProgressCallback, report_progress
 
 HEROSMS_DEFAULT_ENDPOINT = "https://hero-sms.com/stubs/handler_api.php"
 OPENAI_SMS_SERVICE = "dr"
@@ -24,10 +25,53 @@ class PhoneVerificationError(ValueError):
     pass
 
 
+class SmsCodeTimeout(PhoneVerificationError):
+    """The rented number did not receive an SMS within the waiting period."""
+
+
+@dataclass(frozen=True)
+class RentalSettings:
+    api_key: str
+    endpoint: str
+    country: str
+    max_price: str
+
+
+@dataclass(frozen=True)
+class VerificationContext:
+    session: object
+    device_id: str
+    sentinel_token: str
+    current_url: str
+    progress: ProgressCallback | None
+
+
 async def complete_herosms_phone_verification(
     request, session, device_id: str, sentinel_token: str, current_url: str
 ) -> dict[str, str]:
-    db: AsyncSession = request.db_session
+    provider = await _load_rental_settings(request.db_session)
+    context = VerificationContext(session, device_id, sentinel_token, current_url, request.on_progress)
+    activation_id, phone_number, code = await _receive_code(provider, context)
+    try:
+        await report_progress(context.progress, "verify_code")
+        continue_url = await _submit_code(session, device_id, sentinel_token, code)
+        await report_progress(context.progress, "finish_rental")
+    except (Exception, asyncio.CancelledError) as original_error:
+        await _cancel_rental(provider, activation_id, original_error)
+        raise
+    cleanup_error = ""
+    try:
+        await _finish_activation(provider.api_key, provider.endpoint, activation_id, "6")
+    except Exception as exc:
+        cleanup_error = str(exc)
+    return {
+        "phone_number": phone_number,
+        "continue_url": continue_url,
+        "rental_cleanup_error": cleanup_error,
+    }
+
+
+async def _load_rental_settings(db: AsyncSession) -> RentalSettings:
     encrypted_key = await settings_service.get_setting(db, "herosms_api_key_encrypted", "")
     if not encrypted_key:
         raise PhoneVerificationError("请先在手机号接码页面配置 HeroSMS API Key")
@@ -37,35 +81,46 @@ async def complete_herosms_phone_verification(
     ) or HEROSMS_DEFAULT_ENDPOINT).strip()
     country = str(await settings_service.get_setting(db, "herosms_country", "38") or "38").strip()
     max_price = str(await settings_service.get_setting(db, "herosms_max_price", "0.06") or "").strip()
-    progress = request.on_progress
-    await report_progress(progress, "rent_number")
-    activation_id, phone_number = await _rent_number(api_key, endpoint, country, max_price)
-    try:
-        await report_progress(progress, "send_code")
-        await _send_code(session, device_id, sentinel_token, current_url, phone_number)
-        await report_progress(progress, "wait_code")
-        code = await _wait_for_code(api_key, endpoint, activation_id)
-        await report_progress(progress, "verify_code")
-        continue_url = await _submit_code(session, device_id, sentinel_token, code)
-    except (Exception, asyncio.CancelledError) as original_error:
+    return RentalSettings(api_key, endpoint, country, max_price)
+
+
+async def _receive_code(provider: RentalSettings, context: VerificationContext):
+    while True:
+        await report_progress(context.progress, "rent_number")
+        activation_id, phone_number = await _rent_number(
+            provider.api_key, provider.endpoint, provider.country, provider.max_price,
+        )
         try:
-            await _finish_activation(api_key, endpoint, activation_id, "8")
-        except Exception as release_error:
-            raise PhoneVerificationError(
-                f"{original_error}；HeroSMS 取消租号失败：{release_error}"
-            ) from original_error
-        raise
-    cleanup_error = ""
-    await report_progress(progress, "finish_rental")
+            await report_progress(context.progress, "send_code")
+            await _send_code(
+                context.session, context.device_id, context.sentinel_token, context.current_url, phone_number,
+            )
+            await report_progress(context.progress, "wait_code")
+            code = await _wait_for_code(provider.api_key, provider.endpoint, activation_id)
+            return activation_id, phone_number, code
+        except SmsCodeTimeout as timeout_error:
+            try:
+                await report_progress(context.progress, "cancel_number")
+            finally:
+                await _cancel_rental(provider, activation_id, timeout_error)
+        except (Exception, asyncio.CancelledError) as original_error:
+            await _cancel_rental(provider, activation_id, original_error)
+            raise
+
+
+async def _cancel_rental(provider: RentalSettings, activation_id: str, original_error: BaseException):
+    # A browser disconnect must wait for cancellation confirmation before the worker exits.
+    release = asyncio.create_task(_finish_activation(provider.api_key, provider.endpoint, activation_id, "8"))
     try:
-        await _finish_activation(api_key, endpoint, activation_id, "6")
-    except Exception as exc:
-        cleanup_error = str(exc)
-    return {
-        "phone_number": phone_number,
-        "continue_url": continue_url,
-        "rental_cleanup_error": cleanup_error,
-    }
+        try:
+            await asyncio.shield(release)
+        except asyncio.CancelledError:
+            await release
+            raise
+    except Exception as release_error:
+        raise PhoneVerificationError(
+            f"{original_error}；HeroSMS 取消租号失败：{release_error}"
+        ) from original_error
 
 
 async def _rent_number(api_key: str, endpoint: str, country: str, max_price: str):
@@ -113,7 +168,7 @@ async def _wait_for_code(api_key: str, endpoint: str, activation_id: str) -> str
             elif not result.startswith(("STATUS_WAIT_CODE", "STATUS_WAIT_RETRY:")):
                 raise PhoneVerificationError(f"HeroSMS 获取验证码失败：{result[:160]}")
             await asyncio.sleep(SMS_POLL_SECONDS)
-    raise PhoneVerificationError(f"等待 HeroSMS 验证码超时（{SMS_WAIT_SECONDS} 秒）")
+    raise SmsCodeTimeout(f"等待 HeroSMS 验证码超时（{SMS_WAIT_SECONDS} 秒）")
 
 
 async def _submit_code(session, device_id, sentinel_token, code: str) -> str:
