@@ -78,9 +78,8 @@ class AccountPoolService:
             TeamEmailMapping.last_invited_at.is_not(None),
             TeamEmailMapping.last_invited_at > cutoff,
         )
-        recent_team_join = select(AccountPoolHistory.id).where(
+        recent_join = select(AccountPoolHistory.id).where(
             AccountPoolHistory.account_pool_id == AccountPoolEntry.id,
-            AccountPoolHistory.team_id == team_id,
             AccountPoolHistory.joined_at > cutoff,
         )
         result = await db_session.execute(
@@ -90,7 +89,7 @@ class AccountPoolService:
                 ~active_mapping.exists(),
                 ~owner_email_exists(),
                 ~recent_team_invite.exists(),
-                ~recent_team_join.exists(),
+                ~recent_join.exists(),
                 ~AccountPoolEntry.id.in_(excluded_ids),
             )
             .order_by(AccountPoolEntry.updated_at.asc(), AccountPoolEntry.id.asc())
@@ -187,10 +186,16 @@ class AccountPoolService:
         *,
         invite_member: InviteMember,
         seat_type: str = "standard",
+        rotation_lane: str | None = None,
+        rotation_round: int = 1,
+        excluded_ids: frozenset[int] = frozenset(),
     ) -> dict[str, Any]:
-        candidate = await self.find_replacement_candidate(team_id, db_session)
+        candidate = await self.find_replacement_candidate(
+            team_id, db_session, excluded_ids=excluded_ids,
+        )
         if not candidate:
-            return {"success": True, "status": "no_candidate", "email": None}
+            return {"success": True, "status": "no_candidate", "email": None,
+                    "candidate_id": None}
 
         email = candidate.email
         result = await invite_member(
@@ -204,12 +209,18 @@ class AccountPoolService:
                 "success": False,
                 "status": "failed",
                 "email": email,
+                "candidate_id": candidate.id,
                 "error": result.get("error") or result.get("message") or "邀请失败",
                 "error_code": result.get("error_code"),
                 "status_code": result.get("status_code"),
             }
-        await mark_replacement_pending(db_session, team_id, email)
-        return {"success": True, "status": "invited", "email": email}
+        await mark_replacement_pending(
+            db_session, team_id, email,
+            rotation_lane=rotation_lane,
+            rotation_round=rotation_round,
+        )
+        return {"success": True, "status": "invited", "email": email,
+                "candidate_id": candidate.id}
 
     async def record_reconciliation(
         self,
@@ -230,7 +241,7 @@ class AccountPoolService:
     async def list_entries(
         self, db_session: AsyncSession, page: int = 1, per_page: int = 20,
         search: str = "", status_filter: str = "", team_filter: str = "",
-        seat_filter: str = "", sort_by: str = "team", rotation_filter: str = "", liveness_filter: str = "",
+        seat_filter: str = "", sort_by: str = "id", rotation_filter: str = "", liveness_filter: str = "",
         sort_order: str = "asc",
     ) -> dict[str, Any]:
         from app.services.account_pool_query import query_pool_ids

@@ -19,9 +19,12 @@ async def _usage_details(db, entries):
 
 
 async def refresh_pool_quotas(db, entries, *, usage_service, authorization_service=None):
-    usages = await usage_service.check_many(db, [_quota_key(entry) for entry in entries])
+    eligible = [entry for entry in entries if entry.get("status") == "joined"]
+    usages = await usage_service.check_many(
+        db, [_quota_key(entry) for entry in eligible]
+    ) if eligible else {}
     if authorization_service:
-        for entry in entries:
+        for entry in eligible:
             key = _quota_key(entry)
             email, space_id = key
             if not space_id or usages.get(key, {}).get("status") != "invalid":
@@ -54,6 +57,12 @@ async def refresh_pool_quotas(db, entries, *, usage_service, authorization_servi
                 usages[key] = {"status": "invalid", "error": f"授权刷新失败：{exc}"}
     refreshed = []
     for entry in entries:
+        if entry.get("status") != "joined":
+            status = "invited" if entry.get("status") == "invited" else (
+                "conflict" if entry.get("status") == "conflict" else "not_joined"
+            )
+            refreshed.append({**entry, "usage": {"status": status}})
+            continue
         email, space_id = _quota_key(entry)
         snapshot = await store_quota(
             db, email=email, space_id=space_id, seat_type=entry.get("seat_type"),

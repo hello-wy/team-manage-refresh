@@ -114,10 +114,31 @@ async function loadRotationActions(section) {
     const target = section.querySelector('.rotation-actions');
     try {
         const result = await rotationRequest(`/admin/teams/${teamId}/rotation/actions`);
-        target.textContent = result.actions.length
-            ? result.actions.map((row) => `${row.created_at}  ${row.email}  ${row.action}  ${row.status}  ${row.result || ''}`).join('\n')
-            : '暂无动作记录';
-        target.style.whiteSpace = 'pre-line';
+        target.replaceChildren();
+        if (!result.actions.length) {
+            target.textContent = '暂无动作记录';
+            return;
+        }
+        const actionLabels = {invite: '邀请', remove: '移出', upgrade: '升级席位', return_standard: '转回标准'};
+        const statusLabels = {pending: '等待执行', executing: '执行中', reconciling: '待同步确认', succeeded: '已完成', cancelled: '已取消', blocked: '已阻塞'};
+        result.actions.forEach((row) => {
+            const item = document.createElement('article');
+            item.className = 'rotation-action-item';
+            const meta = document.createElement('div');
+            meta.className = 'rotation-action-meta';
+            meta.textContent = row.created_at ? new Date(row.created_at).toLocaleString() : '时间未知';
+            const email = document.createElement('div');
+            email.className = 'rotation-action-email';
+            email.textContent = row.email || '未知账号';
+            const badge = document.createElement('span');
+            badge.className = 'status-badge rotation-action-badge ' + (row.status === 'succeeded' ? 'status-active' : row.status === 'cancelled' || row.status === 'blocked' ? 'status-error' : 'status-pending');
+            badge.textContent = `${actionLabels[row.action] || row.action || '动作'} · ${statusLabels[row.status] || row.status || '未知'}`;
+            const detail = document.createElement('div');
+            detail.className = 'rotation-action-detail';
+            detail.textContent = row.result || row.reason || '-';
+            item.append(meta, email, badge, detail);
+            target.append(item);
+        });
     } catch (error) {
         target.textContent = error.message;
     }
@@ -194,6 +215,9 @@ async function refreshRotationQuota(section, row, button) {
 }
 
 async function previewRotation(section) {
+    const button = section.querySelector('.rotation-preview');
+    button.disabled = true;
+    rotationMessage(section, '正在读取当前轮转预览...');
     try {
         const result = await rotationRequest(`/admin/teams/${section.dataset.teamId}/rotation/preview`, {method: 'POST'});
         if (!result.seat_balance?.success) throw new Error(result.seat_balance?.error || '席位余额未知');
@@ -201,6 +225,8 @@ async function previewRotation(section) {
         rotationMessage(section, action ? `${action.email}: ${action.reason}` : '当前没有可执行动作');
     } catch (error) {
         rotationMessage(section, error.message);
+    } finally {
+        button.disabled = false;
     }
 }
 

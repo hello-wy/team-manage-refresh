@@ -39,6 +39,8 @@ class Team(Base):
                                     comment="成员加入后自动下线小时数")
     rotation_mode = Column(String(20), default="off", nullable=False)
     pending_replacements = Column(Integer, default=0, nullable=False, comment="自动踢人后待补账号数")
+    rotation_rounds = Column(Integer, default=0, server_default="0", nullable=False,
+                             comment="每个高级席位允许加入的账号数，0 表示不限制")
     error_count = Column(Integer, default=0, comment="连续报错次数")
     last_sync = Column(DateTime, comment="最后同步时间")
     owner_liveness_status = Column(String(20), comment="所有者 Token 验活状态")
@@ -117,6 +119,11 @@ class TeamReplacementQueue(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
     seat_type = Column(String(20), nullable=False, default="standard")
+    lane_key = Column(String(100), comment="席位轮转链标识")
+    next_round = Column(Integer, nullable=False, default=1, server_default="1",
+                        comment="待邀请账号在该席位轮转链中的轮次")
+    excluded_entry_ids = Column(Text, nullable=False, default="[]", server_default="[]",
+                                comment="该补位任务已尝试失败的号池账号 ID")
     last_error_code = Column(String(100), comment="最近一次补位未完成的原因代码")
     last_attempt_at = Column(DateTime, comment="最近一次补位执行时间")
     created_at = Column(DateTime, default=get_now, nullable=False)
@@ -181,6 +188,9 @@ class TeamEmailMapping(Base):
         Boolean, default=False, nullable=False,
         comment="轮转补位邀请后待自动授权并导入 sub2api",
     )
+    rotation_lane = Column(String(100), comment="所属席位轮转链标识")
+    rotation_round = Column(Integer, nullable=False, default=1, server_default="1",
+                            comment="当前账号在所属席位轮转链中的轮次")
     upstream_user_id = Column(String(255), comment="上游成员用户 ID")
     member_role = Column(String(50), comment="上游成员角色")
     member_name = Column(String(255), comment="最近同步的成员姓名")

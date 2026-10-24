@@ -192,6 +192,37 @@ class RotationReconciliationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await engine.dispose()
 
+    async def test_invite_workspace_readback_error_is_recorded_as_submitted(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                db.add(Team(id=1, email="owner@example.com", account_id="space",
+                            access_token_encrypted="token", rotation_mode="auto"))
+                action = RotationAction(team_id=1, email="invitee@example.com",
+                                        action_type="invite", idempotency_key="invite-readback",
+                                        status="reconciling")
+                db.add(action)
+                await db.commit()
+                service = SimpleNamespace(get_team_members=AsyncMock(return_value={
+                    "success": False,
+                    "error": "Must be part of this workspace to perform this action",
+                }))
+                self.assertEqual(await reconcile_action(db, action, service), "blocked")
+                self.assertIn("无法读取 workspace", action.result)
+                accepted = RotationAction(team_id=1, email="accepted@example.com",
+                                          action_type="invite", idempotency_key="invite-accepted",
+                                          status="reconciling",
+                                          result='{"success": true, "status": "invited"}')
+                db.add(accepted)
+                await db.commit()
+                self.assertEqual(await reconcile_action(db, accepted, service), "blocked")
+                self.assertIn("接口已接受请求", accepted.result)
+        finally:
+            await engine.dispose()
+
     async def test_auto_tick_keeps_standard_after_weekly_exhaustion(self):
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

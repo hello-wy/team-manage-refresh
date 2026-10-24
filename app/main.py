@@ -34,6 +34,7 @@ from app.services.member_departure import AccountPoolMemberExit
 from app.services.replacement_export import ReplacementExportService
 from app.models import Team
 from app.services.account_pool_usage import account_pool_usage_service
+from app.services.account_pool import account_pool_service
 from app.services.quota_rotation import RotationDependencies, run_team
 from app.services.quota_sync import refresh_export_snapshots, refresh_historical_candidates
 from app.services.sub2api_cleanup import process_pending_cleanup
@@ -469,11 +470,33 @@ async def delete_due_team_member(team_id, user_id, db, *, email):
     )
 
 
+async def invite_due_replacement(team_id, seat_type, lane_key, rotation_round, excluded_ids, db):
+    """自动下线后为同一高级席位链邀请下一位账号。"""
+    return await account_pool_service.invite_replacement(
+        team_id,
+        db,
+        invite_member=lambda current_team_id, replacement_email, session, seat_type: (
+            team_service.add_team_member(
+                current_team_id, replacement_email, session, seat_type=seat_type,
+            )
+        ),
+        seat_type=seat_type,
+        rotation_lane=lane_key,
+        rotation_round=rotation_round,
+        excluded_ids=excluded_ids,
+    )
+
+
 async def scheduled_member_auto_kick():
     """按成员计划下线时间自动移除已到期账号。"""
     try:
         async with AsyncSessionLocal() as session:
-            stats = await member_auto_kick_service.run_due_members(session, delete_due_team_member)
+            stats = await member_auto_kick_service.run_due_members(
+                session, delete_due_team_member, invite_due_replacement,
+            )
+            replacement_stats = await member_auto_kick_service.process_pending_replacements(
+                session, invite_due_replacement,
+            )
             export_stats = await member_auto_kick_service.process_pending_exports(
                 session,
                 ReplacementExportService(
@@ -482,10 +505,18 @@ async def scheduled_member_auto_kick():
             )
         log_method = logger.info if stats["success"] else logger.warning
         log_method(
-            "成员自动踢人完成: scanned=%s kicked=%s failed=%s",
+            "成员自动踢人完成: scanned=%s kicked=%s failed=%s replacement_invited=%s replacement_waiting=%s",
             stats["scanned"],
             stats["kicked"],
             stats["failed"],
+            stats.get("replacement_invited", 0),
+            stats.get("replacement_waiting", 0),
+        )
+        logger.info(
+            "轮转补位队列处理完成: scanned=%s invited=%s waiting=%s failed=%s finished=%s",
+            replacement_stats["scanned"], replacement_stats["invited"],
+            replacement_stats["waiting"], replacement_stats["failed"],
+            replacement_stats["finished"],
         )
         export_log = logger.info if export_stats["success"] else logger.warning
         export_log(

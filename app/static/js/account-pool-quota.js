@@ -64,7 +64,7 @@ function initAccountPoolQuota() {
         if (button.dataset.bound === 'true') continue;
         button.dataset.bound = 'true';
         button.addEventListener('click', () => refreshAccountPoolQuota(button));
-        pending.push(button);
+        if (!button.disabled) pending.push(button);
     }
     return refreshVisibleAccountPoolQuotas(pending);
 }

@@ -139,6 +139,7 @@
                 <thead>
                     <tr>
                         <th class="account-pool-select-cell"><input type="checkbox" id="accountPoolSelectPage" aria-label="选择本页全部账号"></th>
+                        {{ sortable_header('ID', 'id', '按账号 ID 数值排序') }}
                         {{ sortable_header('账号', 'email') }}
                         {{ sortable_header('名称', 'name') }}
                         {{ sortable_header('Team / 席位', 'team') }}
@@ -156,6 +157,7 @@
                     {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
                     <tr data-account-pool-row="{{ entry.id }}" data-email="{{ entry.email }}">
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
+                        <td data-label="ID">{{ entry.id if entry.id > 0 else '—' }}</td>
                         <td data-label="账号">
                             <strong>{{ entry.email }}</strong>
                         </td>
@@ -180,7 +182,7 @@
                         <td data-label="额度">
                             <div class="account-pool-quota-layout">
                             <div class="account-pool-quota-content">{% include "admin/account_pool/_quota.html" %}</div>
-                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-quota-refresh" title="刷新额度" data-entry-id="{{ entry.id }}" data-workspace-id="{{ entry.quota_workspace_id or '' }}" aria-label="刷新 {{ entry.email }} 的额度"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+                            <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-quota-refresh" title="刷新额度" data-entry-id="{{ entry.id }}" data-workspace-id="{{ entry.quota_workspace_id or '' }}" aria-label="刷新 {{ entry.email }} 的额度"{% if not entry.quota_workspace_id %} disabled{% endif %}><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
                             </div>
                             <small class="account-pool-quota-feedback" role="status" aria-live="polite"></small>
                         </td>

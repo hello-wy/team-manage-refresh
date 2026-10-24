@@ -101,6 +101,52 @@ class AccountPoolServiceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(candidate.email, "available@example.com")
 
+    async def test_recent_join_in_any_team_excludes_replacement_candidate(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner-1@example.com", account_id="account-1",
+                     access_token_encrypted="token-1", status="active"),
+                Team(id=2, email="owner-2@example.com", account_id="account-2",
+                     access_token_encrypted="token-2", status="active"),
+            ])
+            await session.commit()
+            await self.service.add_emails(
+                session, emails=["recent@example.com", "eligible@example.com"],
+            )
+            recent = (await session.scalars(select(AccountPoolEntry).where(
+                AccountPoolEntry.email == "recent@example.com",
+            ))).one()
+            session.add(AccountPoolHistory(
+                account_pool_id=recent.id, team_id=2,
+                joined_at=get_now() - timedelta(days=3),
+            ))
+            await session.commit()
+
+            candidate = await self.service.find_replacement_candidate(1, session)
+
+            self.assertEqual(candidate.email, "eligible@example.com")
+
+    async def test_old_join_in_any_team_becomes_replacement_eligible(self):
+        async with self.sessions() as session:
+            session.add_all([
+                Team(id=1, email="owner-1@example.com", account_id="account-1",
+                     access_token_encrypted="token-1", status="active"),
+                Team(id=2, email="owner-2@example.com", account_id="account-2",
+                     access_token_encrypted="token-2", status="active"),
+            ])
+            await session.commit()
+            await self.service.add_emails(session, emails=["older@example.com"])
+            entry = (await session.scalars(select(AccountPoolEntry))).one()
+            session.add(AccountPoolHistory(
+                account_pool_id=entry.id, team_id=2,
+                joined_at=get_now() - timedelta(days=8),
+            ))
+            await session.commit()
+
+            candidate = await self.service.find_replacement_candidate(1, session)
+
+            self.assertEqual(candidate.email, "older@example.com")
+
     async def test_invited_replacement_persists_export_queue(self):
         async with self.sessions() as session:
             session.add(Team(

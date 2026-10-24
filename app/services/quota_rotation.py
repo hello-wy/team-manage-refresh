@@ -123,6 +123,21 @@ def action_confirmed(action, members):
     return False
 
 
+def _workspace_membership_error(message):
+    text = str(message or "").lower()
+    return "must be part of this workspace" in text or (
+        "part of this workspace" in text and "perform this action" in text
+    )
+
+
+def _invite_was_accepted(action):
+    try:
+        result = json.loads(action.result or "{}")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(result, dict) and result.get("success") is True
+
+
 async def reconcile_action(db, action, team_service):
     if action.action_type in ("remove", "upgrade") and await is_warranty_member(db, action.team_id, action.email):
         action.status = "cancelled"
@@ -131,8 +146,19 @@ async def reconcile_action(db, action, team_service):
         return action.status
     result = await team_service.get_team_members(action.team_id, db)
     if not result.get("success"):
-        action.status = "reconciling"
-        action.result = result.get("error")
+        error = result.get("error") or "获取成员列表失败"
+        if action.action_type == "invite" and _workspace_membership_error(error):
+            action.status = "blocked"
+            if _invite_was_accepted(action):
+                action.result = ("邀请接口已接受请求，但当前凭据无法读取 workspace 成员；"
+                                 "待修复 Team 权限后确认，系统不会重复发送邀请")
+            else:
+                action.result = ("当前凭据无法读取 workspace 成员，邀请结果未确认；"
+                                 "待修复 Team 权限后人工核对，系统不会自动重试")
+            await _complete_action(db, action)
+        else:
+            action.status = "reconciling"
+            action.result = error
     elif action_confirmed(action, result["members"]):
         action.status = "succeeded"
         action.result = "上游成员列表已确认"
@@ -178,6 +204,8 @@ async def _execute_remote(db, team, action, *, mapping, team_service):
         return await team_service.add_team_member(team.id, action.email, db, seat_type="default")
     if not mapping or not mapping.upstream_user_id:
         raise RuntimeError("成员 ID 缺失，无法确认目标")
+    if action.action_type in {"remove", "return_standard"} and mapping.seat_type != "premium":
+        raise RuntimeError("额度轮转仅允许处理高级席位")
     if action.action_type == "remove":
         if (mapping.member_role in ADMIN_ROLES or mapping.auto_kick_exempt
                 or await is_warranty_member(db, team.id, action.email)):
@@ -194,6 +222,9 @@ async def _execute_remote(db, team, action, *, mapping, team_service):
 
 
 async def execute_action(db, team, decision, *, mapping, team_service):
+    if (decision.action in {"remove", "return_standard"}
+            and (mapping is None or mapping.status != "joined" or mapping.seat_type != "premium")):
+        raise RuntimeError("额度轮转仅允许处理已加入的高级席位")
     state = (await db.execute(select(RotationMemberState).where(
         RotationMemberState.team_id == team.id,
         RotationMemberState.email == decision.email,

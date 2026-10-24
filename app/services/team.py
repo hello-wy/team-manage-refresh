@@ -572,6 +572,11 @@ class TeamService:
             mapping.joined_at = None
             mapping.usage_started_at = None
             mapping.auto_kick_at = None
+            if source in {"admin_add", "redeem"}:
+                # 手工邀请或兑换重新开始一条席位轮转链；自动补位会在
+                # mark_replacement_pending 中显式继承原链及轮次。
+                mapping.rotation_lane = None
+                mapping.rotation_round = 1
         if is_admin_invited:
             mapping.is_admin_invited = True
         if invited_at:
@@ -728,6 +733,9 @@ class TeamService:
             mapping.member_role = None
             mapping.upstream_user_id = None
             reset_for_new_join(mapping)
+            if mapping.join_source != "rotation":
+                mapping.rotation_lane = None
+                mapping.rotation_round = 1
         mapping.status = TEAM_EMAIL_STATUS_JOINED
         mapping.source = "sync"
         mapping.last_seen_at = seen_at
@@ -739,9 +747,13 @@ class TeamService:
         mapping.seat_type = seat_type if seat_type != "unknown" else None
         joined_at = self._parse_remote_datetime(member.get("created_time"))
         if not was_joined and mapping.replacement_export_pending:
+            # 自动补位记录的远端 created_time 可能早于本次邀请确认；以同步确认时刻
+            # 作为新一轮的开始，避免旧账号历史时间消耗新账号的使用时长。
             joined_at = seen_at
         elif not was_joined and mapping.last_invited_at:
-            joined_at = joined_at if joined_at and joined_at >= mapping.last_invited_at else seen_at
+            # 普通邀请优先使用上游确认的加入时间；若上游返回的是邀请前的历史
+            # 时间，则退回本次同步确认时刻，确保未接受邀请期间不会计时。
+            joined_at = joined_at if joined_at and joined_at > mapping.last_invited_at else seen_at
         if mapping.joined_at and joined_at:
             joined_at = max(mapping.joined_at, joined_at)
         mapping.joined_at = joined_at or mapping.joined_at
@@ -753,6 +765,8 @@ class TeamService:
 
     @staticmethod
     def _apply_invited_mapping(mapping, seen_at) -> None:
+        if not mapping.last_invited_at:
+            mapping.last_invited_at = seen_at
         mapping.status = TEAM_EMAIL_STATUS_INVITED
         mapping.source = "sync"
         mapping.last_seen_at = seen_at

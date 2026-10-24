@@ -2100,6 +2100,7 @@ function renderMemberAuthorizationActions(teamId, member) {
                 onclick="deleteMember(Number(this.dataset.teamId), this.dataset.userId, this.dataset.email, true)"><i data-lucide="trash-2" aria-hidden="true"></i></button>`
             : '<span title="所有者不可删除"><button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary" disabled aria-label="所有者不可删除"><i data-lucide="lock-keyhole" aria-hidden="true"></i></button></span>';
     const rotation = member.status === 'joined' && member.role !== 'account-owner'
+        && ['premium', 'prolite'].includes(String(member.seat_type || '').toLowerCase())
         ? `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-info" ${attributes}
             data-user-id="${escapeHtml(member.user_id || '')}" title="轮转操作" aria-label="轮转操作"
             onclick="rotateMember(Number(this.dataset.teamId), this.dataset.userId, this.dataset.email)">
@@ -2225,16 +2226,22 @@ async function saveMemberAutoKickHours() {
     const button = document.getElementById('memberAutoKickSaveBtn');
     const teamId = Number(window.currentTeamId);
     const hours = Number(input?.value);
+    const roundsInput = document.getElementById('memberRotationRounds');
+    const rounds = Number(roundsInput?.value);
     if (!teamId || !Number.isInteger(hours) || hours < 1 || hours > 8760) {
         showToast('请输入 1 到 8760 之间的整数小时', 'error');
         return;
     }
-    if (!await confirmPageAction(`高级席位将改为本次使用开始后 ${hours} 小时下线（接受邀请后开始计时，标准席位仍在 Team 到期下线），已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
+    if (!Number.isInteger(rounds) || rounds < 0 || rounds > 1000) {
+        showToast('请输入 0 到 1000 之间的整数轮次，0 表示不限制', 'error');
+        return;
+    }
+    if (!await confirmPageAction(`高级席位将改为本次使用开始后 ${hours} 小时下线（接受邀请后开始计时，标准席位仍在 Team 到期下线）；每个高级席位最多轮转 ${rounds || '不限'} 个账号，已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
     button.disabled = true;
     try {
         const result = await apiCall(`/admin/teams/${teamId}/members/auto-kick`, {
             method: 'POST',
-            body: JSON.stringify({hours}),
+            body: JSON.stringify({hours, rounds}),
         });
         if (!result.success || !result.data?.success) {
             showToast(result.error || result.data?.error || '保存失败', 'error');
