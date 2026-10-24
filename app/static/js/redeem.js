@@ -1339,7 +1339,7 @@ async function maybeHandleRenewalReminder(code, email, btn, options = {}) {
 
     const messageHtml = `
         <p>当前兑换码剩余 <strong>${escapeHtml(remainingDays ?? '-')}</strong> 天到期。</p>
-        <p>如果现在加入新的 Team，质保到期后系统会自动将您移出。</p>
+        <p>质保到期后将无法使用该码申请质保换组，已入组的质保兑换成员不参与自动踢出。</p>
         <p>如需延长质保时间，可先联系管理员申请续期；也可以暂不续期，继续加入新的 Team。${reminderDays ? `（当前提醒阈值：${escapeHtml(reminderDays)} 天）` : ''}</p>
     `;
 

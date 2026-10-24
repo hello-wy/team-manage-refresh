@@ -11,7 +11,8 @@ from sqlalchemy import select, update, delete, and_, or_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team, Setting
+from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team, TeamEmailMapping, Setting
+from app.services.warranty_member_protection import protect_team_mappings
 from app.services.settings import (
     settings_service,
     WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM,
@@ -1077,10 +1078,16 @@ class RedemptionService:
                 email=email,
                 code=code,
                 team_id=team_id,
-                account_id=account_id
+                account_id=account_id,
+                is_warranty_redemption=bool(redemption_code.has_warranty),
             )
 
             db_session.add(redemption_record)
+            await db_session.flush()
+            mappings = (await db_session.scalars(select(TeamEmailMapping).where(
+                TeamEmailMapping.team_id == team_id,
+            ))).all()
+            await protect_team_mappings(db_session, team_id, mappings)
             await db_session.commit()
 
             logger.info(f"使用兑换码成功: {code} -> {email}")

@@ -718,9 +718,11 @@ class RedeemFlowService:
                                 code=code,
                                 team_id=team_id_final,
                                 account_id=target_team.account_id,
-                                is_warranty_redemption=(bool(rc and rc.has_warranty and (not rc.reusable_by_seat)))
+                                is_warranty_redemption=bool(rc and rc.has_warranty),
                             )
                             db_session.add(record)
+                            # 会话禁用 autoflush，先写入记录供映射识别质保免踢。
+                            await db_session.flush()
 
                             await self.team_service.upsert_team_email_mapping(
                                 team_id_final,

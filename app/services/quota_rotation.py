@@ -13,6 +13,7 @@ from app.services.quota_rotation_policy import ADMIN_ROLES, next_action
 from app.services.quota_sync import refresh_team
 from app.services.rotation_lease import acquire_lease, release_lease
 from app.utils.time_utils import get_now
+from app.services.warranty_member_protection import is_warranty_member, protect_team_mappings
 
 OPEN_STATUSES = ("pending", "executing", "reconciling")
 
@@ -28,6 +29,7 @@ async def load_rotation_data(db, team):
         TeamEmailMapping.team_id == team.id,
         TeamEmailMapping.status == "joined",
     ))).scalars().all()
+    await protect_team_mappings(db, team.id, mappings)
     snapshots = (await db.execute(select(QuotaSnapshot).where(
         QuotaSnapshot.team_space_id == team.account_id,
         QuotaSnapshot.email.in_([row.email for row in mappings]),
@@ -121,6 +123,11 @@ def action_confirmed(action, members):
 
 
 async def reconcile_action(db, action, team_service):
+    if action.action_type == "remove" and await is_warranty_member(db, action.team_id, action.email):
+        action.status = "cancelled"
+        action.result = "质保兑换成员不参与自动踢出"
+        await db.commit()
+        return action.status
     result = await team_service.get_team_members(action.team_id, db)
     if not result.get("success"):
         action.status = "reconciling"
@@ -163,7 +170,8 @@ async def _execute_remote(db, team, action, *, mapping, team_service):
     if not mapping or not mapping.upstream_user_id:
         raise RuntimeError("成员 ID 缺失，无法确认目标")
     if action.action_type == "remove":
-        if mapping.member_role in ADMIN_ROLES or mapping.auto_kick_exempt:
+        if (mapping.member_role in ADMIN_ROLES or mapping.auto_kick_exempt
+                or await is_warranty_member(db, team.id, action.email)):
             raise RuntimeError("受保护成员不能退出 Team")
         return await team_service.delete_team_member(
             team.id, mapping.upstream_user_id, db, email=action.email)

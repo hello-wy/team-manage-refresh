@@ -8,6 +8,7 @@ from app.models import AccountPoolEntry, TeamEmailMapping
 from app.services.account_pool_authorization import AccountPoolAuthorizationError
 from app.services.member_identity import credential_identity
 from app.utils.time_utils import get_now
+from app.services.warranty_member_protection import is_warranty_member, protect_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +49,13 @@ class AccountPoolMemberExit:
 
     @staticmethod
     async def _mapping(target):
-        return (await target.db.execute(select(TeamEmailMapping).where(
+        mapping = (await target.db.execute(select(TeamEmailMapping).where(
             TeamEmailMapping.team_id == target.team.id,
             TeamEmailMapping.email == target.email,
         ).execution_options(populate_existing=True))).scalar_one_or_none()
+        if mapping and await is_warranty_member(target.db, target.team.id, target.email):
+            protect_mapping(mapping)
+        return mapping
 
     @staticmethod
     def _still_due(mapping, user_id):

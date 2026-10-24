@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import RedemptionCode, RedemptionRecord, RenewalRequest, Team, TeamEmailMapping
+from app.services.warranty_member_protection import is_warranty_member, warranty_member_condition
 from app.services.settings import (
     settings_service,
     WARRANTY_EXPIRATION_MODE_REFRESH_ON_REDEEM,
@@ -834,11 +835,10 @@ class WarrantyService:
         db_session: AsyncSession,
         limit: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """扫描按当前质保模式已过期、且仍绑定 Team/邮箱的兑换码。
+        """扫描已过期、且仍绑定 Team/邮箱的普通兑换码。
 
-        覆盖范围：质保码 + 无质保码。
-        - 质保码：按 ``warranty_days + extension_days`` 计算到期。
         - 无质保码：按全局设置 ``auto_kick_usage_period_days + extension_days`` 计算到期。
+        - 使用过质保码的成员不参与自动清退，即使质保已经到期。
         起算时间统一沿用 ``warranty_expiration_mode`` 的选择。
 
         豁免规则：若 ``warranty_auto_kick_enabled_since`` 已记录且兑换码的
@@ -878,6 +878,8 @@ class WarrantyService:
                     RedemptionCode.used_by_email.is_not(None),
                     RedemptionCode.used_team_id.is_not(None),
                     RedemptionCode.used_at.is_not(None),
+                    RedemptionCode.has_warranty.is_(False),
+                    ~warranty_member_condition(RedemptionCode.used_team_id, RedemptionCode.used_by_email),
                     RedemptionCode.used_team_id.in_(select(Team.id).where(Team.rotation_mode == "off")),
                 )
                 .order_by(RedemptionCode.used_at.asc(), RedemptionCode.id.asc())
@@ -954,8 +956,7 @@ class WarrantyService:
     ) -> Dict[str, Any]:
         """对单个已过期兑换码执行踢人与销毁。
 
-        覆盖范围：质保码 + 无质保码。
-        - 质保码：用 ``warranty_days + extension_days`` 判定是否过期。
+        使用过质保码的成员跳过自动踢人与销毁。
         - 无质保码：用全局 ``auto_kick_usage_period_days + extension_days`` 判定。
 
         返回值包含 ``category`` 字段：
@@ -1007,6 +1008,12 @@ class WarrantyService:
                 await db_session.refresh(redemption_code)
             except Exception:
                 pass
+
+            if redemption_code.has_warranty or await is_warranty_member(
+                db_session, redemption_code.used_team_id, redemption_code.used_by_email,
+            ):
+                return {"success": True, "code": normalized_code, "category": "skipped",
+                        "skip_reason": "warranty_member", "error": None}
 
             expiration_mode = await settings_service.get_warranty_expiration_mode(db_session)
             usage_period_days = await self._get_auto_kick_usage_period_days(db_session)
@@ -1221,6 +1228,7 @@ class WarrantyService:
                     TeamEmailMapping.status.in_(("invited", "joined")),
                     Team.rotation_mode == "off",
                     TeamEmailMapping.is_admin_invited.is_(False),
+                    ~warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email),
                     TeamEmailMapping.created_at.is_not(None),
                     TeamEmailMapping.created_at >= enabled_since,
                 )
@@ -1359,6 +1367,10 @@ class WarrantyService:
                         "skip_reason": "team_owner",
                         "error": None,
                     }
+
+            if await is_warranty_member(db_session, team_id, normalized_email):
+                return {"success": True, "team_id": team_id, "email": normalized_email,
+                        "category": "skipped", "skip_reason": "warranty_member", "error": None}
 
             # 兑换记录二次兜底（避免与 redeem 流程并发）
             rec_stmt = select(func.count(RedemptionRecord.id)).where(
@@ -1550,6 +1562,7 @@ class WarrantyService:
                     TeamEmailMapping.status.in_(("invited", "joined")),
                     Team.rotation_mode == "off",
                     TeamEmailMapping.is_admin_invited.is_(True),
+                    ~warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email),
                     TeamEmailMapping.created_at.is_not(None),
                     TeamEmailMapping.created_at >= enabled_since,
                     TeamEmailMapping.created_at <= cutoff,
@@ -1660,6 +1673,10 @@ class WarrantyService:
                     "skip_reason": "not_admin_invited",
                     "error": None,
                 }
+
+            if await is_warranty_member(db_session, team_id, normalized_email):
+                return {"success": True, "team_id": team_id, "email": normalized_email,
+                        "category": "skipped", "skip_reason": "warranty_member", "error": None}
 
             # owner 邮箱二次兜底
             team = await db_session.get(Team, team_id)
