@@ -103,6 +103,11 @@
     }
     const definition = stages.find(([key]) => key === stage);
     if (!definition) throw new Error('服务端返回了未知的验证步骤');
+    if (currentStep?.dataset.stage === stage) {
+      progressTitle.textContent = definition[1];
+      resultPanel.textContent = definition[2];
+      return;
+    }
     if (currentStep) {
       if (currentStep.dataset.state !== 'warning') currentStep.dataset.state = 'done';
       currentStep.removeAttribute('aria-current');

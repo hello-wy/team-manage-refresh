@@ -36,7 +36,9 @@ class PhoneVerificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["continue_url"], "https://auth.openai.com/workspace")
         rent.assert_awaited_once_with("api-key", "https://hero-sms.com/stubs/handler_api.php", "44", "0.05")
         send.assert_awaited_once()
-        wait.assert_awaited_once_with("api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-1")
+        wait.assert_awaited_once_with(
+            "api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-1", progress,
+        )
         submit.assert_awaited_once_with(ANY, "device", "sentinel", "654321")
         finish.assert_awaited_once_with("api-key", "https://hero-sms.com/stubs/handler_api.php", "activation-1", "6")
         self.assertEqual(progress.await_args_list, [call(stage) for stage in (

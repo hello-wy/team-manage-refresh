@@ -161,3 +161,19 @@ class SmsPollingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(phone.httpx, "AsyncClient", return_value=client):
             with self.assertRaisesRegex(phone.PhoneVerificationError, "未确认租号结束状态"):
                 await phone._finish_activation("api-key", phone.HEROSMS_DEFAULT_ENDPOINT, "rental-1", "8")
+
+    async def test_waiting_emits_heartbeat_after_each_pending_poll(self):
+        statuses = iter(["STATUS_WAIT_CODE", "STATUS_WAIT_RETRY:1", "STATUS_OK:654321"])
+        progress = AsyncMock()
+
+        def respond(request):
+            return httpx.Response(200, text=next(statuses))
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        with (patch.object(phone.httpx, "AsyncClient", return_value=client),
+              patch.object(phone.asyncio, "sleep", new=AsyncMock())):
+            result = await phone._wait_for_code(
+                "api-key", phone.HEROSMS_DEFAULT_ENDPOINT, "rental-1", progress,
+            )
+        self.assertEqual(result, "654321")
+        self.assertEqual(progress.await_args_list, [call("wait_code"), call("wait_code")])

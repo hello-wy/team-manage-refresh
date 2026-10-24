@@ -96,7 +96,9 @@ async def _receive_code(provider: RentalSettings, context: VerificationContext):
                 context.session, context.device_id, context.sentinel_token, context.current_url, phone_number,
             )
             await report_progress(context.progress, "wait_code")
-            code = await _wait_for_code(provider.api_key, provider.endpoint, activation_id)
+            code = await _wait_for_code(
+                provider.api_key, provider.endpoint, activation_id, context.progress,
+            )
             return activation_id, phone_number, code
         except SmsCodeTimeout as timeout_error:
             try:
@@ -152,7 +154,12 @@ async def _send_code(session, device_id, sentinel_token, current_url, phone_numb
         raise PhoneVerificationError(f"OpenAI 发送验证码失败（HTTP {response.status_code}）")
 
 
-async def _wait_for_code(api_key: str, endpoint: str, activation_id: str) -> str:
+async def _wait_for_code(
+    api_key: str,
+    endpoint: str,
+    activation_id: str,
+    progress: ProgressCallback | None = None,
+) -> str:
     params = {"api_key": api_key, "action": "getStatus", "id": activation_id}
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         for _ in range(SMS_WAIT_SECONDS // SMS_POLL_SECONDS):
@@ -167,6 +174,7 @@ async def _wait_for_code(api_key: str, endpoint: str, activation_id: str) -> str
                 raise PhoneVerificationError("HeroSMS 租号已取消")
             elif not result.startswith(("STATUS_WAIT_CODE", "STATUS_WAIT_RETRY:")):
                 raise PhoneVerificationError(f"HeroSMS 获取验证码失败：{result[:160]}")
+            await report_progress(progress, "wait_code")
             await asyncio.sleep(SMS_POLL_SECONDS)
     raise SmsCodeTimeout(f"等待 HeroSMS 验证码超时（{SMS_WAIT_SECONDS} 秒）")
 
