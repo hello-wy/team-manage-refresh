@@ -369,64 +369,6 @@ function getFriendlyWarrantyErrorMessage(rawMessage, statusCode = 0) {
     return message;
 }
 
-function getFriendlyDeviceAuthErrorMessage(rawMessage, statusCode = 0) {
-    const message = normalizeRawErrorMessage(rawMessage);
-    const lower = message.toLowerCase();
-    const includesAny = (...keywords) => keywords.some(keyword => lower.includes(String(keyword).toLowerCase()));
-
-    if (includesAny('开启设备身份验证失败:')) {
-        const marker = '开启设备身份验证失败:';
-        const index = message.lastIndexOf(marker);
-        if (index !== -1) {
-            const innerMessage = message.slice(index + marker.length).trim();
-            if (innerMessage && innerMessage !== message) {
-                return getFriendlyDeviceAuthErrorMessage(innerMessage, statusCode);
-            }
-        }
-    }
-
-    if (includesAny('未登录', 'api key 无效', 'unauthorized', 'forbidden')) {
-        return '登录状态已失效，请先登录管理员后重试';
-    }
-
-    if (includesAny('team id', 'team 不存在', '目标 team', 'not found')) {
-        return '目标 Team 不存在或已失效，请刷新后重试';
-    }
-
-    if (
-        includesAny('token', 'access token', 'session token') &&
-        includesAny('过期', '失效', 'invalid', 'expired', 'invalidated')
-    ) {
-        return 'Team 登录状态已失效，请先在后台刷新 Token';
-    }
-
-    if (includesAny('服务器响应格式错误', 'cannot parse', 'json')) {
-        return '服务器返回异常，请稍后重试';
-    }
-
-    if (includesAny('proxy', 'connection', 'timeout', 'timed out', 'network', '连接', 'dns', 'ssl', 'socket')) {
-        return '网络连接异常，请稍后重试';
-    }
-
-    if (statusCode === 401 || statusCode === 403) {
-        return '登录状态已失效，请先登录管理员后重试';
-    }
-
-    if (statusCode >= 500) {
-        return '开启失败，请稍后重试';
-    }
-
-    if (!message) {
-        return statusCode >= 500 ? '开启失败，请稍后重试' : '开启失败，请重试';
-    }
-
-    if (isTechnicalLogMessage(message)) {
-        return statusCode >= 500 ? '开启失败，请稍后重试' : '开启失败，请重试';
-    }
-
-    return message;
-}
-
 function bindDialogFocusTrap(modal, dialog, onClose, getLastTrigger) {
     const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -765,14 +707,6 @@ async function handleDynamicActionClick(event) {
                     renewalReminderDays: actionButton.dataset.renewalReminderDays,
                     shouldShowRenewalReminder: actionButton.dataset.showRenewalReminder === 'true',
                 }
-            );
-            break;
-        case 'enable-device-auth':
-            await enableUserDeviceAuth(
-                Number(actionButton.dataset.teamId),
-                decodeActionValue(actionButton.dataset.code),
-                decodeActionValue(actionButton.dataset.email),
-                actionButton
             );
             break;
         default:
@@ -1120,10 +1054,6 @@ function showWarrantyResult(data) {
             : '<span class="badge badge-neutral">常规码</span>';
         const teamStatus = getTeamStatusMeta(record.team_status);
         const canReplace = record.has_warranty && record.warranty_valid && record.team_status === 'banned';
-        // /warranty/enable-device-auth 是 admin 专属接口（require_admin），
-        // 用户即使点了也只会拿 401/403。这里直接不渲染按钮，让用户走联系管理员流程，
-        // 避免出现"按钮明明亮着、点了却报错"的体验问题。
-        const canEnableDeviceAuth = false;
         const warrantyExpiryText = record.warranty_expires_at
             ? `${formatDate(record.warranty_expires_at)}${record.warranty_valid ? '（有效）' : '（已过期）'}`
             : '尚未开始计算';
@@ -1149,10 +1079,6 @@ function showWarrantyResult(data) {
                     <div class="record-meta-item">
                         <div class="record-meta-label">Team 到期</div>
                         <div class="record-meta-value">${escapeHtml(formatDate(record.team_expires_at))}</div>
-                    </div>
-                    <div class="record-meta-item">
-                        <div class="record-meta-label">设备身份验证</div>
-                        <div class="record-meta-value">${record.device_code_auth_enabled ? '已开启' : '未开启'}</div>
                     </div>
                     ${record.has_warranty ? `
                     <div class="record-meta-item">
@@ -1187,18 +1113,6 @@ function showWarrantyResult(data) {
                             data-show-renewal-reminder="${record.should_show_renewal_reminder ? 'true' : 'false'}"
                         >
                             <i data-lucide="rotate-cw"></i> 一键换车
-                        </button>
-                        ` : ''}
-                        ${canEnableDeviceAuth ? `
-                        <button
-                            type="button"
-                            class="btn btn-secondary"
-                            data-action="enable-device-auth"
-                            data-team-id="${Number(record.team_id)}"
-                            data-code="${encodeActionValue(record.code || '')}"
-                            data-email="${encodeActionValue(record.email || '')}"
-                        >
-                            <i data-lucide="shield-check"></i> 一键开启设备验证
                         </button>
                         ` : ''}
                     </div>
@@ -1391,58 +1305,6 @@ async function oneClickReplace(code, email, btn, options = {}) {
 
         showToast('正在为您尝试自动兑换...', 'info');
         await confirmRedeem(null);
-    } finally {
-        if (btn && document.body.contains(btn)) {
-            btn.disabled = false;
-            btn.innerHTML = originalContent;
-            if (window.lucide) lucide.createIcons();
-        }
-    }
-}
-
-// 用户一键开启设备身份验证
-async function enableUserDeviceAuth(teamId, code, email, btn) {
-    if (!window.confirm('确定要在该 Team 中开启设备代码身份验证吗？')) {
-        return;
-    }
-
-    const originalContent = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i data-lucide="loader" class="spinning"></i> 开启中...';
-        if (window.lucide) lucide.createIcons();
-    }
-
-    try {
-        const response = await fetch('/warranty/enable-device-auth', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                team_id: teamId,
-                code,
-                email
-            })
-        });
-
-        const { text, data } = await parseJsonResponse(response);
-        if (!data) {
-            throw new Error('服务器响应格式错误');
-        }
-
-        if (response.ok && data.success) {
-            showToast(data.message || '开启成功', 'success');
-            await checkWarranty();
-            return;
-        }
-
-        const rawError = (data.error ?? data.detail ?? data.message ?? data.reason) || text;
-        const errorMessage = getFriendlyDeviceAuthErrorMessage(rawError, response.status);
-        showToast(errorMessage, 'error');
-    } catch (error) {
-        const errorMessage = getFriendlyDeviceAuthErrorMessage(error?.message || '');
-        showToast(errorMessage || '网络错误，请稍后重试', 'error');
     } finally {
         if (btn && document.body.contains(btn)) {
             btn.disabled = false;

@@ -137,7 +137,8 @@ function renderJoinedMemberRow(teamId, member) {
         <td><span class="role-badge role-${member.role === 'account-owner' ? 'account-owner' : 'member'}">
             ${member.role === 'account-owner' ? '所有者' : '成员'}</span></td>
         <td>${renderMemberSeatControl(member)}</td>
-        <td>${formatDateTime(member.added_at)}</td>
+        <td>${['premium', 'prolite'].includes((member.seat_type || '').trim().toLowerCase())
+            ? formatDateTime(member.joined_at || member.added_at) : '—'}</td>
         <td><div class="member-auto-kick-cell">${renderMemberAutoKickTime(member)}
             ${renderMemberAutoKickControl(teamId, member)}</div></td>
         <td style="text-align: right;">${renderMemberAuthorizationActions(teamId, member)}</td>

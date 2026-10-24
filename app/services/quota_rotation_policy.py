@@ -44,14 +44,6 @@ def _exit_decision(member, snapshot, state, standard_remaining):
     return RotationDecision(member.email, "remove", "高级周额度耗尽")
 
 
-def _upgrade_decision(member, snapshot, state):
-    if member.seat_type != "standard" or not _eligible(member, snapshot, state):
-        return None
-    if snapshot.weekly_remaining == 0:
-        return RotationDecision(member.email, "upgrade", "标准周额度耗尽，按 FIFO 使用高级席位")
-    return None
-
-
 def next_action(members, snapshots, states, seat_balance):
     """Pick one confirmed action; unknown quota blocks only that member."""
     balance = seat_balance.get("balance") or {}
@@ -68,14 +60,6 @@ def next_action(members, snapshots, states, seat_balance):
     for member in ordered:
         decision = _exit_decision(member, snapshots.get(member.email),
                                   states.get(member.email), balance["standard"]["remaining"])
-        if decision:
-            return decision
-    premium_available = balance["premium"]["remaining"]
-    if premium_available is None or premium_available <= 0:
-        return None
-    for member in ordered:
-        decision = _upgrade_decision(member, snapshots.get(member.email),
-                                     states.get(member.email))
         if decision:
             return decision
     return None

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import re
 import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
@@ -197,23 +198,29 @@ class Stock16688Tests(unittest.IsolatedAsyncioTestCase):
             await save_settings(self.db, gateway=DEFAULT_GATEWAY, app_id='a', goods_no='g', secret='')
         self.assertEqual(self.sent, [])
 
-    async def test_button_is_only_rendered_for_pending_invites(self):
+    async def test_all_rows_show_icon_but_only_pending_invites_with_credentials_can_import(self):
         from app.main import templates
         from app.services.account_pool import account_pool_service
         from app.services.account_pool_rotation import attach_rotation_status
-        for email in ('joined@example.com', 'owner@example.com'):
+        for email, member_status in (('joined@example.com', 'joined'), ('owner@example.com', 'joined'),
+                                     ('missing@example.com', 'invited')):
             self.db.add(AccountPoolEntry(email=email))
-            self.db.add(TeamEmailMapping(team_id=self.team.id, email=email, status='joined'))
+            self.db.add(TeamEmailMapping(team_id=self.team.id, email=email, status=member_status))
         await self.db.commit()
         listing = await account_pool_service.list_entries(self.db)
         listing['entries'] = await attach_rotation_status(self.db, listing['entries'])
         html = templates.get_template('admin/account_pool/index.html').render(
             **listing, user={'username': 'admin'}, admin_profile={'nickname': '管理员'},
             active_page='account_pool', filter_url=lambda **kwargs: '#')
-        self.assertEqual(html.count('class="btn btn-sm btn-secondary account-pool-16688-button"'), 1)
-        self.assertIn('将 member@example.com 导入 16688', html)
-        self.assertNotIn('将 joined@example.com 导入 16688', html)
-        self.assertNotIn('将 owner@example.com 导入 16688', html)
+        buttons = re.findall(r'<button\b[^>]*class="[^"]*\baccount-pool-16688-button\b[^"]*"[^>]*>', html)
+        self.assertEqual(len(buttons), 4)
+        for email in (EMAIL, 'joined@example.com', 'owner@example.com', 'missing@example.com'):
+            button = next(button for button in buttons if f'将 {email} 导入 16688' in button)
+            if email == EMAIL:
+                self.assertNotRegex(button, r'\bdisabled\b')
+            else:
+                self.assertRegex(button, r'\bdisabled\b')
+        self.assertEqual(html.count('src="/static/stock-16688-icon.png"'), 4)
 
     def test_gateway_and_canonical_signature_follow_documentation(self):
         self.assertEqual(normalize_gateway('https://www.16688.com.cn'), DEFAULT_GATEWAY)

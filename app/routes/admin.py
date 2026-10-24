@@ -273,7 +273,7 @@ class MemberSeatTypeRequest(BaseModel):
 
 
 class MemberAutoKickHoursRequest(BaseModel):
-    hours: int = Field(..., description="成员加入后自动下线的小时数")
+    hours: int = Field(..., description="高级席位确认加入后自动下线的小时数，标准席位按 Team 到期下线")
 
 
 class MemberAutoKickParticipationRequest(BaseModel):
@@ -475,6 +475,8 @@ async def account_pool_page(
     seat_filter: str = "",
     sort_by: str = "team",
     rotation_filter: str = "",
+    liveness_filter: str = "",
+    sort_order: str = "asc",
 ):
     """账号号池页面。"""
     from app.main import templates
@@ -485,7 +487,7 @@ async def account_pool_page(
         per_page=per_page,
         search=search,
         status_filter=status_filter, team_filter=team_filter, seat_filter=seat_filter, sort_by=sort_by,
-        rotation_filter=rotation_filter,
+        rotation_filter=rotation_filter, liveness_filter=liveness_filter, sort_order=sort_order,
     )
     listing["entries"] = await _attach_account_pool_cached_usage(db, listing["entries"])
     if not listing["rotation_filter"]:
@@ -493,7 +495,7 @@ async def account_pool_page(
     context = await build_admin_base_context(request, db, current_user, "account_pool")
     from urllib.parse import urlencode
     def filter_url(**changes):
-        params = {key: listing[key] for key in ("per_page", "status_filter", "team_filter", "seat_filter", "rotation_filter", "sort_by")}
+        params = {key: listing[key] for key in ("per_page", "status_filter", "team_filter", "seat_filter", "rotation_filter", "liveness_filter", "sort_by", "sort_order")}
         params.update(page=1, search=search)
         params.update(changes)
         return "/admin/account-pool?" + urlencode(params)
@@ -504,6 +506,23 @@ async def account_pool_page(
         "search": search,
     })
     return templates.TemplateResponse(request, "admin/account_pool/index.html", context)
+
+
+@router.get("/account-pool/liveness-targets")
+async def account_pool_liveness_targets(
+    search: str = "", status_filter: str = "", team_filter: str = "", seat_filter: str = "",
+    rotation_filter: str = "", liveness_filter: str = "",
+    db: AsyncSession = Depends(get_db), current_user: dict = Depends(require_admin),
+):
+    """固定当前列表的全部验活目标，包含其他分页及所有者，不读取账号凭据。"""
+    from app.services.account_pool_query import query_pool_ids
+    listing = await query_pool_ids(
+        db, page=1, per_page=100, search=search, status_filter=status_filter,
+        team_filter=team_filter, seat_filter=seat_filter, rotation_filter=rotation_filter,
+        liveness_filter=liveness_filter, sort_by="team", all_ids=True,
+    )
+    return JSONResponse(content={"success": True, "ids": listing["ids"], "total": listing["total"]},
+                        headers={"Cache-Control": "no-store"})
 
 
 def _account_pool_usage_response(row):
@@ -1782,50 +1801,6 @@ async def revoke_team_invite(
         )
 
 
-@router.post("/teams/{team_id}/enable-device-auth")
-async def enable_team_device_auth(
-    team_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin)
-):
-    """
-    开启 Team 的设备代码身份验证
-
-    Args:
-        team_id: Team ID
-        db: 数据库会话
-        current_user: 当前用户（需要登录）
-
-    Returns:
-        结果
-    """
-    try:
-        logger.info(f"管理员开启 Team {team_id} 的设备身份验证")
-
-        result = await team_service.enable_device_code_auth(
-            team_id=team_id,
-            db_session=db
-        )
-
-        if not result["success"]:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content=result
-            )
-
-        return JSONResponse(content=result)
-
-    except Exception as e:
-        logger.exception("开启设备身份验证失败")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "success": False,
-                "error": "操作失败，请稍后重试"
-            }
-        )
-
-
 @router.get("/teams/{team_id}/export-json")
 async def export_team_json(
     team_id: int,
@@ -2321,46 +2296,6 @@ async def batch_delete_teams(
         })
     except Exception as e:
         logger.exception("批量删除 Team 失败")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"success": False, "error": "操作失败，请稍后重试"}
-        )
-
-
-@router.post("/teams/batch-enable-device-auth")
-async def batch_enable_device_auth(
-    action_data: BulkActionRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin)
-):
-    """
-    批量开启设备代码身份验证
-    """
-    try:
-        logger.info(f"管理员批量开启 {len(action_data.ids)} 个 Team 的设备验证")
-
-        success_count = 0
-        failed_count = 0
-
-        for team_id in action_data.ids:
-            try:
-                result = await team_service.enable_device_code_auth(team_id, db)
-                if result.get("success"):
-                    success_count += 1
-                else:
-                    failed_count += 1
-            except Exception as ex:
-                logger.error(f"批量开启 Team {team_id} 设备验证时出错: {ex}")
-                failed_count += 1
-
-        return JSONResponse(content={
-            "success": True,
-            "message": f"批量处理完成: 成功 {success_count}, 失败 {failed_count}",
-            "success_count": success_count,
-            "failed_count": failed_count
-        })
-    except Exception as e:
-        logger.exception("批量处理失败")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"success": False, "error": "操作失败，请稍后重试"}

@@ -11,7 +11,6 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import require_admin
 from app.services.warranty import warranty_service
 
 router = APIRouter(
@@ -94,7 +93,6 @@ class WarrantyCheckRecord(BaseModel):
     team_status: Optional[str]
     team_expires_at: Optional[str]
     email: Optional[str] = None
-    device_code_auth_enabled: bool = False
     remaining_warranty_days: Optional[int] = None
     auto_kick_enabled: bool = False
     renewal_reminder_days: Optional[int] = None
@@ -187,11 +185,6 @@ class WarrantyRenewalRequest(BaseModel):
     source: Optional[str] = None
 
 
-class EnableDeviceAuthRequest(BaseModel):
-    """开启设备身份验证请求"""
-    team_id: int
-
-
 @router.post("/renewal-request")
 async def create_warranty_renewal_request(
     request: WarrantyRenewalRequest,
@@ -222,35 +215,4 @@ async def create_warranty_renewal_request(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="提交续期请求失败，请稍后重试"
-        )
-
-
-@router.post("/enable-device-auth")
-async def enable_device_auth(
-    request: EnableDeviceAuthRequest,
-    db_session: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin)
-):
-    """
-    仅管理员可开启设备身份验证
-    """
-    from app.services.team import team_service
-
-    try:
-        res = await team_service.enable_device_code_auth(request.team_id, db_session)
-        
-        if not res.get("success"):
-            raise HTTPException(
-                status_code=500,
-                detail=res.get("error", "开启失败")
-            )
-            
-        return {"success": True, "message": "设备代码身份验证开启成功"}
-        
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="开启失败，请稍后重试"
         )

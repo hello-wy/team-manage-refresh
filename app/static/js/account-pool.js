@@ -22,10 +22,9 @@ async function copyAccountPoolCredential(email) {
 async function importAccountPool16688(button) {
     if (!button || button.disabled) return;
     button.disabled = true;
-    const originalText = button.textContent;
     try {
         if (!await confirmAccountPoolAction(`将 ${button.dataset.email} 按“邮箱---密码---2FA”格式补货至系统设置中的 16688 商品吗？`)) return;
-        button.textContent = '补货中…';
+        button.setAttribute('aria-busy', 'true');
         let response, result;
         try {
             response = await fetch(`/admin/account-pool/${button.dataset.entryId}/import-16688`, {
@@ -41,7 +40,7 @@ async function importAccountPool16688(button) {
         showToast(error.message || '16688 补货结果未确认，请先到 16688 核对库存', 'error');
     } finally {
         button.disabled = false;
-        button.textContent = originalText;
+        button.removeAttribute('aria-busy');
     }
 }
 
@@ -65,21 +64,25 @@ const accountPoolLivenessChecks = new Map();
 function updateAccountPoolLiveness(entryId, state) {
     document.querySelectorAll('.account-pool-liveness[data-entry-id]').forEach(cell => {
         if (cell.dataset.entryId !== String(entryId)) return;
+        const queued = state.status === 'queued';
         const checking = state.status === 'checking';
+        const busy = queued || checking;
         const badge = cell.querySelector('.status-badge');
-        badge.textContent = checking ? '验活中' : state.status === 'alive' ? '正常' : state.status ? '异常' : '未检测';
-        badge.className = `status-badge ${checking ? 'status-pending' : state.status === 'alive' ? 'status-active' : state.status ? 'status-error' : 'status-banned'}`;
+        badge.textContent = queued ? '等待验活' : checking ? '验活中' : state.status === 'alive' ? '正常' : state.status ? '异常' : '未检测';
+        badge.className = `status-badge ${busy ? 'status-pending' : state.status === 'alive' ? 'status-active' : state.status ? 'status-error' : 'status-banned'}`;
         cell.dataset.status = state.status || '';
         cell.dataset.checkedAt = state.checkedAt || '';
-        cell.setAttribute('aria-busy', String(checking));
-        cell.title = state.message;
-        cell.querySelector('.account-pool-liveness-message').textContent = state.message;
+        cell.setAttribute('aria-busy', String(busy));
+        cell.title = state.message || '';
+        const message = cell.querySelector('.account-pool-liveness-message');
+        message.textContent = state.message || '';
+        message.hidden = !state.message;
         const time = cell.querySelector('.account-pool-liveness-time');
         time.textContent = state.checkedAt ? accountPoolFormatDate(state.checkedAt) : '';
         time.hidden = !state.checkedAt;
         const button = cell.querySelector('.account-pool-entry-liveness');
-        button.disabled = checking;
-        button.textContent = checking ? '检查中' : '验活';
+        button.disabled = busy;
+        button.textContent = queued ? '已排队' : checking ? '检查中' : '验活';
         const row = cell.closest('[data-account-pool-row]');
         const detail = row?.querySelector('[data-liveness-message]');
         const checked = row?.querySelector('[data-liveness-checked]');
@@ -88,14 +91,24 @@ function updateAccountPoolLiveness(entryId, state) {
     });
 }
 
+function accountPoolLivenessPrevious(entryId) {
+    const cell = [...document.querySelectorAll('.account-pool-liveness[data-entry-id]')]
+        .find(cell => cell.dataset.entryId === String(entryId));
+    return {status: cell?.dataset.status || '', message: cell?.title || '', checkedAt: cell?.dataset.checkedAt};
+}
+
 async function checkAccountPoolEntryLiveness(button) {
-    const entryId = button.dataset.entryId;
-    if (button.disabled || accountPoolLivenessChecks.has(entryId)) return;
-    const cell = button.closest('.account-pool-liveness');
-    const previous = {status: cell?.dataset.status || '', message: cell?.title || '尚未验活', checkedAt: cell?.dataset.checkedAt};
+    if (!button || button.disabled) return;
+    return checkAccountPoolLivenessById(button.dataset.entryId);
+}
+
+async function checkAccountPoolLivenessById(entryId, {fromQueue = false, quiet = false} = {}) {
+    entryId = String(entryId);
+    const pending = accountPoolLivenessChecks.get(entryId);
+    if (pending && !(fromQueue && pending.status === 'queued')) return 'skipped';
+    const previous = pending?.previous || accountPoolLivenessPrevious(entryId);
     const state = {status: 'checking', message: '正在验证此账号，请稍候…'};
     accountPoolLivenessChecks.set(entryId, state);
-    button.disabled = true;
     updateAccountPoolLiveness(entryId, state);
     try {
         const response = await fetch(`/admin/account-pool/${entryId}/liveness`, {
@@ -106,19 +119,112 @@ async function checkAccountPoolEntryLiveness(button) {
         if (!response.ok || !result.success) {
             if (result.code === 'checking') {
                 updateAccountPoolLiveness(entryId, previous);
-                showToast(result.error, 'info');
-                return;
+                if (!quiet) showToast(result.error, 'info');
+                return 'skipped';
             }
             throw new Error(result.error || result.detail || '验活失败');
         }
         updateAccountPoolLiveness(entryId, {status: result.status, message: result.message, checkedAt: result.checked_at});
+        return result.status === 'alive' ? 'alive' : 'abnormal';
     } catch (error) {
         const message = error.name === 'TimeoutError' ? '验活请求超时，请稍后重试' : error.message || '验活失败，请重试';
         updateAccountPoolLiveness(entryId, {status: 'error', message});
-        showToast(message, 'error');
+        if (!quiet) showToast(message, 'error');
+        return 'abnormal';
     } finally {
         accountPoolLivenessChecks.delete(entryId);
-        button.disabled = false;
+    }
+}
+
+let accountPoolLivenessBatchRunning = false;
+let accountPoolLivenessTargetsLoading = false;
+
+function updateAccountPoolLivenessControls() {
+    const busy = accountPoolLivenessBatchRunning || accountPoolLivenessTargetsLoading;
+    const button = document.getElementById('accountPoolCheckAllLiveness');
+    if (button) {
+        button.disabled = busy;
+        button.setAttribute('aria-busy', String(busy));
+    }
+    const label = document.getElementById('accountPoolCheckAllLabel');
+    if (label) label.textContent = accountPoolLivenessTargetsLoading ? '读取账号…'
+        : accountPoolLivenessBatchRunning ? '验活中…' : '一键验活';
+    if (typeof updateAccountPoolSelectionUi === 'function') updateAccountPoolSelectionUi();
+}
+
+async function checkAllAccountPoolLiveness() {
+    if (accountPoolLivenessBatchRunning || accountPoolLivenessTargetsLoading) return;
+    accountPoolLivenessTargetsLoading = true;
+    updateAccountPoolLivenessControls();
+    const panel = document.getElementById('accountPoolLivenessProgress');
+    if (panel) {
+        panel.hidden = false;
+        panel.textContent = '正在读取待验活账号…';
+    }
+    try {
+        const url = getAccountPoolTableUrl();
+        url.pathname = '/admin/account-pool/liveness-targets';
+        const response = await fetch(url, {
+            credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(30000),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success || !Array.isArray(result.ids)) {
+            throw new Error(result.error || result.detail || '读取验活账号失败');
+        }
+        accountPoolLivenessTargetsLoading = false;
+        if (!result.ids.length) {
+            if (panel) panel.textContent = '当前列表没有可验活的账号';
+            return;
+        }
+        await checkAccountPoolBatchLiveness(result.ids, {label: '一键验活'});
+    } catch (error) {
+        const message = error.name === 'TimeoutError' ? '读取验活账号超时，请重试' : error.message || '读取验活账号失败';
+        if (panel) panel.textContent = message;
+        showToast(message, 'error');
+    } finally {
+        accountPoolLivenessTargetsLoading = false;
+        updateAccountPoolLivenessControls();
+    }
+}
+
+async function checkAccountPoolBatchLiveness(ids, {label = '批量验活'} = {}) {
+    if (accountPoolLivenessBatchRunning || accountPoolLivenessTargetsLoading || !ids.length) return;
+    const uniqueIds = [...new Set(ids.map(String))];
+    const queue = uniqueIds.filter(id => !accountPoolLivenessChecks.has(id));
+    const counts = {alive: 0, abnormal: 0, skipped: uniqueIds.length - queue.length};
+    const total = uniqueIds.length;
+    const panel = document.getElementById('accountPoolLivenessProgress');
+    const render = () => {
+        if (!panel) return;
+        panel.hidden = false;
+        const done = counts.alive + counts.abnormal + counts.skipped;
+        panel.textContent = `${label}${done === total ? '完成' : '中'} ${done}/${total} · 正常 ${counts.alive} · 异常 ${counts.abnormal}` +
+            (counts.skipped ? ` · 跳过 ${counts.skipped}（已在验活）` : '') +
+            (done < total ? ' · 请保持页面打开' : '');
+    };
+    accountPoolLivenessBatchRunning = true;
+    updateAccountPoolLivenessControls();
+    for (const entryId of queue) {
+        const state = {status: 'queued', message: '已加入批量验活队列', previous: accountPoolLivenessPrevious(entryId)};
+        accountPoolLivenessChecks.set(entryId, state);
+        updateAccountPoolLiveness(entryId, state);
+    }
+    render();
+    let cursor = 0;
+    const worker = async () => {
+        while (cursor < queue.length) {
+            const entryId = queue[cursor++];
+            const result = await checkAccountPoolLivenessById(entryId, {fromQueue: true, quiet: true});
+            counts[result]++;
+            render();
+        }
+    };
+    try {
+        // Keep upstream login pressure bounded, while each row reports its own result.
+        await Promise.all([worker(), worker()]);
+    } finally {
+        accountPoolLivenessBatchRunning = false;
+        updateAccountPoolLivenessControls();
     }
 }
 
@@ -507,12 +613,11 @@ function initAccountPoolColumnDropdown() {
 let accountPoolTableRequest = null;
 let accountPoolRequestedUrl = null;
 
-function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter, seatFilter, rotationFilter, sortBy} = {}) {
+function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter, seatFilter, rotationFilter, livenessFilter, sortBy, sortOrder} = {}) {
     const url = new URL('/admin/account-pool', window.location.origin);
     const current = new URLSearchParams(accountPoolRequestedUrl?.search ?? window.location.search);
     const searchInput = document.querySelector('#accountPoolSearchForm input[name="search"]');
     const size = document.getElementById('accountPoolPageSize');
-    const sort = document.getElementById('accountPoolSort');
     for (const [key, value] of Object.entries({
         page: page ?? current.get('page') ?? 1,
         per_page: perPage ?? current.get('per_page') ?? size?.value ?? 20,
@@ -521,7 +626,9 @@ function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter
         team_filter: teamFilter ?? current.get('team_filter') ?? '',
         seat_filter: seatFilter ?? current.get('seat_filter') ?? '',
         rotation_filter: rotationFilter ?? current.get('rotation_filter') ?? '',
-        sort_by: sortBy ?? current.get('sort_by') ?? sort?.value ?? 'team',
+        liveness_filter: livenessFilter ?? current.get('liveness_filter') ?? '',
+        sort_by: sortBy ?? current.get('sort_by') ?? 'team',
+        sort_order: sortOrder ?? current.get('sort_order') ?? 'asc',
     })) url.searchParams.set(key, String(value));
     return url;
 }
@@ -531,32 +638,47 @@ function syncAccountPoolFilters(fragment, url) {
     const nextFilters = fragment.getElementById('accountPoolFilters');
     if (filters && nextFilters) filters.replaceChildren(...nextFilters.childNodes);
     const form = document.getElementById('accountPoolSearchForm');
-    for (const key of ['search', 'team_filter', 'seat_filter', 'rotation_filter', 'status_filter', 'sort_by', 'per_page']) {
+    for (const key of ['search', 'team_filter', 'seat_filter', 'rotation_filter', 'liveness_filter', 'status_filter', 'sort_by', 'sort_order', 'per_page']) {
         if (form?.elements[key]) form.elements[key].value = url.searchParams.get(key) || '';
     }
-    const sort = document.getElementById('accountPoolSort');
-    if (sort) sort.value = url.searchParams.get('sort_by') || 'team';
+}
+
+function sortAccountPoolTable(sortBy) {
+    const params = getAccountPoolTableUrl().searchParams;
+    const descending = params.get('sort_by') === sortBy && params.get('sort_order') !== 'desc';
+    return refreshAccountPoolTable({page: 1, sortBy, sortOrder: descending ? 'desc' : 'asc'});
 }
 
 function initAccountPoolFilters() {
+    document.addEventListener('click', event => {
+        const button = event.target.closest('.account-pool-sort[data-sort-by]');
+        if (button) sortAccountPoolTable(button.dataset.sortBy);
+    });
+    document.getElementById('accountPoolCheckAllLiveness')?.addEventListener('click', checkAllAccountPoolLiveness);
     document.getElementById('accountPoolFilters')?.addEventListener('click', event => {
         const link = event.target.closest('a[href]');
         if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         const params = new URL(link.href).searchParams;
         const kind = link.dataset.filterKind;
-        const filters = kind === 'reset' ? {teamFilter: '', seatFilter: '', rotationFilter: '', statusFilter: '', search: ''}
+        const filters = kind === 'reset' ? {teamFilter: '', seatFilter: '', rotationFilter: '', livenessFilter: '', statusFilter: '', search: ''}
             : kind === 'team' ? {teamFilter: params.get('team_filter') || '', statusFilter: ''}
             : {seatFilter: params.get('seat_filter') || ''};
         refreshAccountPoolTable({page: 1, ...filters});
     });
     document.getElementById('accountPoolFilters')?.addEventListener('change', event => {
+        if (event.target.id === 'accountPoolTeamFilter') {
+            refreshAccountPoolTable({page: 1, teamFilter: event.target.value, statusFilter: ''});
+        }
+        if (event.target.id === 'accountPoolSeatFilter') {
+            refreshAccountPoolTable({page: 1, seatFilter: event.target.value});
+        }
+        if (event.target.id === 'accountPoolLivenessFilter') {
+            refreshAccountPoolTable({page: 1, livenessFilter: event.target.value});
+        }
         if (event.target.id === 'accountPoolRotationFilter') {
             refreshAccountPoolTable({page: 1, rotationFilter: event.target.value});
         }
-    });
-    document.getElementById('accountPoolSort')?.addEventListener('change', event => {
-        refreshAccountPoolTable({page: 1, sortBy: event.target.value});
     });
     document.getElementById('accountPoolSearchForm')?.addEventListener('submit', event => {
         event.preventDefault();
@@ -600,12 +722,12 @@ async function refreshAccountPoolTable(options = {}) {
             return;
         }
         const nextPage = documentFragment.getElementById('accountPoolSearchForm');
-        for (const key of ['team_filter', 'seat_filter', 'rotation_filter', 'status_filter', 'sort_by', 'per_page']) {
+        for (const key of ['team_filter', 'seat_filter', 'rotation_filter', 'liveness_filter', 'status_filter', 'sort_by', 'sort_order', 'per_page']) {
             if (nextPage?.elements[key]) url.searchParams.set(key, nextPage.elements[key].value);
         }
         url.searchParams.set('page', nextRegion.dataset.currentPage);
         const previous = new URLSearchParams(window.location.search);
-        if (['team_filter', 'seat_filter', 'rotation_filter', 'status_filter', 'search'].some(key =>
+        if (['team_filter', 'seat_filter', 'rotation_filter', 'liveness_filter', 'status_filter', 'search'].some(key =>
             (previous.get(key) || '') !== (url.searchParams.get(key) || ''))) {
             window.clearAccountPoolSelection?.();
         }

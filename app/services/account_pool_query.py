@@ -3,8 +3,10 @@ from sqlalchemy import case, func, literal, select, union_all
 
 from app.models import AccountPoolEntry, Team, TeamEmailMapping
 from app.services.account_pool_rotation import ROTATION_FILTER_OPTIONS, attach_rotation_status
-from app.services.member_auto_kick_policy import auto_kick_enabled_condition
+from app.services.member_auto_kick_policy import auto_kick_deadline_expression, auto_kick_enabled_condition
 from app.utils.team_names import team_display_name
+
+LIVENESS_FILTER_OPTIONS = {"alive": "正常", "abnormal": "异常", "unchecked": "未检测"}
 
 SORT_OPTIONS = {
     "team": "Team / 席位",
@@ -12,6 +14,8 @@ SORT_OPTIONS = {
     "newest": "最近添加",
     "oldest": "最早添加",
     "email": "邮箱 A–Z",
+    "name": "名称",
+    "liveness": "验活状态",
 }
 
 
@@ -20,9 +24,11 @@ def _normalized(column):
 
 
 async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filter, seat_filter, sort_by,
-                         rotation_filter=""):
+                         rotation_filter="", liveness_filter="", sort_order="asc", all_ids=False):
     rotation_filter = rotation_filter if rotation_filter in ROTATION_FILTER_OPTIONS else ""
+    liveness_filter = liveness_filter if liveness_filter in LIVENESS_FILTER_OPTIONS else ""
     sort_by = sort_by if sort_by in SORT_OPTIONS else "team"
+    sort_order = "desc" if sort_order == "desc" else "asc"
     seat_filter = seat_filter if seat_filter in ("standard", "premium", "unknown") else ""
     status_filter = status_filter if status_filter in ("joined", "not_joined", "invited", "unassigned", "conflict") else ""
     team_filter = str(team_filter or "").strip()
@@ -30,14 +36,17 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
         team_filter = str(int(team_filter)) if team_filter.isascii() and team_filter.isdecimal() and len(team_filter) <= 18 and int(team_filter) > 0 else ""
 
     pool = select(AccountPoolEntry.id, AccountPoolEntry.email, AccountPoolEntry.created_at,
-                  AccountPoolEntry.updated_at).where(AccountPoolEntry.deleted_at.is_(None))
+                  AccountPoolEntry.updated_at, AccountPoolEntry.liveness_status,
+                  AccountPoolEntry.liveness_checked_at, AccountPoolEntry.name).where(AccountPoolEntry.deleted_at.is_(None))
     owner_email = _normalized(Team.email)
     in_pool = select(AccountPoolEntry.id).where(
         AccountPoolEntry.deleted_at.is_(None), _normalized(AccountPoolEntry.email) == owner_email,
     ).exists()
     owners = select((-func.min(Team.id)).label("id"), owner_email.label("email"),
                     func.min(Team.created_at).label("created_at"),
-                    func.min(Team.created_at).label("updated_at")).where(
+                    func.min(Team.created_at).label("updated_at"),
+                    literal(None).label("liveness_status"), literal(None).label("liveness_checked_at"),
+                    literal(None).label("name")).where(
         ~in_pool, owner_email != "",
     ).group_by(owner_email)
     identities = union_all(pool, owners).subquery()
@@ -48,7 +57,7 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
                     case(((_normalized(TeamEmailMapping.email) != owner_email)
                            & auto_kick_enabled_condition()
                            & (func.coalesce(TeamEmailMapping.member_role, "") != "account-owner"),
-                           TeamEmailMapping.auto_kick_at), else_=None).label("deadline"),
+                           auto_kick_deadline_expression()), else_=None).label("deadline"),
                     case((_normalized(TeamEmailMapping.email) == owner_email, 0),
                          (TeamEmailMapping.seat_type == "premium", 1),
                          (TeamEmailMapping.seat_type == "standard", 2), else_=3).label("seat_rank"),
@@ -71,6 +80,31 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
                     func.min(scoped.c.deadline).label("deadline"),
     ).group_by(scoped.c.email).subquery()
     query = select(identities.c.id).outerjoin(groups, groups.c.email == identities.c.email)
+    effective_status = identities.c.liveness_status
+    if liveness_filter or sort_by == "liveness":
+        # Match the listing's latest owner result, including multiple Teams and
+        # real pool entries. Equal timestamps prefer the pool entry.
+        ranked_owners = select(
+            owner_email.label("email"), Team.owner_liveness_status.label("status"),
+            Team.owner_liveness_checked_at.label("checked_at"),
+            func.row_number().over(partition_by=owner_email, order_by=(
+                Team.owner_liveness_checked_at.desc(), Team.id,
+            )).label("rank"),
+        ).where(Team.owner_liveness_checked_at.is_not(None)).subquery()
+        latest_owner = select(ranked_owners).where(ranked_owners.c.rank == 1).subquery()
+        query = query.outerjoin(latest_owner, latest_owner.c.email == identities.c.email)
+        effective_status = case((
+            latest_owner.c.checked_at.is_not(None) & (
+                identities.c.liveness_checked_at.is_(None)
+                | (latest_owner.c.checked_at > identities.c.liveness_checked_at)
+            ), latest_owner.c.status,
+        ), else_=identities.c.liveness_status)
+        if liveness_filter == "alive":
+            query = query.where(effective_status == "alive")
+        elif liveness_filter == "unchecked":
+            query = query.where(func.coalesce(effective_status, "") == "")
+        elif liveness_filter == "abnormal":
+            query = query.where(func.coalesce(effective_status, "").notin_(("", "alive")))
     if search:
         query = query.where(identities.c.email.ilike(f"%{search.strip().lower()}%"))
     if team_filter == "personal":
@@ -108,13 +142,19 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     primary_seat_rank = select(func.min(scoped.c.seat_rank)).where(
         scoped.c.email == identities.c.email, scoped.c.team_id == groups.c.team_id,
     ).correlate(identities, groups).scalar_subquery()
+    def direction(column):
+        return column.desc() if sort_order == "desc" else column.asc()
+
     orders = {
-        "team": [groups.c.team_id.is_(None), groups.c.team_id, primary_seat_rank,
-                 groups.c.deadline.is_(None), groups.c.deadline, identities.c.updated_at],
-        "deadline": [groups.c.deadline.is_(None), groups.c.deadline, groups.c.team_id],
+        "team": [groups.c.team_id.is_(None), direction(groups.c.team_id), direction(primary_seat_rank),
+                 groups.c.deadline.is_(None), direction(groups.c.deadline), direction(identities.c.updated_at)],
+        "deadline": [groups.c.deadline.is_(None), direction(groups.c.deadline), direction(groups.c.team_id)],
         "newest": [identities.c.created_at.desc(), identities.c.id.desc()],
         "oldest": [identities.c.created_at, identities.c.id],
-        "email": [identities.c.email],
+        "email": [direction(identities.c.email)],
+        "name": [func.coalesce(func.trim(identities.c.name), "") == "", direction(_normalized(identities.c.name))],
+        "liveness": [func.coalesce(effective_status, "") == "",
+                     direction(case((effective_status == "alive", 0), else_=1))],
     }
     ordered = query.order_by(*orders[sort_by], identities.c.email, identities.c.id)
     rotation_views = {}
@@ -132,15 +172,17 @@ async def query_pool_ids(db, *, page, per_page, search, status_filter, team_filt
     total_pages = max((total + per_page - 1) // per_page, 1)
     page = min(max(page, 1), total_pages)
     if rotation_filter:
-        selected = matches[(page - 1) * per_page:page * per_page]
+        selected = matches if all_ids else matches[(page - 1) * per_page:page * per_page]
         ids = [row["id"] for row in selected]
         rotation_views = {row["id"]: row["rotation"] for row in selected}
     else:
-        ids = list((await db.execute(ordered.offset((page - 1) * per_page).limit(per_page))).scalars())
+        selection = ordered if all_ids else ordered.offset((page - 1) * per_page).limit(per_page)
+        ids = list((await db.execute(selection)).scalars())
     teams = (await db.execute(select(Team.id, Team.team_name, Team.account_id).order_by(Team.id))).all()
     return {"ids": ids, "total": total, "total_pages": total_pages, "current_page": page,
-            "per_page": per_page, "sort_by": sort_by, "sort_options": SORT_OPTIONS,
+            "per_page": per_page, "sort_by": sort_by, "sort_order": sort_order, "sort_options": SORT_OPTIONS,
             "team_filter": team_filter, "seat_filter": seat_filter, "status_filter": status_filter,
             "rotation_filter": rotation_filter, "rotation_filter_options": ROTATION_FILTER_OPTIONS,
+            "liveness_filter": liveness_filter, "liveness_filter_options": LIVENESS_FILTER_OPTIONS,
             "_rotation_views": rotation_views,
             "filter_teams": [{"id": team.id, "name": team_display_name(team)} for team in teams]}

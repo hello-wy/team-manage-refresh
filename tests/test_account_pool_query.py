@@ -1,7 +1,9 @@
 import unittest
+import json
 from datetime import timedelta
 from unittest.mock import patch
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -20,7 +22,8 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         async with self.sessions() as db:
             db.add_all([Team(id=i, email=f'owner{i}@example.com', team_name='Same Name',
-                             access_token_encrypted='unused', account_id=f'space-{i}') for i in (1, 2)])
+                             access_token_encrypted='unused', account_id=f'space-{i}',
+                             expires_at=self.now + timedelta(days=20)) for i in (1, 2)])
             for i, name in enumerate(['standard', 'premium', 'personal', 'conflict', 'owner1', 'invited']):
                 db.add(AccountPoolEntry(email=f'{name}@example.com', created_at=self.now + timedelta(seconds=i),
                                          updated_at=self.now + timedelta(seconds=i), workspace_status='personal_account'))
@@ -84,11 +87,42 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.emails(recent), ['invited@example.com', 'owner1@example.com'])
         self.assertEqual(recent['total'], 7)
         deadline = self.emails(await self.listing(sort_by='deadline'))
-        self.assertEqual(deadline[:3], ['standard@example.com', 'conflict@example.com', 'premium@example.com'])
+        self.assertEqual(deadline[:3], ['premium@example.com', 'conflict@example.com', 'standard@example.com'])
         alpha = self.emails(await self.listing(sort_by='email'))
         self.assertEqual(alpha, sorted(alpha))
         self.assertEqual(self.emails(await self.listing(team_filter='1', seat_filter='standard', search='STANDARD')),
                          ['standard@example.com'])
+
+    async def test_header_sort_direction_applies_before_pagination_and_keeps_unknowns_last(self):
+        whole = self.emails(await self.listing(sort_by='email', sort_order='desc'))
+        self.assertEqual(whole, sorted(whole, reverse=True))
+        pages = [await self.listing(sort_by='email', sort_order='desc', page=i, per_page=2)
+                 for i in range(1, 5)]
+        self.assertEqual([email for page in pages for email in self.emails(page)], whole)
+        descending = await self.listing(sort_by='team', sort_order='desc')
+        self.assertEqual(self.emails(descending)[0], 'owner2@example.com')
+        self.assertEqual(set(self.emails(descending)[-2:]), {'personal@example.com', 'invited@example.com'})
+        self.assertEqual((await self.listing(sort_order='invalid'))['sort_order'], 'asc')
+
+    async def test_name_and_liveness_header_sort_use_current_owner_results(self):
+        async with self.sessions() as db:
+            entries = {entry.email: entry for entry in (await db.scalars(select(AccountPoolEntry))).all()}
+            entries['standard@example.com'].name = 'Zoe'
+            entries['premium@example.com'].name = 'Alice'
+            entries['standard@example.com'].liveness_status = 'alive'
+            entries['standard@example.com'].liveness_checked_at = self.now
+            team = await db.get(Team, 2)
+            team.owner_liveness_status = 'invalid'
+            team.owner_liveness_checked_at = self.now
+            await db.commit()
+        self.assertEqual(self.emails(await self.listing(sort_by='name'))[:2],
+                         ['premium@example.com', 'standard@example.com'])
+        self.assertEqual(self.emails(await self.listing(sort_by='name', sort_order='desc'))[:2],
+                         ['standard@example.com', 'premium@example.com'])
+        self.assertEqual(self.emails(await self.listing(sort_by='liveness'))[:2],
+                         ['standard@example.com', 'owner2@example.com'])
+        self.assertEqual(self.emails(await self.listing(sort_by='liveness', sort_order='desc'))[:2],
+                         ['owner2@example.com', 'standard@example.com'])
 
     async def test_deadline_sort_uses_plans_including_quota_rotation_teams(self):
         from sqlalchemy import select
@@ -98,15 +132,15 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             mapping.auto_kick_at = None
             await db.commit()
             listing = await account_pool_service.list_entries(db, sort_by='deadline')
-            self.assertEqual(self.emails(listing)[:2], ['conflict@example.com', 'premium@example.com'])
+            self.assertEqual(self.emails(listing)[:2], ['premium@example.com', 'conflict@example.com'])
             team = await db.get(Team, 1)
             team.rotation_mode = 'auto'
             await db.commit()
             listing = await account_pool_service.list_entries(db, sort_by='deadline')
             # Member schedules still run on quota-rotation Teams, so their deadlines keep sorting first.
-            self.assertEqual(self.emails(listing)[:2], ['conflict@example.com', 'premium@example.com'])
+            self.assertEqual(self.emails(listing)[:2], ['premium@example.com', 'conflict@example.com'])
 
-    async def test_deadline_sort_uses_explicit_plan_for_every_seat_type(self):
+    async def test_deadline_sort_uses_team_expiry_for_standard_seats(self):
         from sqlalchemy import select
         async with self.sessions() as db:
             mappings = (await db.scalars(select(TeamEmailMapping).where(
@@ -115,25 +149,26 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
                 mapping.standard_auto_kick_enabled = False
             await db.commit()
             listing = await account_pool_service.list_entries(db, sort_by='deadline')
-            self.assertEqual(self.emails(listing)[0], 'standard@example.com')
+            self.assertEqual(self.emails(listing)[0], 'premium@example.com')
 
     async def test_normalizes_invalid_options_and_loads_details_for_one_page_only(self):
         async with self.sessions() as db:
             with patch.object(account_pool_service, 'rows_by_ids', wraps=account_pool_service.rows_by_ids) as load:
                 listing = await account_pool_service.list_entries(db, per_page=2, team_filter='9' * 200,
                                                                  seat_filter='invalid', sort_by='invalid',
-                                                                 rotation_filter='invalid')
+                                                                 rotation_filter='invalid', liveness_filter='invalid')
             self.assertEqual(len(load.call_args.args[1]), 2)
             self.assertEqual(listing['team_filter'], '')
             self.assertEqual(listing['seat_filter'], '')
             self.assertEqual(listing['sort_by'], 'team')
             self.assertEqual(listing['rotation_filter'], '')
+            self.assertEqual(listing['liveness_filter'], '')
 
     async def test_rotation_filter_matches_display_policy_for_every_option(self):
         async with self.sessions() as db:
             whole = await account_pool_service.list_entries(db)
             rows = await attach_rotation_status(db, whole['entries'])
-        self.assertEqual(len(ROTATION_FILTER_OPTIONS), 8)
+        self.assertEqual(set(ROTATION_FILTER_OPTIONS), {'invited', 'waiting_exit', 'idle', 'excluded'})
         for key in ROTATION_FILTER_OPTIONS:
             with self.subTest(status=key):
                 filtered = await self.listing(rotation_filter=key)
@@ -179,11 +214,18 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
             ])
             await db.commit()
         self.assertEqual(self.emails(await self.listing(rotation_filter='invited')), [])
-        processing = await self.listing(rotation_filter='processing', sort_by='email')
-        self.assertEqual(self.emails(processing), ['conflict@example.com', 'invited@example.com'])
-        self.assertEqual([row['rotation']['detail'] for row in processing['entries']],
-                         ['退出确认中', '邀请确认中'])
-        self.assertEqual(self.emails(await self.listing(rotation_filter='attention')), [])
+        rows = await self.listing(sort_by='email')
+        async with self.sessions() as db:
+            await attach_rotation_status(db, rows['entries'])
+        by_email = {row['email']: row['rotation'] for row in rows['entries']}
+        self.assertEqual(by_email['conflict@example.com']['detail'], '退出确认中')
+        self.assertEqual(by_email['invited@example.com']['detail'], '邀请确认中')
+        for email in ('conflict@example.com', 'invited@example.com'):
+            self.assertEqual(by_email[email]['label'], '')
+            self.assertEqual(by_email[email]['status'], '')
+        for removed in ('processing', 'attention', 'using', 'waiting_rotation'):
+            self.assertNotIn(removed, ROTATION_FILTER_OPTIONS)
+            self.assertEqual((await self.listing(rotation_filter=removed))['rotation_filter'], '')
         self.assertEqual(self.emails(await self.listing(rotation_filter='excluded')),
                          ['owner1@example.com', 'owner2@example.com'])
 
@@ -200,3 +242,124 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('rotation_filter=excluded', response.context['filter_url'](page=2))
         self.assertNotIn('rotation_filter=excluded', response.context['filter_url'](rotation_filter=''))
         self.assertEqual(response.context['total'], 2)
+
+    async def test_liveness_filters_apply_before_pagination_and_combine_with_rotation(self):
+        async with self.sessions() as db:
+            entries = (await db.scalars(select(AccountPoolEntry).order_by(AccountPoolEntry.id))).all()
+            statuses = ['alive', 'invalid', None, 'error', '', 'missing']
+            for entry, status in zip(entries, statuses):
+                entry.liveness_status = status
+                entry.liveness_checked_at = self.now if status else None
+            await db.commit()
+        expected = {'alive': ['standard@example.com'],
+                    'abnormal': ['conflict@example.com', 'invited@example.com', 'premium@example.com'],
+                    'unchecked': ['owner1@example.com', 'owner2@example.com', 'personal@example.com']}
+        for status, emails in expected.items():
+            first = await self.listing(liveness_filter=status, sort_by='email', per_page=1)
+            self.assertEqual(first['total'], len(emails))
+            pages = [await self.listing(liveness_filter=status, sort_by='email', per_page=1, page=i)
+                     for i in range(1, len(emails) + 1)]
+            self.assertEqual([row['email'] for page in pages for row in page['entries']], emails)
+        combined = await self.listing(liveness_filter='abnormal', rotation_filter='invited',
+                                      team_filter='personal', seat_filter='unknown', search='INVITED')
+        self.assertEqual(self.emails(combined), ['invited@example.com'])
+        self.assertEqual((await self.listing(liveness_filter='alive', seat_filter='premium'))['total'], 0)
+
+    async def test_liveness_filter_matches_latest_owner_result_and_timestamp_ties(self):
+        async with self.sessions() as db:
+            owner1 = await db.get(Team, 1)
+            owner1.owner_liveness_status = 'invalid'
+            owner1.owner_liveness_checked_at = self.now
+            owner2 = await db.get(Team, 2)
+            owner2.owner_liveness_status = 'error'
+            owner2.owner_liveness_checked_at = self.now
+            db.add(Team(id=3, email=' OWNER2@EXAMPLE.COM ', account_id='space-3',
+                        access_token_encrypted='unused', owner_liveness_status='alive',
+                        owner_liveness_checked_at=self.now + timedelta(seconds=1)))
+            entry = await db.scalar(select(AccountPoolEntry).where(AccountPoolEntry.email == owner1.email))
+            entry.liveness_status = 'alive'
+            entry.liveness_checked_at = self.now
+            await db.commit()
+        # Virtual owner uses the newest Team, real owner prefers pool on a tie.
+        self.assertEqual(self.emails(await self.listing(liveness_filter='alive', sort_by='email')),
+                         ['owner1@example.com', 'owner2@example.com'])
+        async with self.sessions() as db:
+            owner1 = await db.get(Team, 1)
+            owner1.owner_liveness_checked_at = self.now + timedelta(seconds=2)
+            await db.commit()
+        self.assertEqual(self.emails(await self.listing(liveness_filter='alive')), ['owner2@example.com'])
+        abnormal = await self.listing(liveness_filter='abnormal')
+        self.assertEqual(self.emails(abnormal), ['owner1@example.com'])
+        self.assertEqual(abnormal['entries'][0]['liveness_status'], 'invalid')
+        self.assertEqual((await self.listing(liveness_filter='unchecked'))['total'], 5)
+
+    async def test_page_hides_saved_success_message_and_preserves_liveness_filters(self):
+        from starlette.requests import Request
+        from app.routes.admin import account_pool_page
+        message = '密码、2FA 与 OAuth 登录验证通过'
+        async with self.sessions() as db:
+            entries = (await db.scalars(select(AccountPoolEntry))).all()
+            for entry in entries:
+                entry.liveness_status = 'alive'
+                entry.liveness_message = message
+                entry.liveness_checked_at = self.now
+            await db.commit()
+            request = Request({'type': 'http', 'method': 'GET', 'path': '/admin/account-pool',
+                               'query_string': b'liveness_filter=alive', 'headers': []})
+            response = await account_pool_page(request, db=db, current_user={'username': 'admin'},
+                                               liveness_filter='alive', per_page=1)
+        html = response.body.decode()
+        self.assertNotIn(message, html)
+        self.assertIn('class="account-pool-liveness-message" hidden', html)
+        self.assertIn('value="alive" selected', html)
+        self.assertIn('id="accountPoolBatchLiveness"', html)
+        self.assertIn('liveness_filter=alive', response.context['filter_url'](page=2, seat_filter='standard'))
+        self.assertNotIn('liveness_filter=alive', response.context['filter_url'](liveness_filter=''))
+        for label in ('需关注', '处理中', '使用中'):
+            self.assertNotIn('>' + label + '<', html)
+
+    async def test_header_controls_replace_sort_dropdown_and_keep_direction_in_links(self):
+        from starlette.requests import Request
+        from app.routes.admin import account_pool_page
+        request = Request({'type': 'http', 'method': 'GET', 'path': '/admin/account-pool',
+                           'query_string': b'', 'headers': []})
+        async with self.sessions() as db:
+            response = await account_pool_page(request, db=db, current_user={'username': 'admin'},
+                                               sort_by='email', sort_order='desc')
+        html = response.body.decode()
+        self.assertNotIn('id="accountPoolSort"', html)
+        self.assertIn('id="accountPoolCheckAllLiveness"', html)
+        self.assertIn('aria-sort="descending"', html)
+        self.assertIn('data-sort-by="email"', html)
+        self.assertIn('name="sort_order" value="desc"', html)
+        self.assertIn('sort_order=desc', response.context['filter_url'](page=2))
+
+    async def test_liveness_targets_include_all_pages_and_unique_owners_without_loading_details(self):
+        from app.routes.admin import account_pool_liveness_targets
+        async with self.sessions() as db:
+            db.add_all([AccountPoolEntry(email=f'bulk{i:03}@example.com') for i in range(105)])
+            db.add(Team(id=3, email=' OWNER2@EXAMPLE.COM ', account_id='space-3',
+                        access_token_encrypted='unused'))
+            db.add(AccountPoolEntry(email='deleted@example.com', deleted_at=self.now))
+            await db.commit()
+            with patch.object(account_pool_service, 'rows_by_ids', side_effect=AssertionError('Must not load credentials')):
+                response = await account_pool_liveness_targets(db=db, current_user={'username': 'admin'})
+        result = json.loads(response.body)
+        self.assertEqual(set(result), {'success', 'ids', 'total'})
+        self.assertEqual(result['total'], 112)
+        self.assertEqual(len(result['ids']), 112)
+        self.assertEqual(len(set(result['ids'])), 112)
+        self.assertIn(-2, result['ids'])
+        self.assertNotIn(-3, result['ids'])
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+
+    async def test_liveness_targets_match_combined_list_filters(self):
+        from app.routes.admin import account_pool_liveness_targets
+        filters = dict(team_filter='personal', seat_filter='unknown', rotation_filter='invited',
+                       liveness_filter='unchecked', search='INVITED')
+        expected = await self.listing(**filters)
+        async with self.sessions() as db:
+            response = await account_pool_liveness_targets(db=db, current_user={'username': 'admin'}, **filters)
+        result = json.loads(response.body)
+        self.assertEqual(result['ids'], [row['id'] for row in expected['entries']])
+        self.assertEqual(result['total'], 1)

@@ -188,7 +188,6 @@ class MemberProfileSyncTests(unittest.IsolatedAsyncioTestCase):
             "account_id": "account-1", "name": "Test Team", "plan_type": "team",
             "subscription_plan": "team", "expires_at": None,
         }]})
-        self.remote.get_account_settings = AsyncMock(return_value={"success": True, "data": {}})
         result = await self.service.sync_team_info(1, self.db)
         self.assertTrue(result["success"], result.get("error"))
         self.assertEqual(result["member_emails"], [EMAIL])

@@ -2153,9 +2153,16 @@ function renderMemberAutoKickTime(member) {
     if (member.role === 'account-owner') {
         return '<span class="member-auto-kick-time text-muted">不会自动下线</span>';
     }
-    if (member.status === 'invited') return '<span class="member-auto-kick-time text-muted">确认加入后计时</span>';
-    if (member.departure_policy === 'team_expiry') {
-        return `<span class="member-auto-kick-time">${member.auto_kick_at ? `${formatDateTime(member.auto_kick_at)} · Team 到期下线` : 'Team 到期时间待同步'}</span>`;
+    if (member.status === 'invited') {
+        const standard = ['default', 'standard'].includes((member.seat_type || '').trim().toLowerCase());
+        return `<span class="member-auto-kick-time text-muted">${standard ? '接受邀请后保留至 Team 到期' : '确认加入后计时'}</span>`;
+    }
+    if (['default', 'standard'].includes((member.seat_type || '').trim().toLowerCase())
+            || member.departure_policy === 'team_expiry'
+            || (member.departure_policy === 'standard_expiry'
+                && !['premium', 'prolite'].includes((member.seat_type || '').trim().toLowerCase()))) {
+        const expiry = Object.hasOwn(member, 'team_expires_at') ? member.team_expires_at : member.auto_kick_at;
+        return `<span class="member-auto-kick-time">${expiry ? formatDateTime(expiry) : 'Team 到期时间待同步'}</span>`;
     }
     if (member.auto_kick_enabled === false) {
         return '<span class="member-auto-kick-time text-muted">不参与</span>';
@@ -2173,7 +2180,9 @@ function renderMemberAutoKickTime(member) {
 }
 
 function renderMemberAutoKickControl(teamId, member) {
-    if (member.role === 'account-owner' || !member.user_id || member.departure_policy === 'team_expiry') return '';
+    if (member.role === 'account-owner' || member.status === 'invited' || !member.user_id
+            || !['premium', 'prolite'].includes((member.seat_type || '').trim().toLowerCase())
+            || member.departure_policy === 'team_expiry') return '';
     const enabled = member.auto_kick_enabled !== false;
     const label = enabled ? '不参与自动下线' : '参与自动下线';
     return `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary member-auto-kick-toggle"
@@ -2220,7 +2229,7 @@ async function saveMemberAutoKickHours() {
         showToast('请输入 1 到 8760 之间的整数小时', 'error');
         return;
     }
-    if (!await confirmPageAction(`定时成员将改为本次使用开始后 ${hours} 小时下线（高级升级从确认生效时起算，质保成员仍在 Team 到期下线），已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
+    if (!await confirmPageAction(`高级席位将改为本次使用开始后 ${hours} 小时下线（接受邀请后开始计时，标准席位仍在 Team 到期下线），已超过该时长的成员会在 1 分钟内被踢出。确定保存吗？`)) return;
     button.disabled = true;
     try {
         const result = await apiCall(`/admin/teams/${teamId}/members/auto-kick`, {
@@ -2341,10 +2350,12 @@ function renderMemberSeatType(seatType) {
 }
 
 function renderMemberSeatControl(member) {
-    const current = member.seat_type === 'standard' ? 'default' : member.seat_type === 'prolite' ? 'premium' : member.seat_type;
+    const value = (member.seat_type || '').trim().toLowerCase();
+    const current = value === 'standard' ? 'default' : value === 'prolite' ? 'premium' : value;
     if (member.pending_seat_type) {
         return `${renderMemberSeatType(current)}<small class="member-seat-pending">待生效：${renderMemberSeatType(member.pending_seat_type)}</small>`;
     }
+    if (current === 'default') return renderMemberSeatType(current);
     if (!member.user_id || !['default', 'premium'].includes(current)) return renderMemberSeatType(current);
     return `<div class="member-seat-control">
         <select class="form-control" aria-label="${escapeHtml(member.email)} 的席位类型"
@@ -2424,9 +2435,9 @@ function renderTeamSeatKinds(balance) {
             return `<div class="team-seat-row"><span class="team-seat-kind">${label}</span>
                 <span class="team-seat-left is-empty">未购买</span></div>`;
         }
-        return `<div class="team-seat-row${remaining ? '' : ' is-full'}"><span class="team-seat-kind">${label}</span>
-            <progress class="team-seat-progress" max="${paid}" value="${paid - remaining}" aria-label="${label}席位已用"></progress>
-            <span class="team-seat-left">剩 ${remaining}/${paid}</span></div>`;
+        return `<div class="team-seat-row${remaining ? '' : ' is-full'}" title="${label}席位：共 ${paid} 席，可用 ${remaining} 席"><span class="team-seat-kind">${label}</span>
+            <progress class="team-seat-progress" max="${paid}" value="${remaining}" aria-label="${label}席位可用"></progress>
+            <span class="team-seat-left">可用 ${remaining}/${paid}</span></div>`;
     }).join('');
     return `<div class="team-seat-kinds" title="最近一次读取：刚刚">${rows}</div>`;
 }

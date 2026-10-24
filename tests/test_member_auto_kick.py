@@ -47,7 +47,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
             members = {
                 "member@example.com": {
                     "id": "user-member",
-                    "role": "standard-user",
+                    "role": "standard-user", "seat_type": "premium",
                     "created_time": joined_at.isoformat(),
                 },
                 "owner@example.com": {
@@ -87,7 +87,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                 set(),
                 session,
                 joined_members={"replacement@example.com": {
-                    "id": "replacement-user", "role": "standard-user",
+                    "id": "replacement-user", "role": "standard-user", "seat_type": "premium", "seat_type": "premium",
                     "created_time": historical.isoformat(),
                 }},
             )
@@ -108,7 +108,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                     status="joined",
                     source="sync",
                     upstream_user_id="user-due",
-                    member_role="standard-user",
+                    member_role="standard-user", seat_type="premium",
                     joined_at=now - timedelta(hours=3),
                     auto_kick_at=now - timedelta(hours=1),
                 ),
@@ -118,7 +118,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                     status="joined",
                     source="sync",
                     upstream_user_id="user-later",
-                    member_role="standard-user",
+                    member_role="standard-user", seat_type="premium",
                     joined_at=now,
                     auto_kick_at=now + timedelta(hours=2),
                 ),
@@ -164,7 +164,7 @@ class MemberAutoKickTests(unittest.IsolatedAsyncioTestCase):
                 status="joined",
                 source="sync",
                 upstream_user_id="user-due",
-                member_role="standard-user",
+                member_role="standard-user", seat_type="premium",
                 joined_at=now - timedelta(hours=3),
                 auto_kick_at=now - timedelta(hours=1),
             ))

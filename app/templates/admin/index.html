@@ -492,11 +492,6 @@
         min-width: 150px;
     }
 
-    .team-seat-usage .member-count {
-        color: var(--text-main);
-        font-weight: 600;
-    }
-
     .team-seat-kinds {
         display: flex;
         flex-direction: column;
@@ -604,36 +599,6 @@
     .team-status-refresh svg {
         width: 14px;
         height: 14px;
-    }
-
-    .team-status-tags {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.3rem;
-        margin-top: 0.4rem;
-    }
-
-    .team-tag {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.05rem 0.45rem;
-        border: 1px solid var(--border-main);
-        border-radius: var(--radius-sm);
-        color: var(--text-muted);
-        font-size: 0.72rem;
-        line-height: 1.5;
-        white-space: nowrap;
-    }
-
-    .team-tag.is-on {
-        color: var(--success);
-        border-color: color-mix(in srgb, var(--success) 35%, transparent);
-    }
-
-    .team-tag.is-warn {
-        color: var(--warning);
-        border-color: color-mix(in srgb, var(--warning) 40%, transparent);
-        background: var(--warning-soft);
     }
 
     .team-list-table-container .team-actions-head {
@@ -979,9 +944,6 @@
                     <button type="button" id="btnBatchRefresh" class="btn btn-secondary btn-sm">
                         <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> 批量刷新
                     </button>
-                    <button type="button" id="btnBatchEnableDeviceAuth" class="btn btn-success btn-sm">
-                        <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i> 批量开启验证
-                    </button>
                     <button type="button" id="btnBatchPushSub2api" class="btn btn-primary btn-sm" title="批量推送母号到 sub2api">
                         <i data-lucide="send" style="width: 14px; height: 14px;"></i> 批量推送到 sub2api
                     </button>
@@ -1082,7 +1044,7 @@
                 <th>{% if active_page == "welfare" %}编号{% else %}ID{% endif %}</th>
                 <th>Team</th>
                 <th data-default-hidden>Account ID</th>
-                <th title="已加入成员数 / 总席位数">成员/席位</th>
+                <th title="标准/高级可用席位 / 已购席位；进度条表示可用比例">成员/席位</th>
                 <th data-default-hidden>订阅计划</th>
                 <th>到期时间</th>
                 <th>状态</th>
@@ -1112,17 +1074,14 @@
                     <div class="team-seat-usage" id="team-seat-usage-{{ team.id }}" data-team-id="{{ team.id }}"
                         data-seat-balance-state="{{ 'pending' if team.seat_balance_needs_refresh else 'done' }}"
                         data-seat-balance-observed-at="{{ seats.observed_at.isoformat() if seats else '' }}">
-                        <span class="member-count" id="team-member-count-{{ team.id }}" title="已加入成员数 / 已购标准与高级席位合计；— 表示未知，请同步或刷新成员">
-                            {{ team.joined_members if team.joined_members is not none else '—' }}/{{ team.total_seats if team.total_seats is not none else '—' }}
-                        </span>
                         {% if seats %}
                         <div class="team-seat-kinds" title="最近一次读取：{{ seats.observed_at|format_datetime }}">
                             {% for label, paid, remaining in [('标准', seats.standard_paid, seats.standard_remaining), ('高级', seats.premium_paid, seats.premium_remaining)] %}
-                            <div class="team-seat-row{% if paid and not remaining %} is-full{% endif %}">
+                            <div class="team-seat-row{% if paid and not remaining %} is-full{% endif %}" title="{{ label }}席位：共 {{ paid }} 席，可用 {{ remaining }} 席">
                                 <span class="team-seat-kind">{{ label }}</span>
                                 {% if paid %}
-                                <progress class="team-seat-progress" max="{{ paid }}" value="{{ paid - remaining }}" aria-label="{{ label }}席位已用"></progress>
-                                <span class="team-seat-left">剩 {{ remaining }}/{{ paid }}</span>
+                                <progress class="team-seat-progress" max="{{ paid }}" value="{{ remaining }}" aria-label="{{ label }}席位可用"></progress>
+                                <span class="team-seat-left">可用 {{ remaining }}/{{ paid }}</span>
                                 {% else %}
                                 <span class="team-seat-left is-empty">未购买</span>
                                 {% endif %}
@@ -1164,16 +1123,6 @@
                         <i data-lucide="refresh-cw" aria-hidden="true"></i>
                     </button>
                     </div>
-                    <div class="team-status-tags">
-                        {% if team.pool_type == 'normal' and team.warranty_seat_enabled %}
-                        <span class="team-tag is-on" title="作为质保兑换码分流目标">质保</span>
-                        {% endif %}
-                        {% if team.device_code_auth_enabled %}
-                        <span class="team-tag is-on">设备验证</span>
-                        {% else %}
-                        <span class="team-tag is-warn" title="未开启设备代码验证，可在「更多」中开启">未开设备验证</span>
-                        {% endif %}
-                    </div>
                 </td>
                 <td class="team-actions-cell" data-label="操作">
                     <div class="action-buttons team-row-actions">
@@ -1188,7 +1137,6 @@
                         </button>
                         <button type="button" class="btn btn-sm btn-secondary btn-team-more"
                             data-id="{{ team.id }}" data-email="{{ team.email }}"
-                            data-device-auth="{{ 'true' if team.device_code_auth_enabled else 'false' }}"
                             aria-haspopup="menu" aria-expanded="false" aria-controls="teamRowMenu"
                             title="更多操作" aria-label="{{ team.email }} 的更多操作">
                             <span>更多</span><i data-lucide="chevron-down" aria-hidden="true"></i>
@@ -1409,10 +1357,6 @@
                     <input type="text" id="edit-team-role" class="form-control" readonly title="检测到的账号角色">
                 </div>
                 <div class="form-group">
-                    <label>设备代码身份验证</label>
-                    <input type="text" id="edit-team-device-auth" class="form-control" readonly title="检测到的验证开启状态">
-                </div>
-                <div class="form-group">
                     <label>最大成员数 <span class="required">*</span></label>
                     <input type="number" id="edit-team-max-members" name="maxMembers" class="form-control" min="1"
                         max="999" required>
@@ -1452,7 +1396,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/team-workbench.js?v=20261024-seat-lifecycle"></script>
+<script src="/static/js/team-workbench.js?v=20261024-remove-device-auth"></script>
 <script src="/static/js/team-seat-balances.js?v=20261024-seat-lifecycle"></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
@@ -1496,8 +1440,6 @@
                 refreshTeam(teamId, button);
             } else if (button.matches('.btn-edit-team')) {
                 editTeam(teamId);
-            } else if (button.matches('.btn-enable-device-auth')) {
-                enableDeviceAuth(teamId, button.dataset.enabled === 'true');
             } else if (button.matches('.btn-push-sub2api')) {
                 pushTeamToSub2api(teamId, button.getAttribute('data-email'));
             } else if (button.matches('.btn-export-team-json')) {
@@ -1515,42 +1457,12 @@
 
         // 绑定批量操作按钮（避免依赖内联 onclick，兼容更严格的 CSP）
         document.getElementById('btnBatchRefresh')?.addEventListener('click', handleBatchRefresh);
-        document.getElementById('btnBatchEnableDeviceAuth')?.addEventListener('click', handleBatchEnableDeviceAuth);
         document.getElementById('btnBatchPushSub2api')?.addEventListener('click', handleBatchPushSub2api);
         document.getElementById('btnBatchExportJson')?.addEventListener('click', handleBatchExportJson);
         document.getElementById('btnBatchDelete')?.addEventListener('click', handleBatchDelete);
         document.getElementById('btnBatchTransferPool')?.addEventListener('click', handleBatchTransferPool);
         document.getElementById('btnCheckPoolTeamsLive')?.addEventListener('click', handleCheckPoolTeamsLive);
     });
-
-    async function enableDeviceAuth(teamId, alreadyEnabled = false) {
-        if (alreadyEnabled) {
-            showToast('该 Team 已开启设备代码验证', 'info');
-            return;
-        }
-        if (!await confirmPageAction('确定要为该 Team 开启设备代码身份验证吗?')) {
-            return;
-        }
-
-        try {
-            showToast('正在开启...', 'info');
-            const response = await fetch(`/admin/teams/${teamId}/enable-device-auth`, {
-                method: 'POST'
-            });
-
-            const data = await response.json();
-
-            if (response.ok && data.success) {
-                showToast('开启成功', 'success');
-                await refreshAdminTeamTable();
-            } else {
-                showToast(data.error || '开启失败', 'error');
-            }
-        } catch (error) {
-            showToast('网络错误', 'error');
-        }
-    }
-
 
     async function pushTeamToSub2api(teamId, email = '') {
         const targetLabel = email ? `"${email}"` : `ID=${teamId}`;
@@ -1753,7 +1665,6 @@
                 document.getElementById('edit-team-redemption-type').value = team.warranty_seat_enabled ? 'warranty' : 'normal';
                 document.getElementById('edit-team-rotation-mode').value = team.rotation_mode || 'off';
                 document.getElementById('edit-team-role').value = team.account_role || '未知';
-                document.getElementById('edit-team-device-auth').value = team.device_code_auth_enabled ? '已开启' : '未开启';
                 resetEditTokenRenewUI();
                 showModal('editTeamModal');
             } else {
@@ -2196,7 +2107,7 @@
     }
 
     function setBatchActionButtonsDisabled(disabled) {
-        ['btnBatchRefresh', 'btnBatchEnableDeviceAuth', 'btnBatchPushSub2api', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
+        ['btnBatchRefresh', 'btnBatchPushSub2api', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
             const button = document.getElementById(id);
             if (button) button.disabled = disabled;
         });
@@ -2503,10 +2414,6 @@
 
     function handleBatchDelete() {
         handleBatchAction('/admin/teams/batch-delete', '批量删除');
-    }
-
-    function handleBatchEnableDeviceAuth() {
-        handleBatchAction('/admin/teams/batch-enable-device-auth', '批量开启验证');
     }
 
     function handleBatchPushSub2api() {

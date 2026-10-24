@@ -42,20 +42,26 @@ class MemberSeatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.team = SimpleNamespace(id=1, account_id="account-1", email="owner@example.com")
         self.db = AsyncMock()
         self.db.get.return_value = self.team
+        self.warranty_patch = patch("app.services.team.is_warranty_member", new=AsyncMock(return_value=False))
+        self.warranty_patch.start()
+        self.addCleanup(self.warranty_patch.stop)
+        usage_patch = patch("app.services.team.record_seat_switch", new=AsyncMock())
+        usage_patch.start()
+        self.addCleanup(usage_patch.stop)
         self.remote.update_member_seat_type.return_value = {"success": True, "data": {"success": True}}
 
     def member_response(self, seat="default", pending=None, user_id="member-1"):
-        return {"success": True, "members": [{"id": user_id, "seat_type": seat, "pending_seat_type": pending}]}
+        return {"success": True, "members": [{"id": user_id, "email": "member@example.com", "seat_type": seat, "pending_seat_type": pending}]}
 
     async def change(self, seat="premium", expected="default"):
         return await self.service.update_member_seat_type(1, "member-1", seat, expected, self.db)
 
     async def test_change_requires_remote_readback(self):
-        self.remote.get_members.side_effect = [self.member_response(), self.member_response("premium")]
-        result = await self.change()
+        self.remote.get_members.side_effect = [self.member_response("premium"), self.member_response()]
+        result = await self.change("default", "premium")
         self.assertEqual(result["status"], "applied")
         self.remote.update_member_seat_type.assert_awaited_once_with(
-            "test-token", "account-1", "member-1", "premium", self.db, identifier="owner@example.com",
+            "test-token", "account-1", "member-1", "default", self.db, identifier="owner@example.com",
         )
 
     async def test_downgrade_pending_is_not_counted_as_applied(self):
@@ -87,21 +93,31 @@ class MemberSeatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.remote.update_member_seat_type.assert_not_awaited()
 
     async def test_rejected_change_returns_error(self):
-        self.remote.get_members.return_value = self.member_response()
-        self.remote.update_member_seat_type.return_value = {"success": False, "error": "No available premium seats"}
-        result = await self.change()
+        self.remote.get_members.return_value = self.member_response("premium")
+        self.remote.update_member_seat_type.return_value = {"success": False, "error": "No available standard seats"}
+        result = await self.change("default", "premium")
         self.assertFalse(result["success"])
         self.assertIn("No available", result["error"])
 
     async def test_timeout_with_successful_readback_is_applied(self):
-        self.remote.get_members.side_effect = [self.member_response(), self.member_response("premium")]
+        self.remote.get_members.side_effect = [self.member_response("premium"), self.member_response()]
         self.remote.update_member_seat_type.return_value = {"success": False, "error": "timeout"}
-        self.assertEqual((await self.change())["status"], "applied")
+        self.assertEqual((await self.change("default", "premium"))["status"], "applied")
         self.remote.update_member_seat_type.assert_awaited_once()
 
     async def test_accepted_but_unconfirmed_is_not_applied(self):
-        self.remote.get_members.side_effect = [self.member_response(), {"success": False, "error": "timeout"}]
-        self.assertEqual((await self.change())["status"], "unconfirmed")
+        self.remote.get_members.side_effect = [self.member_response("premium"), {"success": False, "error": "timeout"}]
+        self.assertEqual((await self.change("default", "premium"))["status"], "unconfirmed")
+
+    async def test_occupied_standard_cannot_upgrade_even_with_premium_balance(self):
+        for seat in ("default", "standard"):
+            with self.subTest(seat=seat):
+                self.remote.get_members.return_value = self.member_response(seat)
+                result = await self.change()
+                self.assertEqual(result["error_code"], "standard_seat_locked")
+                self.remote.update_member_seat_type.assert_not_awaited()
+                self.service.get_team_seat_balance.assert_not_awaited()
+                self.service._reserve_member_seat.assert_not_awaited()
 
     async def test_bulk_invite_preserves_selected_seat_type(self):
         self.team.max_members = 5

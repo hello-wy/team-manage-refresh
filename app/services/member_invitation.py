@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.models import Team, TeamEmailMapping
+from app.services.warranty_member_protection import is_warranty_member
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
 
@@ -52,6 +53,8 @@ class MemberInvitationService:
             return self.teams._admin_error("team_not_found", "Team 不存在")
         if team.status == "expired":
             return self.teams._admin_error("team_expired", "Team 已过期,无法添加成员")
+        if target.seat_type == "premium" and await is_warranty_member(self.db, team.id, target.email):
+            return self.teams._admin_error("warranty_standard_only", "质保兑换成员仅可邀请标准席位")
         token = await self.teams.ensure_access_token(team, self.db)
         if not token:
             return self.teams._admin_error(

@@ -104,6 +104,36 @@ class AccountPoolTotpServiceTests(unittest.IsolatedAsyncioTestCase):
         self.session.post.assert_not_awaited()
         self.credentials.update_credentials.assert_not_awaited()
 
+    async def test_missing_import_name_does_not_block_rotation_and_reports_warning(self):
+        self.session.get.side_effect = [
+            response(info("old-id", True)), response(info()), response(info("new-id", True)),
+        ]
+        self.session.post.side_effect = [response({"success": True}),
+            response({"secret": NEW_SECRET, "session_id": "enroll-session"}),
+            response({"success": True})]
+        self.save_name.side_effect = ValueError("导入登录未返回账号姓名")
+        db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        warnings = []
+        with self.assertLogs("app.services.account_pool_totp", level="WARNING"):
+            secret = await self.service.rotate(db, 7, populate_name=True, profile_warnings=warnings)
+        self.assertEqual(secret, NEW_SECRET)
+        self.assertEqual(warnings, ["补姓名失败：导入登录未返回账号姓名"])
+        self.authorization.login_entry.assert_awaited_once_with(db, 7)
+        db.rollback.assert_awaited_once()
+        self.credentials.update_credentials.assert_awaited_once_with(db, 7, two_factor_secret=NEW_SECRET)
+
+    async def test_activation_timeout_retains_candidate_secret_for_recovery(self):
+        self.session.get.side_effect = [response(info("old-id", True)), response(info())]
+        self.session.post.side_effect = [response({"success": True}),
+            response({"secret": NEW_SECRET, "session_id": "enroll-session"}),
+            TimeoutError("activation timed out")]
+        with self.assertRaises(AccountPoolTotpError) as failure:
+            await self.service.rotate(Mock(), 7)
+        self.assertEqual(failure.exception.new_secret, NEW_SECRET)
+        self.assertIn("激活结果未确认", str(failure.exception))
+        self.credentials.update_credentials.assert_not_awaited()
+        self.remote.clear_session.assert_awaited_once_with("account-pool-login-7")
+
     async def test_exposes_new_secret_when_remote_activated_but_save_fails(self):
         self.session.get.side_effect = [
             response(info("old-id", True)), response(info()), response(info("new-id", True)),

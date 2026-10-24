@@ -159,9 +159,15 @@ class SeatBalancePersistenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def change(self, user):
         async with self.sessions() as db:
-            return await self.service().update_member_seat_type(1, user, "premium", "default", db)
+            return await self.service().update_member_seat_type(1, user, "default", "premium", db)
+
+    def prepare_downgrade(self):
+        self.remote.get_seat_capacity.return_value = {"success": True, "data": {"seat_capacity": capacity(1, 2, 1, 0)}}
+        for member in self.remote.get_members.return_value["members"]:
+            member["seat_type"] = "prolite"
 
     async def test_two_requests_cannot_consume_the_last_seat(self):
+        self.prepare_downgrade()
         results = await asyncio.gather(self.change("one"), self.change("two"))
         self.assertEqual(sum(r["success"] for r in results), 1)
         self.assertEqual(sum(r.get("error_code") == "seat_limit_exceeded" for r in results), 1)
@@ -170,11 +176,12 @@ class SeatBalancePersistenceTests(unittest.IsolatedAsyncioTestCase):
             # 新建服务实例仍从数据库读到预留，而不是依赖进程内计数。
             team = await db.get(Team, 1)
             balance = await self.service().get_team_seat_balance(team, db)
-            self.assertEqual(balance["balance"]["premium"]["remaining"], 0)
-            self.assertEqual(balance["balance"]["premium"]["reserved"], 1)
+            self.assertEqual(balance["balance"]["standard"]["remaining"], 0)
+            self.assertEqual(balance["balance"]["standard"]["reserved"], 1)
 
     async def test_zero_and_unknown_balance_never_reach_patch(self):
-        for rows, error in [(capacity(2, 0, 0, 0), "seat_limit_exceeded"), ([], "seat_balance_unavailable")]:
+        self.prepare_downgrade()
+        for rows, error in [(capacity(0, 2, 0, 0), "seat_limit_exceeded"), ([], "seat_balance_unavailable")]:
             with self.subTest(error=error):
                 self.remote.get_seat_capacity.return_value = {"success": True, "data": {"seat_capacity": rows}}
                 result = await self.change("one")
@@ -230,6 +237,7 @@ class SeatBalancePersistenceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(result["pending_since"])
 
     async def test_definite_rejection_releases_reservation(self):
+        self.prepare_downgrade()
         self.remote.update_member_seat_type.return_value = {"success": False, "status_code": 403, "error": "forbidden"}
         result = await self.change("one")
         self.assertFalse(result["success"])

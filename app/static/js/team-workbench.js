@@ -15,11 +15,8 @@
     }
 
     function menuItems(trigger) {
-        const deviceAuthEnabled = trigger.dataset.deviceAuth === 'true';
-        const items = [];
-        items.push(['device-auth', 'badge-check', deviceAuthEnabled ? '设备验证已开启' : '开启设备验证', deviceAuthEnabled]);
-        items.push(['push', 'send', '推送母号到 sub2api'], ['export', 'download', '导出 JSON'], null,
-            ['delete', 'trash-2', '删除 Team', false, 'is-danger']);
+        const items = [['push', 'send', '推送母号到 sub2api'], ['export', 'download', '导出 JSON'], null,
+            ['delete', 'trash-2', '删除 Team', false, 'is-danger']];
         return `<div class="team-row-menu-header" role="presentation"><span class="team-row-menu-title">Team 操作</span>
             <span class="team-row-menu-email">${escapeHtml(trigger.dataset.email)}</span></div>`
             + items.map(item => item ? `<button type="button" role="menuitem" data-action="${item[0]}"
@@ -59,9 +56,8 @@
         const trigger = activeTrigger;
         closeMenu(true);
         if (!trigger) return;
-        const {id, email, deviceAuth} = trigger.dataset;
-        if (action === 'device-auth') enableDeviceAuth(id, deviceAuth === 'true');
-        else if (action === 'push') pushTeamToSub2api(id, email);
+        const {id, email} = trigger.dataset;
+        if (action === 'push') pushTeamToSub2api(id, email);
         else if (action === 'export') exportTeamJson(id, email);
         else if (action === 'delete') deleteTeam(Number(id), email);
     }

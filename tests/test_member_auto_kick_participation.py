@@ -50,7 +50,7 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
     async def fetch(self, **fields):
         self.remote.get_members.return_value = {"success": True, "total": 1, "members": [{
             "id": USER_ID, "email": EMAIL, "role": "standard-user", "name": "成员甲",
-            "seat_type": "default", "created_time": JOINED_AT, **fields,
+            "seat_type": "premium", "created_time": JOINED_AT, **fields,
         }]}
         result = await self.teams.get_team_members(TEAM_ID, self.db)
         self.assertTrue(result["success"], result.get("error"))
@@ -70,8 +70,8 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
     def deadline(self, hours):
         return datetime.fromisoformat(JOINED_AT) + timedelta(hours=hours)
 
-    async def test_every_seat_participates_by_default_from_join_time(self):
-        for seat in ("default", "standard", "premium", "prolite"):
+    async def test_premium_seats_participate_by_default_from_join_time(self):
+        for seat in ("premium", "prolite"):
             with self.subTest(seat=seat):
                 # 每种初始席位独立验证；同一成员标准升级高级另有确认起算测试。
                 for mapping in (await self.db.scalars(select(TeamEmailMapping))).all():
@@ -92,7 +92,9 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
         result = await self.set_hours(48)
         self.assertTrue(result["success"])
         self.assertEqual((await self.mapping()).auto_kick_at, self.deadline(48))
-        await self.participate(False)
+        result = await self.participate(False)
+        self.assertEqual(result["seat_type"], "premium")
+        self.assertEqual(result["joined_at"], JOINED_AT)
         await self.set_hours(72)
         self.assertIsNone((await self.mapping()).auto_kick_at)
         member = await self.fetch()
@@ -206,7 +208,7 @@ class MemberAutoKickParticipationTests(unittest.IsolatedAsyncioTestCase):
         mapping.auto_kick_retry_at = get_now() + timedelta(minutes=5)
         await self.db.commit()
         await attach_rotation_status(self.db, [row])
-        self.assertEqual((row["rotation"]["label"], row["rotation"]["kind"]), ("需关注", "blocked"))
+        self.assertEqual((row["rotation"]["label"], row["rotation"]["kind"]), ("", "blocked"))
         self.assertEqual(row["rotation"]["detail"], "下线失败")
         self.assertIn("管理员凭据失效", row["rotation"]["reason"])
         team.rotation_mode = "off"
