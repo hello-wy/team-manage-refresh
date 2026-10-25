@@ -10,8 +10,8 @@ function importForm(buttons) {
         accessToken: field('stale-at'), idToken: field('stale-id'),
         refreshToken: field('stale-rt'), sessionToken: field('stale-session'),
         clientId: field('app_test'), email: field('stale@example.com'),
-        accountId: field('stale-account'), loginEmail: field('owner@example.com'),
-        loginPassword: field('owner-password'), loginTotp: field('JBSWY3DPEHPK3PXP'),
+        accountId: field('stale-account'),
+        loginCredentials: field('owner@example.com----owner-password----JBSWY3DPEHPK3PXP'),
         loginAccountId: field('owner-team'), dataset: {}, resetCount: 0,
         querySelectorAll: () => buttons,
         reset() { this.resetCount += 1; },
@@ -40,7 +40,7 @@ function harness() {
     const quick = importSection(quickButton, [callback]);
     const manual = importSection(manualButton, [form.accessToken, form.idToken, form.refreshToken,
         form.sessionToken, form.clientId, form.email, form.accountId]);
-    const credentials = importSection(credentialButton, [form.loginEmail, form.loginPassword, form.loginTotp, form.loginAccountId]);
+    const credentials = importSection(credentialButton, [form.loginCredentials, form.loginAccountId]);
     credentials.style.display = 'none';
     const elements = {singleImportForm: form, oauthCallbackInput: callback,
         oauthQuickSection: quick, manualTokenSection: manual, teamCredentialLoginSection: credentials,

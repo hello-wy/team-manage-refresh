@@ -12,12 +12,31 @@ function buildManualTeamImportPayload(form) {
     };
 }
 
+const TEAM_CREDENTIAL_SEPARATOR = '----';
+
+function parseTeamImportCredentials(value) {
+    const text = value.trim();
+    const firstSeparator = text.indexOf(TEAM_CREDENTIAL_SEPARATOR);
+    const lastSeparator = text.lastIndexOf(TEAM_CREDENTIAL_SEPARATOR);
+    if (firstSeparator < 0 || firstSeparator === lastSeparator || /[\r\n]/.test(text)) {
+        throw new Error('请按 邮箱----密码----2FA 密钥 格式粘贴一个账号');
+    }
+    const email = text.slice(0, firstSeparator).trim();
+    const password = text.slice(firstSeparator + TEAM_CREDENTIAL_SEPARATOR.length, lastSeparator);
+    const twoFactorSecret = text.slice(lastSeparator + TEAM_CREDENTIAL_SEPARATOR.length).trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error('账号邮箱格式不正确');
+    }
+    if (!password.trim() || !twoFactorSecret) {
+        throw new Error('账号密码和 2FA 密钥不能为空');
+    }
+    return {email, password, two_factor_secret: twoFactorSecret};
+}
+
 function buildCredentialTeamImportPayload(form) {
     return {
         import_type: 'credentials',
-        email: form.loginEmail.value.trim(),
-        password: form.loginPassword.value,
-        two_factor_secret: form.loginTotp.value.trim(),
+        ...parseTeamImportCredentials(form.loginCredentials.value),
         account_id: form.loginAccountId.value.trim() || null,
         pool_type: getCurrentPoolType()
     };

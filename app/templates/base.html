@@ -704,19 +704,10 @@
 
                         <div id="teamCredentialLoginSection" class="import-mode-card" style="display: none;">
                             <div class="form-group">
-                                <label for="teamImportLoginEmail">账号邮箱 <span class="required">*</span></label>
-                                <input type="email" id="teamImportLoginEmail" name="loginEmail" class="form-control"
-                                    placeholder="owner@example.com" autocomplete="username" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="teamImportLoginPassword">账号密码 <span class="required">*</span></label>
-                                <input type="password" id="teamImportLoginPassword" name="loginPassword" class="form-control"
-                                    placeholder="账号密码" autocomplete="current-password" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="teamImportLoginTotp">2FA 密钥 <span class="required">*</span></label>
-                                <input type="text" id="teamImportLoginTotp" name="loginTotp" class="form-control"
-                                    placeholder="Base32 密钥或 otpauth:// 链接" autocomplete="off" required>
+                                <label for="teamImportLoginCredentials">账号登录信息 <span class="required">*</span></label>
+                                <textarea id="teamImportLoginCredentials" name="loginCredentials" class="form-control" rows="3"
+                                    placeholder="邮箱----密码----2FA 密钥" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
+                                <small class="form-text">粘贴一个账号，使用 ---- 分隔，登录时自动提取邮箱、密码和 2FA。2FA 支持 Base32 密钥或 otpauth:// 链接。</small>
                                 <small class="form-text">凭据仅用于本次登录，不会保存到账号号池。</small>
                             </div>
                             <div class="form-group">
@@ -900,7 +891,7 @@ eyJ..."></textarea>
     <script src="/static/js/member-seats.js?v=20261024-rotation-count"></script>
     <script src="/static/js/member-list.js?v=20261024-seat-rules"></script>
     <script src="/static/js/main.js?v=20261025-code-capacity"></script>
-    <script src="/static/js/team-import.js?v=20261024-team-import-login"></script>
+    <script src="/static/js/team-import.js?v=20261025-team-import-text"></script>
     <script>window.initLucideIcons();</script>
     {% block extra_js %}{% endblock %}
 </body>

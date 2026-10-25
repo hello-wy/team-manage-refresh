@@ -161,6 +161,62 @@ test('credential import submits email, password and 2FA login payload', async ()
     assert.equal(h.credentialButton.textContent, '登录并导入 Team');
 });
 
+test('credential text preserves password whitespace, symbols and embedded separators', async () => {
+    const h = harness();
+    h.context.setSingleImportMode('credentials');
+    h.form.loginCredentials.value = '  Owner@Example.com ---- p#A----B$! ---- JBSWY3DPEHPK3PXP \n';
+    h.form.loginAccountId.value = '';
+    await h.submit();
+    assert.equal(h.calls[0].body.email, 'Owner@Example.com');
+    assert.equal(h.calls[0].body.password, ' p#A----B$! ');
+    assert.equal(h.calls[0].body.two_factor_secret, 'JBSWY3DPEHPK3PXP');
+    assert.equal(h.calls[0].body.account_id, null);
+});
+
+test('credential text accepts an otpauth link without changing its contents', async () => {
+    const h = harness();
+    h.context.setSingleImportMode('credentials');
+    const secret = 'otpauth://totp/Example:owner?secret=JBSWY3DPEHPK3PXP&issuer=Example';
+    h.form.loginCredentials.value = `owner@example.com----password----${secret}`;
+    await h.submit();
+    assert.equal(h.calls[0].body.two_factor_secret, secret);
+});
+
+const invalidCredentials = [
+    ['', '请按 邮箱----密码----2FA 密钥 格式粘贴一个账号'],
+    ['owner@example.com----password', '请按 邮箱----密码----2FA 密钥 格式粘贴一个账号'],
+    ['owner@example.com----password----SECRET\nother@example.com----password----SECRET',
+        '请按 邮箱----密码----2FA 密钥 格式粘贴一个账号'],
+    ['invalid-email----password----SECRET', '账号邮箱格式不正确'],
+    ['owner@example.com---- ----SECRET', '账号密码和 2FA 密钥不能为空'],
+    ['owner@example.com----password----', '账号密码和 2FA 密钥不能为空'],
+];
+
+for (const [value, message] of invalidCredentials) {
+    test('invalid credential text prevents login: ' + message + ' (' + value.length + ')', async () => {
+        const h = harness();
+        h.context.setSingleImportMode('credentials');
+        h.form.loginCredentials.value = value;
+        await h.submit();
+        assert.equal(h.calls.length, 0);
+        assert.equal(h.form.resetCount, 0);
+        assert.deepEqual(h.toasts, [[message, 'error']]);
+        assert.equal(h.credentialButton.disabled, false);
+    });
+}
+
+test('mode switching enables only the active credential text and account ID', () => {
+    const h = harness();
+    assert.equal(h.form.loginCredentials.disabled, true);
+    h.context.setSingleImportMode('credentials');
+    assert.equal(h.form.loginCredentials.disabled, false);
+    assert.equal(h.form.loginAccountId.disabled, false);
+    assert.equal(h.form.accessToken.disabled, true);
+    h.context.setSingleImportMode('manual');
+    assert.equal(h.form.loginCredentials.disabled, true);
+    assert.equal(h.form.loginAccountId.disabled, true);
+});
+
 test('quick import template exposes only one combined import button', () => {
     const html = readFileSync(join(__dirname, '../app/templates/base.html'), 'utf8');
     const section = html.slice(html.indexOf('id="oauthQuickSection"'), html.indexOf('id="manualTokenSection"'));
