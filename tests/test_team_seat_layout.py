@@ -1,6 +1,7 @@
 import unittest
 import json
 from pathlib import Path
+from datetime import datetime
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -27,6 +28,28 @@ class TeamSeatLayoutTests(unittest.TestCase):
         self.assertIn('id="memberPanelSeats"', html)
         self.assertIn('id="memberSeatsBoard"', html)
         self.assertIn('class="btn btn-sm btn-secondary btn-team-more"', rows)
+
+    def test_unpurchased_premium_seats_keep_an_empty_zero_of_zero_progress_bar(self):
+        templates = Environment(
+            loader=FileSystemLoader(Path(__file__).resolve().parents[1] / "app/templates"),
+            autoescape=select_autoescape(),
+        )
+        templates.filters.update(format_datetime=lambda value: str(value or "-"), escape_js=json.dumps)
+        html = templates.get_template("admin/index.html").render(
+            user={"username": "test"}, admin_profile={"avatar": "", "nickname": "管理员"},
+            active_page="dashboard", stats={"total_teams": 1, "available_teams": 1},
+            teams=[{"id": 1, "email": "owner@example.com", "team_name": "Example",
+                    "joined_members": 1, "total_seats": 1,
+                    "seat_snapshot": {"standard_paid": 1, "standard_remaining": 0,
+                                      "premium_paid": 0, "premium_remaining": 0,
+                                      "observed_at": datetime.now()},
+                    "status": "active", "pool_type": "normal"}],
+            pagination={"current_page": 1, "per_page": 20, "total_pages": 1, "total": 1},
+        )
+        premium_row = html.split('title="高级席位：共 0 席，可用 0 席"', 1)[1].split('</div>', 1)[0]
+        self.assertIn('<progress class="team-seat-progress" max="1" value="0"', premium_row)
+        self.assertIn('可用 0/0', premium_row)
+        self.assertNotIn('未购买', premium_row)
 
     def test_all_seats_include_members_invites_holds_and_empty_slots(self):
         layout = build_seat_layout([

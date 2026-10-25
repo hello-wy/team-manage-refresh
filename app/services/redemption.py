@@ -8,7 +8,7 @@ import secrets
 import string
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-from sqlalchemy import select, update, delete, and_, or_, case, func
+from sqlalchemy import select, update, delete, and_, or_, case, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -87,6 +87,96 @@ class RedemptionService:
         base_days = int(redemption_code.warranty_days or 30)
         extension_days = max(int(getattr(redemption_code, "extension_days", 0) or 0), 0)
         return base_days + extension_days
+
+    async def check_standard_seat_capacity(
+        self,
+        db_session: AsyncSession,
+        *,
+        count: int,
+        has_warranty: bool,
+        team_service,
+        lock_for_generation: bool = False,
+    ) -> Dict[str, Any]:
+        """Check that new normal-pool codes are backed by standard seats."""
+        now = get_now()
+        team_stmt = select(Team).where(
+            Team.pool_type == "normal",
+            Team.status == "active",
+            Team.current_members < Team.max_members,
+            Team.warranty_seat_enabled.is_(bool(has_warranty)),
+            or_(Team.expires_at.is_(None), Team.expires_at >= now),
+        ).order_by(Team.id.asc())
+        teams_result = await db_session.execute(team_stmt)
+        teams = teams_result.scalars().all()
+        team_ids = [team.id for team in teams]
+        available = 0
+        workspaces = []
+        for team in teams:
+            balance = await team_service.get_team_seat_balance(team, db_session)
+            standard = (balance.get("balance") or {}).get("standard", {})
+            if not balance.get("success") or not standard.get("known"):
+                return {
+                    "success": False,
+                    "capacity_known": False,
+                    "available": 0,
+                    "workspaces": [],
+                    "error": f"Team {team.id} 的标准席位余额未知，暂不能生成兑换码",
+                }
+            remaining = max(int(standard.get("remaining") or 0), 0)
+            available += remaining
+            workspaces.append({
+                "team_id": team.id,
+                "workspace_id": team.account_id,
+                "workspace_name": team.team_name or team.email,
+                "standard_remaining": remaining,
+            })
+
+        if lock_for_generation:
+            # Live reads can refresh tokens and commit internally. Acquire the
+            # generation lock afterwards, and hold it through counting and insert.
+            # Never hold SQLite's writer lock while waiting for a seat-operation lock.
+            await self._begin_code_generation_transaction(db_session)
+            await db_session.execute(
+                select(Team.id).where(Team.id.in_(team_ids))
+                .order_by(Team.id.asc()).with_for_update()
+            )
+        reserved_result = await db_session.execute(
+            select(func.count(RedemptionCode.id)).where(
+                RedemptionCode.pool_type == "normal",
+                RedemptionCode.has_warranty.is_(bool(has_warranty)),
+                RedemptionCode.reusable_by_seat.is_(False),
+                RedemptionCode.status == "unused",
+                RedemptionCode.used_at.is_(None),
+                or_(RedemptionCode.expires_at.is_(None), RedemptionCode.expires_at >= now),
+            )
+        )
+        reserved = int(reserved_result.scalar() or 0)
+        reserved_left = reserved
+        for workspace in workspaces:
+            raw_remaining = workspace["standard_remaining"]
+            applied = min(raw_remaining, reserved_left)
+            workspace["standard_remaining"] = raw_remaining - applied
+            reserved_left -= applied
+        workspaces = [workspace for workspace in workspaces if workspace["standard_remaining"]]
+        remaining = max(available - reserved, 0)
+        return {
+            "success": remaining >= count,
+            "capacity_known": True,
+            "available": remaining,
+            "reserved_codes": reserved,
+            "workspaces": workspaces,
+            "error": None if remaining >= count else f"可用标准席位不足：剩余 {remaining}，本次需要 {count}",
+        }
+
+    async def _begin_code_generation_transaction(self, db_session: AsyncSession) -> None:
+        """Serialize capacity checks with code inserts on SQLite deployments."""
+        bind = db_session.get_bind()
+        if bind.dialect.name == "sqlite":
+            # Admin authentication may already have opened a read-only transaction.
+            # Code generation owns its commit, so restart it with SQLite's write lock.
+            if db_session.in_transaction():
+                await db_session.rollback()
+            await db_session.execute(text("BEGIN IMMEDIATE"))
 
     @staticmethod
     def _sync_code_status_fields(redemption_code: RedemptionCode) -> bool:
@@ -661,6 +751,17 @@ class RedemptionService:
             结果字典,包含 success, code, message, error
         """
         try:
+            if pool_type == "normal" and not reusable_by_seat:
+                from app.services.team import TeamService
+                capacity = await self.check_standard_seat_capacity(
+                    db_session, count=1, has_warranty=has_warranty,
+                    team_service=TeamService(), lock_for_generation=True,
+                )
+                if not capacity["success"]:
+                    await db_session.rollback()
+                    return {"success": False, "code": None, "message": None,
+                            "error": capacity["error"]}
+
             # 1. 生成或使用自定义兑换码
             if not code:
                 # 生成随机码,确保唯一性
@@ -676,6 +777,7 @@ class RedemptionService:
                     if not existing:
                         break
                 else:
+                    await db_session.rollback()
                     return {
                         "success": False,
                         "code": None,
@@ -689,6 +791,7 @@ class RedemptionService:
                 existing = result.scalar_one_or_none()
 
                 if existing:
+                    await db_session.rollback()
                     return {
                         "success": False,
                         "code": None,
@@ -720,6 +823,7 @@ class RedemptionService:
             return {
                 "success": True,
                 "code": code,
+                "capacity": capacity if pool_type == "normal" and not reusable_by_seat else None,
                 "message": f"兑换码生成成功: {code}",
                 "error": None
             }
@@ -765,6 +869,17 @@ class RedemptionService:
                     "message": None,
                     "error": "生成数量必须在 1-1000 之间"
                 }
+
+            if pool_type == "normal" and not reusable_by_seat:
+                from app.services.team import TeamService
+                capacity = await self.check_standard_seat_capacity(
+                    db_session, count=count, has_warranty=has_warranty,
+                    team_service=TeamService(), lock_for_generation=True,
+                )
+                if not capacity["success"]:
+                    await db_session.rollback()
+                    return {"success": False, "codes": [], "total": 0,
+                            "message": None, "error": capacity["error"]}
 
             # 计算过期时间
             expires_at = None
@@ -813,6 +928,7 @@ class RedemptionService:
                 "success": True,
                 "codes": codes,
                 "total": len(codes),
+                "capacity": capacity if pool_type == "normal" and not reusable_by_seat else None,
                 "message": f"成功生成 {len(codes)} 个兑换码",
                 "error": None
             }
