@@ -804,6 +804,10 @@ eyJ..."></textarea>
                     <button class="modal-tab-btn"
                         onclick="switchModalTab('generateCodeModal', 'batchGenerate')">批量生成</button>
                 </div>
+                <div id="codeGenerationCapacityPreview" class="alert alert-info" role="status" aria-live="polite"
+                    style="margin: 0 1rem 1rem;">
+                    正在读取标准席位余额...
+                </div>
 
                 <div id="singleGenerate" class="card-body">
                     <form onsubmit="generateSingle(event)">
@@ -820,7 +824,7 @@ eyJ..."></textarea>
                         <div class="form-group">
                             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                                 <input type="checkbox" name="hasWarranty" value="true" style="width: auto; margin: 0;"
-                                    onchange="toggleWarrantyDays(this, 'single-warranty-days-group')">
+                                    onchange="toggleWarrantyDays(this, 'single-warranty-days-group'); refreshCodeGenerationCapacityPreview()">
                                 <span>质保兑换码 (可重复使用)</span>
                             </label>
                             <small class="form-text">如果是质保兑换码，在质保期内，如果加入的 Team 被封号，可以重复使用</small>
@@ -846,7 +850,7 @@ eyJ..."></textarea>
                         <div class="form-group">
                             <label>生成数量 *</label>
                             <input type="number" name="count" class="form-control" placeholder="请输入生成数量" min="1"
-                                max="1000" required>
+                                max="1000" required oninput="refreshCodeGenerationCapacityPreview(false)">
                         </div>
                         <div class="form-group">
                             <label>有效期 (天数, 可选)</label>
@@ -856,7 +860,7 @@ eyJ..."></textarea>
                         <div class="form-group">
                             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                                 <input type="checkbox" name="hasWarranty" value="true" style="width: auto; margin: 0;"
-                                    onchange="toggleWarrantyDays(this, 'batch-warranty-days-group')">
+                                    onchange="toggleWarrantyDays(this, 'batch-warranty-days-group'); refreshCodeGenerationCapacityPreview()">
                                 <span>质保兑换码 (可重复使用)</span>
                             </label>
                             <small class="form-text">如果是质保兑换码，在质保期内，如果加入的 Team 被封号，可以重复使用</small>
@@ -895,7 +899,7 @@ eyJ..."></textarea>
     <script src="/static/js/invited-member-credentials.js?v=20261022"></script>
     <script src="/static/js/member-seats.js?v=20261024-rotation-count"></script>
     <script src="/static/js/member-list.js?v=20261024-seat-rules"></script>
-    <script src="/static/js/main.js?v=20261024-team-import-login"></script>
+    <script src="/static/js/main.js?v=20261025-code-capacity"></script>
     <script src="/static/js/team-import.js?v=20261024-team-import-login"></script>
     <script>window.initLucideIcons();</script>
     {% block extra_js %}{% endblock %}

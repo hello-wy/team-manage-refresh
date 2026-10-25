@@ -1079,12 +1079,8 @@
                             {% for label, paid, remaining in [('标准', seats.standard_paid, seats.standard_remaining), ('高级', seats.premium_paid, seats.premium_remaining)] %}
                             <div class="team-seat-row{% if paid and not remaining %} is-full{% endif %}" title="{{ label }}席位：共 {{ paid }} 席，可用 {{ remaining }} 席">
                                 <span class="team-seat-kind">{{ label }}</span>
-                                {% if paid %}
-                                <progress class="team-seat-progress" max="{{ paid }}" value="{{ remaining }}" aria-label="{{ label }}席位可用"></progress>
+                                <progress class="team-seat-progress" max="{{ paid if paid else 1 }}" value="{{ remaining }}" aria-label="{{ label }}席位可用"></progress>
                                 <span class="team-seat-left">可用 {{ remaining }}/{{ paid }}</span>
-                                {% else %}
-                                <span class="team-seat-left is-empty">未购买</span>
-                                {% endif %}
                             </div>
                             {% endfor %}
                         </div>
