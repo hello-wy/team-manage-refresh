@@ -115,6 +115,26 @@ class TeamRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.login.login.assert_not_awaited()
         self.assert_old_credentials()
 
+    async def test_export_recovers_missing_refresh_token_even_when_access_is_healthy(self):
+        await self.set_status("active")
+        self.team.refresh_token_encrypted = None
+        await self.db.commit()
+        result = await self.service.refresh(1, self.db, require_refresh_token=True)
+        self.assertTrue(result["success"])
+        self.assertTrue(result["relogin_attempted"])
+        self.assertEqual(cipher.decrypt_token(self.team.refresh_token_encrypted), "new-refresh")
+        self.login.login.assert_awaited_once()
+
+    async def test_export_reports_missing_password_when_refresh_token_is_missing(self):
+        await self.set_status("active")
+        self.team.refresh_token_encrypted = None
+        self.entry.password_encrypted = None
+        await self.db.commit()
+        result = await self.service.refresh(1, self.db, require_refresh_token=True)
+        self.assertFalse(result["success"])
+        self.assertIn("密码", result["error"])
+        self.login.login.assert_not_awaited()
+
     async def test_refresh_discovers_invalid_credentials_and_then_relogs_once(self):
         await self.set_status("active")
         self.teams.sync_team_info.side_effect = [

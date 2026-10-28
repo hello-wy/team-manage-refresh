@@ -34,7 +34,7 @@ class TeamRefreshService:
     def __init__(self, dependencies: TeamRefreshDependencies):
         self._deps = dependencies
 
-    async def refresh(self, team_id, db, *, force_refresh=False):
+    async def refresh(self, team_id, db, *, force_refresh=False, require_refresh_token=False):
         if force_refresh:
             return await self._deps.teams.sync_team_info(team_id, db, force_refresh=True)
         team = await db.get(Team, team_id)
@@ -42,7 +42,8 @@ class TeamRefreshService:
             return await self._deps.teams.sync_team_info(team_id, db)
         async with seat_account_lock(f"team-refresh-login:{team.email.strip().lower()}"):
             await db.refresh(team)
-            if team.status in ABNORMAL_STATUSES:
+            missing_refresh = require_refresh_token and not team.refresh_token_encrypted
+            if team.status in ABNORMAL_STATUSES or missing_refresh:
                 return await self._recover(team, db)
             result = await self._deps.teams.sync_team_info(team_id, db)
             await db.refresh(team)

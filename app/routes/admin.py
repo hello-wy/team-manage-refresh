@@ -70,6 +70,8 @@ from app.services.account_pool_rotation import attach_rotation_status
 from app.services.account_pool_quota import refresh_pool_quotas
 from app.services.rotation_read_model import snapshot_usage
 from app.services.sub2api_export_records import sub2api_export_record_service
+from app.services.team_refresh import TeamRefreshDependencies, TeamRefreshService
+from app.services.team_sub2api_export import TeamSub2apiExportDependencies, TeamSub2apiExportService
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
 
@@ -94,6 +96,14 @@ automatic_login_service = OpenAIAutomaticLoginService(
 member_authorization_service = MemberAuthorizationService(
     team_service, automatic_login_service, account_pool_credential_service
 )
+team_sub2api_export_service = TeamSub2apiExportService(TeamSub2apiExportDependencies(
+    recovery=TeamRefreshService(TeamRefreshDependencies(
+        teams=team_service, credentials=account_pool_credential_service,
+        login=automatic_login_service, cipher=encryption_service, jwt=team_service.jwt_parser,
+    )),
+    authorization=member_authorization_service, sub2api=sub2api_service,
+    records=sub2api_export_record_service,
+))
 account_pool_authorization_service = AccountPoolAuthorizationService(
     account_pool_credential_service,
     automatic_login_service,
@@ -2068,27 +2078,7 @@ async def push_team_to_cliproxyapi(
 
 
 async def _push_team_owner_to_sub2api(team_id: int, db: AsyncSession):
-    team = await db.get(Team, team_id)
-    if team is None:
-        raise MemberAuthorizationError("Team 不存在")
-    if not team.refresh_token_encrypted:
-        raise MemberAuthorizationError("母号缺少 Refresh Token，请先更新 Team 凭证")
-    email = team.email.strip().lower()
-    payload = await member_authorization_service.export(team_id, email, db)
-    imported = await sub2api_service.import_member(payload, db)
-    await sub2api_export_record_service.record_success(
-        db,
-        email=email,
-        team_space_id=str(getattr(team, "account_id", "") or ""),
-        team_id=team_id,
-        team_name=getattr(team, "team_name", None),
-        team_email=getattr(team, "email", None),
-        sub2api_account_id=imported.get("account_id"),
-    )
-    await member_authorization_service.mark_sub2api_exported(
-        team_id, email, imported["account_id"], db
-    )
-    return {"team_id": team_id, "email": email, **imported}
+    return await team_sub2api_export_service.push(team_id, db)
 
 
 @router.post("/teams/{team_id}/push-sub2api")

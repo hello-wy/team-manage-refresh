@@ -1,5 +1,6 @@
 """Push an authorized member's sub2api account to the configured instance."""
 import json
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -8,6 +9,8 @@ import httpx
 
 from app.services.encryption import encryption_service
 from app.services.settings import settings_service
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://solidapi.top"
 REQUEST_TIMEOUT_SECONDS = 20.0
@@ -151,22 +154,37 @@ class Sub2apiService:
             raise Sub2apiError("sub2api 分组响应格式错误")
         return [group for group in groups if isinstance(group, dict)
                 and group.get("platform") == "openai"
+                and group.get("status") in (None, "active")
                 and isinstance(group.get("id"), int) and group["id"] > 0]
 
     async def _selected_group_ids(self, db, groups):
         available_ids = {group["id"] for group in groups}
-        mode = await settings_service.get_setting(db, "sub2api_group_mode", GROUP_MODE_ALL)
+        mode = await settings_service.get_setting(
+            db, "sub2api_group_mode", GROUP_MODE_ALL, use_cache=False
+        )
         if mode != GROUP_MODE_SELECTED:
+            if not available_ids:
+                raise Sub2apiError("sub2api 没有可用的 OpenAI 分组，未创建账户")
             return sorted(available_ids)
-        raw_ids = await settings_service.get_setting(db, "sub2api_group_ids", "[]")
+        raw_ids = await settings_service.get_setting(
+            db, "sub2api_group_ids", "[]", use_cache=False
+        )
         try:
             selected_ids = {int(value) for value in json.loads(raw_ids)}
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise Sub2apiError("sub2api 分组配置损坏，请在系统中心重新保存") from exc
         missing_ids = selected_ids - available_ids
         if missing_ids:
-            missing = ", ".join(str(value) for value in sorted(missing_ids))
-            raise Sub2apiError(f"已配置的 sub2api 分组不存在或已停用：{missing}，请重新获取并保存分组")
+            selected_ids = selected_ids & available_ids
+            saved = await settings_service.update_setting(
+                db, "sub2api_group_ids", json.dumps(sorted(selected_ids))
+            )
+            if not saved:
+                raise Sub2apiError("清理失效的 sub2api 分组配置失败，未创建账户")
+            logger.warning("已自动移除失效的 Sub2API 分组 %s，保留 %s",
+                           sorted(missing_ids), sorted(selected_ids))
+        if not selected_ids and missing_ids:
+            raise Sub2apiError("所选 sub2api 分组均已失效并自动移除，请重新选择可用分组")
         if not selected_ids:
             raise Sub2apiError("尚未选择要导出的 sub2api 分组")
         return sorted(selected_ids)
@@ -174,8 +192,6 @@ class Sub2apiService:
     async def import_member(self, payload, db):
         config = await self._config(db)
         groups = await self.list_openai_groups(db, config.base_url, config.api_key)
-        if not groups:
-            raise Sub2apiError("sub2api 没有可用的 OpenAI 分组，未创建账户")
         group_ids = await self._selected_group_ids(db, groups)
         configured_payload = await apply_export_settings(payload, db)
         account = {

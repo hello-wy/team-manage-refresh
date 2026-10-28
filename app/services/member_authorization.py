@@ -10,6 +10,9 @@ from app.models import MemberAuthorization, Team
 from app.services.account_pool_credentials import AccountPoolCredentialError
 from app.services.encryption import encryption_service
 from app.services.member_authorization_payload import build_member_export_payload
+from app.services.member_authorization_state import (
+    MemberAuthorizationError, authorization_state, decode_identity,
+)
 from app.services.openai_automatic_login import (
     AutomaticLoginRequest,
     OpenAIAutomaticLoginError,
@@ -21,10 +24,6 @@ from app.utils.time_utils import get_now
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 REDIRECT_URI = "http://localhost:1455/auth/callback"
-
-
-class MemberAuthorizationError(ValueError):
-    pass
 
 
 class MemberAuthorizationService:
@@ -102,18 +101,7 @@ class MemberAuthorizationService:
             return {"authorize_url": draft["authorize_url"], "email": email, "expires_in": 900}
 
     def _identity(self, credentials, email):
-        access = credentials.get("access_token") or ""
-        claims = self.jwt.decode_token(access) if access else None
-        identity = self.jwt.decode_token(credentials["id_token"]) if credentials.get("id_token") else {}
-        if not claims or self.jwt.is_token_expired(access):
-            raise MemberAuthorizationError("授权未返回有效的 Access Token，请重新授权")
-        token_emails = {
-            str(p.get("email") or (p.get("https://api.openai.com/profile") or {}).get("email") or "").strip().lower()
-            for p in (claims, identity or {})
-        } - {""}
-        if token_emails != {email}:
-            raise MemberAuthorizationError("授权登录邮箱与所选成员不一致，请使用该成员邮箱重新授权")
-        return claims, identity or {}
+        return decode_identity(credentials, email, jwt=self.jwt)
 
     async def _export_payload(self, team, email, credentials, db):
         claims, identity = self._identity(credentials, email)
@@ -251,17 +239,7 @@ class MemberAuthorizationService:
     async def _check(self, team, email, db, allow_invited=False):
         record = await self._record(team, email, db)
         data = {"email": email, "account_id": team.account_id,
-                "authorized": bool(record and record.credentials_encrypted),
-                "json_saved": bool(record and record.export_json_encrypted),
-                "json_updated_at": record.export_json_updated_at.isoformat() if record and record.export_json_updated_at else None,
-                "sub2api_exported": bool(record and record.sub2api_exported_at),
-                "sub2api_exported_at": record.sub2api_exported_at.isoformat() if record and record.sub2api_exported_at else None,
-                "sub2api_account_id": record.sub2api_account_id if record else None,
-                "workspace_verified": bool(
-                    record and record.workspace_id == str(team.account_id)
-                    and record.workspace_status == "workspace_ok"
-                ),
-                "authorization_pending": bool(record and record.oauth_state and record.oauth_expires_at and record.oauth_expires_at > get_now()),
+                **authorization_state(record, team.account_id),
                 "membership": "unknown", "can_export": False}
         credentials = None
         try:
@@ -270,6 +248,8 @@ class MemberAuthorizationService:
             if not snapshot.get("success"):
                 message = snapshot.get("error") if snapshot.get("owner_authorization_error") else None
                 raise MemberAuthorizationError(message or "成员列表读取失败，暂时无法确认入组结果")
+            record = await self._record(team, email, db)
+            data.update(authorization_state(record, team.account_id))
             data["members_snapshot"] = snapshot
             member = next((m for m in snapshot["members"] if m["email"] == email), None)
             if member:
