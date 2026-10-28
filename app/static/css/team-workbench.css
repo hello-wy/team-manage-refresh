@@ -1,4 +1,7 @@
 .team-row-actions { gap: .35rem; }
+.team-renewal-toggle { padding: .25rem 0; border: 0; background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; }
+.team-renewal-toggle:hover { color: var(--primary); text-decoration: underline; text-underline-offset: .2em; }
+.team-renewal-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 3px; }
 .team-seat-retry { padding: 0; border: 0 !important; box-shadow: none !important; background: transparent; color: var(--text-muted); font: inherit; font-size: .72rem; text-align: left; cursor: pointer; }
 .team-seat-retry:hover { color: var(--primary); text-decoration: underline; }
 .team-row-actions .btn-team-more { gap: .3rem; padding: .4rem .6rem; color: var(--text-muted); background: transparent; border-color: var(--border-base); }

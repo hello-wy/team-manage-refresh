@@ -18,7 +18,7 @@ from app.services.encryption import encryption_service
 from app.services.team_owner_authorization import TeamOwnerAuthorizationError, sync_team_owner_authorization
 from app.utils.token_parser import TokenParser
 from app.utils.jwt_parser import JWTParser
-from app.utils.time_utils import get_now
+from app.utils.time_utils import get_now, to_local_iso
 from app.utils.seats import calculate_seat_balance, normalize_seat_type, total_paid_seats
 from app.utils.seat_lock import seat_account_lock
 from app.config import settings
@@ -1239,6 +1239,7 @@ class TeamService:
                     plan_type=selected_account["plan_type"],
                     subscription_plan=selected_account["subscription_plan"],
                     expires_at=expires_at,
+                    renews_at=self._parse_remote_datetime(selected_account.get("renews_at")),
                     current_members=current_members,
                     max_members=max_members,
                     status=status,
@@ -2117,6 +2118,7 @@ class TeamService:
             team.subscription_plan = current_account["subscription_plan"]
             team.account_role = current_account.get("account_user_role")
             team.expires_at = expires_at
+            team.renews_at = self._parse_remote_datetime(current_account.get("renews_at"))
             team.error_count = 0  # 同步成功，重置错误次数
             team.last_sync = get_now()
             await self._refresh_member_display(team, members_result, access_token, db_session)
@@ -3232,6 +3234,7 @@ class TeamService:
                 Team.plan_type,
                 Team.subscription_plan,
                 Team.expires_at,
+                Team.renews_at,
                 Team.current_members,
                 Team.max_members,
                 Team.status,
@@ -3294,6 +3297,7 @@ class TeamService:
                     "plan_type": team.plan_type,
                     "subscription_plan": team.subscription_plan,
                     "expires_at": team.expires_at.isoformat() if team.expires_at else None,
+                    "renews_at": to_local_iso(team.renews_at) if team.renews_at else None,
                     "current_members": team.current_members,
                     "max_members": team.max_members,
                     "status": team.effective_status,

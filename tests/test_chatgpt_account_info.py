@@ -20,6 +20,8 @@ class ChatGPTAccountInfoTests(unittest.IsolatedAsyncioTestCase):
                         "entitlement": {
                             "subscription_plan": "business",
                             "has_active_subscription": True,
+                            "expires_at": "2026-11-22T17:43:48+00:00",
+                            "renews_at": "2026-11-22T11:43:48+00:00",
                         },
                     },
                     "personal-account": {
@@ -36,6 +38,7 @@ class ChatGPTAccountInfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["accounts"]), 1)
         self.assertEqual(result["accounts"][0]["account_id"], "business-account")
         self.assertEqual(result["accounts"][0]["plan_type"], "business")
+        self.assertEqual(result["accounts"][0]["renews_at"], "2026-11-22T11:43:48+00:00")
 
     async def test_self_serve_business_prolite_is_returned_as_team_workspace(self):
         service = ChatGPTService()
@@ -67,6 +70,7 @@ class ChatGPTAccountInfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["accounts"]), 1)
         self.assertEqual(result["accounts"][0]["account_id"], "team-account")
         self.assertEqual(result["accounts"][0]["plan_type"], "self_serve_business_prolite")
+        self.assertIsNone(result["accounts"][0]["renews_at"])
 
 
 if __name__ == "__main__":

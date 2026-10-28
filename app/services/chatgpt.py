@@ -413,6 +413,7 @@ class ChatGPTService:
                     "account_user_role": account.get("account_user_role", ""),
                     "subscription_plan": entitlement.get("subscription_plan", ""),
                     "expires_at": entitlement.get("expires_at", ""),
+                    "renews_at": entitlement.get("renews_at"),
                     "has_active_subscription": entitlement.get("has_active_subscription", False)
                 })
         return {"success": True, "accounts": team_accounts, "error": None}

@@ -27,6 +27,7 @@ class Team(Base):
     plan_type = Column(String(50), comment="计划类型")
     subscription_plan = Column(String(100), comment="订阅计划")
     expires_at = Column(DateTime, comment="订阅到期时间")
+    renews_at = Column(DateTime, comment="官方订阅续费时间")
     current_members = Column(Integer, default=0, comment="当前成员数")
     max_members = Column(Integer, default=6, comment="最大成员数")
     joined_members = Column(Integer, nullable=True, comment="上游已加入成员数，不含邀请")

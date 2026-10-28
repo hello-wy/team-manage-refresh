@@ -821,7 +821,7 @@
         }
     }
 </style>
-<link rel="stylesheet" href="/static/css/team-workbench.css?v=20261024-seat-lifecycle">
+<link rel="stylesheet" href="/static/css/team-workbench.css?v=20261028-renewal-countdown">
 {% endblock %}
 
 {% block content %}
@@ -1048,6 +1048,7 @@
                 <th data-default-hidden>订阅计划</th>
                 <th>到期时间</th>
                 <th>状态</th>
+                <th title="官方计划续费时间（北京时间），可能早于权益到期时间">续费时间</th>
                 <th class="team-actions-head">操作</th>
             </tr>
         </thead>
@@ -1119,6 +1120,15 @@
                         <i data-lucide="refresh-cw" aria-hidden="true"></i>
                     </button>
                     </div>
+                </td>
+                <td data-label="续费时间" title="北京时间（UTC+8）">
+                    {% if team.renews_at %}
+                    <button type="button" class="team-renewal-toggle" data-renewal-at="{{ team.renews_at }}"
+                        data-renewal-date="{{ team.renews_at|format_datetime }}" aria-pressed="false"
+                        title="北京时间（UTC+8），点击查看倒计时">{{ team.renews_at|format_datetime }}</button>
+                    {% else %}
+                    -
+                    {% endif %}
                 </td>
                 <td class="team-actions-cell" data-label="操作">
                     <div class="action-buttons team-row-actions">
@@ -1394,6 +1404,7 @@
 {% block extra_js %}
 <script src="/static/js/team-workbench.js?v=20261024-remove-device-auth"></script>
 <script src="/static/js/team-seat-balances.js?v=20261024-seat-lifecycle"></script>
+<script src="/static/js/team-renewal-time.js?v=20261028-countdown"></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         const editTeamModal = document.getElementById('editTeamModal');

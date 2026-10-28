@@ -77,6 +77,10 @@ def run_auto_migration():
         
         migrations_applied = []
 
+        if not column_exists(cursor, "teams", "renews_at"):
+            cursor.execute("ALTER TABLE teams ADD COLUMN renews_at DATETIME")
+            migrations_applied.append("teams.renews_at")
+
         member_authorization_columns = {
             "export_json_encrypted": "TEXT",
             "export_json_updated_at": "DATETIME",
