@@ -3,9 +3,9 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from app.models import Team, TeamEmailMapping
+from app.models import Team, TeamEmailMapping, TeamSeatHold
 from app.services.warranty_member_protection import is_warranty_member
 from app.utils.seats import normalize_seat_type
 from app.utils.time_utils import get_now
@@ -90,12 +90,18 @@ class MemberInvitationService:
         return await self._accepted(team, result, target=target)
 
     async def _check_membership(self, target):
-        result = await self.db.execute(select(TeamEmailMapping.team_id).where(
+        result = await self.db.execute(select(TeamEmailMapping).where(
             TeamEmailMapping.email == target.email,
             TeamEmailMapping.status.in_(ACTIVE_STATUSES),
-        ))
-        foreign = list(dict.fromkeys(team_id for team_id in result.scalars().all()
-                                     if team_id != target.team_id))
+            TeamEmailMapping.team_id != target.team_id,
+        ).order_by(TeamEmailMapping.team_id))
+        foreign = []
+        for mapping in result.scalars().all():
+            live = await self._check_foreign_membership(mapping)
+            if not live["success"]:
+                return live
+            if live["present"]:
+                foreign.append(mapping.team_id)
         if foreign:
             return self.teams._admin_error(
                 "email_already_in_team", "该邮箱已加入或已邀请到其他 Team，默认一个账号只能加入一个 Team",
@@ -110,6 +116,57 @@ class MemberInvitationService:
                 retry_at=retry_at.isoformat(),
             )
         return None
+
+    def _membership_error(self, team, detail):
+        return self.teams._admin_error(
+            "team_membership_check_failed", f"无法核实 Team {team.id} 的最新成员和邀请状态: {detail}",
+            team_ids=[team.id],
+        )
+
+    async def _foreign_snapshot(self, team):
+        token = await self.teams.ensure_access_token(team, self.db)
+        if not token:
+            return self._membership_error(team, "登录凭证已失效，自动刷新失败")
+        remote = self.teams.chatgpt_service
+        members = await remote.get_members(token, team.account_id, self.db, identifier=team.email)
+        if not members["success"]:
+            return self._membership_error(team, members["error"])
+        members = await self.teams._normalize_member_profiles(team, members, self.db)
+        invites = await remote.get_invites(token, team.account_id, self.db, identifier=team.email)
+        if not invites["success"]:
+            return self._membership_error(team, invites["error"])
+        return {"success": True, "members": members, "invites": invites}
+
+    async def _check_foreign_membership(self, mapping):
+        team = await self.db.get(Team, mapping.team_id)
+        if team is None:
+            raise ValueError(f"成员映射关联的 Team {mapping.team_id} 不存在")
+        snapshot = await self._foreign_snapshot(team)
+        if not snapshot["success"]:
+            return snapshot
+        members = snapshot["members"]["members"]
+        joined = {self.teams._normalize_member_email(member.get("email")) for member in members}
+        pending = self.teams._filter_pending_invites(snapshot["invites"]["items"], joined_emails=joined)
+        if mapping.email in joined or any(invite["email_address"] == mapping.email for invite in pending):
+            return {"success": True, "present": True}
+        if any(not email for email in joined):
+            return self._membership_error(team, "成员列表存在无法确认邮箱的成员，无法确认该账号是否已离组")
+        # 完整官方快照确认不存在时，立即释放这条失效占用，无需等待三次周期同步。
+        observed_count = snapshot["members"]["total"] + len(pending)
+        await self._clear_absent_mapping(team, mapping.email, observed_count)
+        return {"success": True, "present": False}
+
+    async def _clear_absent_mapping(self, team, email, observed_count):
+        await self.teams.mark_team_email_mapping_removed(
+            team_id=team.id, email=email, db_session=self.db,
+        )
+        await self.db.execute(delete(TeamSeatHold).where(
+            TeamSeatHold.account_id == team.account_id,
+            TeamSeatHold.operation == "invite", TeamSeatHold.target == email,
+        ))
+        await self.teams._apply_member_count_floor(team, observed_count, self.db)
+        await self.db.commit()
+        logger.info("已清理官方成员和待邀请列表均不存在的占用: team=%s email=%s", team.id, email)
 
     async def _rejected(self, team, result, *, target):
         if CLIENT_ERROR_MIN <= result.get("status_code", 0) < CLIENT_ERROR_MAX:

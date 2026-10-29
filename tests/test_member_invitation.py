@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Team, TeamEmailMapping
+from app.models import Team, TeamEmailMapping, TeamSeatHold
 from app.services.team import TeamService
 from app.utils.time_utils import get_now
 
@@ -32,7 +32,8 @@ class MemberInvitationTests(unittest.IsolatedAsyncioTestCase):
         }})
         self.service.chatgpt_service = SimpleNamespace(send_invite=AsyncMock(return_value={
             "success": True, "data": {"account_invites": [{"email_address": "target@example.com"}]},
-        }))
+        }), get_members=AsyncMock(return_value={"success": True, "members": [], "total": 0}),
+            get_invites=AsyncMock(return_value={"success": True, "items": []}))
         self.service._background_verify_admin_invite = AsyncMock()
 
     async def asyncTearDown(self):
@@ -99,3 +100,111 @@ class MemberInvitationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["success"])
         self.assertIn("Invitation is restricted", result["message"])
         self.assertEqual(result["results"][0]["error_code"], "invite_restricted")
+
+    async def _foreign_mapping(self, *, status="invited", team_id=2):
+        async with self.sessions() as db:
+            db.add(Team(id=team_id, email=f"owner{team_id}@example.com", account_id=f"foreign-{team_id}",
+                        access_token_encrypted="test", current_members=2, max_members=6, status="active"))
+            db.add(TeamEmailMapping(team_id=team_id, email="target@example.com", status=status,
+                                    upstream_user_id="target-user" if status == "joined" else None))
+            await db.commit()
+
+    async def _invite_target(self):
+        async with self.sessions() as db:
+            return await self.service.add_team_members(1, ["target@example.com"], db, "premium")
+
+    async def test_stale_foreign_invite_is_cleared_and_target_invite_sent(self):
+        await self._foreign_mapping()
+        async with self.sessions() as db:
+            db.add(TeamSeatHold(account_id="foreign-2", operation="invite",
+                                target="target@example.com", seat_type="standard"))
+            await db.commit()
+        result = await self._invite_target()
+        self.assertEqual(result["summary"]["invited"], 1, result)
+        async with self.sessions() as db:
+            mappings = (await db.execute(select(TeamEmailMapping).order_by(TeamEmailMapping.team_id))).scalars().all()
+            self.assertEqual([mapping.status for mapping in mappings], ["invited", "removed"])
+            self.assertEqual((await db.get(Team, 2)).current_members, 0)
+            holds = (await db.execute(select(TeamSeatHold))).scalars().all()
+            self.assertFalse(any(hold.account_id == "foreign-2" for hold in holds))
+        self.service.chatgpt_service.get_members.assert_awaited_once()
+        self.service.chatgpt_service.get_invites.assert_awaited_once()
+        self.service.chatgpt_service.send_invite.assert_awaited_once()
+
+    async def test_stale_joined_mapping_does_not_block_another_team(self):
+        await self._foreign_mapping(status="joined")
+        result = await self._invite_target()
+        self.assertEqual(result["summary"]["invited"], 1, result)
+
+    async def test_live_foreign_member_still_blocks_invitation(self):
+        await self._foreign_mapping()
+        self.service.chatgpt_service.get_members.return_value = {
+            "success": True, "members": [{"id": "target-user", "email": "Target@Example.com"}], "total": 1,
+        }
+        result = await self._invite_target()
+        self.assertEqual(result["results"][0]["error_code"], "email_already_in_team")
+        self.service.chatgpt_service.send_invite.assert_not_awaited()
+
+    async def test_live_pending_foreign_invitation_still_blocks(self):
+        await self._foreign_mapping()
+        self.service.chatgpt_service.get_invites.return_value = {
+            "success": True, "items": [{"email_address": "Target@Example.com", "state": "pending"}],
+        }
+        result = await self._invite_target()
+        self.assertEqual(result["results"][0]["error_code"], "email_already_in_team")
+        self.service.chatgpt_service.send_invite.assert_not_awaited()
+
+    async def test_revoked_foreign_invitation_does_not_block(self):
+        await self._foreign_mapping()
+        self.service.chatgpt_service.get_invites.return_value = {
+            "success": True, "items": [{"email_address": "target@example.com", "state": "revoked"}],
+        }
+        result = await self._invite_target()
+        self.assertEqual(result["summary"]["invited"], 1, result)
+
+    async def test_remote_read_failures_are_exposed_without_clearing_mapping(self):
+        await self._foreign_mapping()
+        for method in ("get_members", "get_invites"):
+            with self.subTest(method=method):
+                remote = getattr(self.service.chatgpt_service, method)
+                original = remote.return_value
+                remote.return_value = {"success": False, "error": "upstream timeout"}
+                result = await self._invite_target()
+                remote.return_value = original
+                self.assertEqual(result["results"][0]["error_code"], "team_membership_check_failed")
+                self.assertIn("upstream timeout", result["message"])
+                async with self.sessions() as db:
+                    mapping = (await db.execute(select(TeamEmailMapping))).scalar_one()
+                    self.assertEqual(mapping.status, "invited")
+        self.service.chatgpt_service.send_invite.assert_not_awaited()
+
+    async def test_unresolved_member_identity_is_reported_without_claiming_absence(self):
+        await self._foreign_mapping()
+        self.service.chatgpt_service.get_members.return_value = {
+            "success": True, "members": [{"id": "unknown-user", "email": None}], "total": 1,
+        }
+        result = await self._invite_target()
+        self.assertEqual(result["results"][0]["error_code"], "team_membership_check_failed")
+        self.assertIn("邮箱", result["message"])
+        self.service.chatgpt_service.send_invite.assert_not_awaited()
+
+    async def test_hidden_email_resolved_from_member_id_still_blocks(self):
+        await self._foreign_mapping(status="joined")
+        self.service.chatgpt_service.get_members.return_value = {
+            "success": True, "members": [{"id": "target-user", "email": None}], "total": 1,
+        }
+        result = await self._invite_target()
+        self.assertEqual(result["results"][0]["error_code"], "email_already_in_team")
+        self.service.chatgpt_service.send_invite.assert_not_awaited()
+
+    async def test_all_foreign_mappings_are_checked_before_allowing_invite(self):
+        await self._foreign_mapping()
+        await self._foreign_mapping(team_id=3)
+        self.service.chatgpt_service.get_invites.side_effect = [
+            {"success": True, "items": []},
+            {"success": True, "items": [{"email_address": "target@example.com", "state": "pending"}]},
+        ]
+        result = await self._invite_target()
+        self.assertEqual(result["results"][0]["error_code"], "email_already_in_team")
+        self.assertEqual(self.service.chatgpt_service.get_invites.await_count, 2)
+        self.service.chatgpt_service.send_invite.assert_not_awaited()
