@@ -3,7 +3,7 @@ import json
 import secrets
 import unittest
 from copy import deepcopy
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import FastAPI
@@ -115,8 +115,10 @@ class OfficialKeyExportTests(unittest.IsolatedAsyncioTestCase):
             if self.failure == "reject":
                 return httpx.Response(400, json={"code": 400, "message": "bad request"})
             return httpx.Response(200, json={"code": 0, "data": self.target})
-        if path.endswith("/groups/all"):
-            data = self.groups
+        if path.endswith("/groups/56"):
+            data = next((group for group in self.groups if group.get("id") == 56), None)
+            if data is None:
+                return httpx.Response(404, json={"code": 404, "message": "group not found"})
         elif path.endswith("/accounts/933"):
             data = self.template
         elif path.endswith("/accounts/1001"):
@@ -178,21 +180,35 @@ class OfficialKeyExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("匹配 2 个", response.json()["detail"])
         self.assertEqual(len(self.writes), 1)
 
-    async def test_missing_disabled_or_ambiguous_group_never_creates(self):
+    async def test_missing_disabled_or_wrong_platform_group_never_creates(self):
         official = self.groups[0]
-        for groups in ([], [{**official, "status": "disabled"}], [official, {**official, "id": 57}]):
+        for groups in ([], [{**official, "status": "disabled"}], [{**official, "platform": "claude"}]):
             self.groups = groups
             response = await self.client.post(self.path)
             self.assertEqual(response.status_code, 400)
-            self.assertIn('分组「OpenAI 官 key」', response.json()["detail"])
+            self.assertIn("分组（ID 56）", response.json()["detail"])
         self.assertEqual(self.writes, [])
 
-    async def test_previous_incorrect_group_name_does_not_select_an_unintended_group(self):
-        self.groups[0]["name"] = "openai 官key"
+    async def test_renamed_group_and_duplicate_names_still_export_to_id_56(self):
+        renamed = {**self.groups[0], "name": "重命名后的官 key"}
+        self.groups = [renamed, {**renamed, "id": 57}, {**self.groups[0], "id": 58}]
+        response = await self.client.post(self.path)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.writes[0][2]["group_ids"], [56])
+
+    async def test_same_name_with_different_id_does_not_replace_missing_group_56(self):
+        self.groups[0]["id"] = 57
         response = await self.client.post(self.path)
         self.assertEqual(response.status_code, 400)
-        self.assertIn('分组「OpenAI 官 key」', response.json()["detail"])
-        self.assertIn("匹配 0 个", response.json()["detail"])
+        self.assertIn("分组（ID 56）", response.json()["detail"])
+        self.assertEqual(self.writes, [])
+
+    async def test_wrong_group_id_in_detail_response_prevents_export(self):
+        wrong_group = {**self.groups[0], "id": 57}
+        with patch.object(OfficialKeySub2api, "_read", AsyncMock(return_value=wrong_group)):
+            response = await self.client.post(self.path)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("响应格式或 ID 错误", response.json()["detail"])
         self.assertEqual(self.writes, [])
 
     async def test_missing_template_error_identifies_template_instead_of_group(self):

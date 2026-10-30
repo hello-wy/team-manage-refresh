@@ -5,7 +5,7 @@ from datetime import datetime
 from app.services.sub2api import Sub2apiError
 
 TEMPLATE_NAME = "官key"
-GROUP_NAME = "OpenAI 官 key"
+GROUP_ID = 56
 ACCOUNT_FIELDS = (
     "notes", "proxy_id", "concurrency", "priority", "rate_multiplier",
     "load_factor", "auto_pause_on_expired",

@@ -1,7 +1,7 @@
 """HTTP adapter for API Key exports; credentials are never returned to the page."""
 import httpx
 
-from app.services.official_key_payload import GROUP_NAME, TEMPLATE_NAME, build_payload, only_match
+from app.services.official_key_payload import GROUP_ID, TEMPLATE_NAME, build_payload, only_match
 from app.services.sub2api import (
     REQUEST_TIMEOUT_SECONDS, Sub2apiError, Sub2apiImportUncertain, response_data,
 )
@@ -44,14 +44,21 @@ class OfficialKeySub2api:
         template = only_match(matches, name=TEMPLATE_NAME, kind="模板账号")
         return await self._read(config, path=f"accounts/{template['id']}")
 
+    async def _group(self, config):
+        try:
+            group = await self._read(config, path=f"groups/{GROUP_ID}")
+        except Sub2apiError as exc:
+            raise Sub2apiError(f"读取 Sub2API 官key分组（ID {GROUP_ID}）失败：{exc}") from exc
+        if not isinstance(group, dict) or type(group.get("id")) is not int or group["id"] != GROUP_ID:
+            raise Sub2apiError(f"Sub2API 官key分组（ID {GROUP_ID}）响应格式或 ID 错误")
+        if group.get("platform") != "openai":
+            raise Sub2apiError(f"Sub2API 官key分组（ID {GROUP_ID}）必须是 OpenAI 分组")
+        if group.get("status") != "active":
+            raise Sub2apiError(f"Sub2API 官key分组（ID {GROUP_ID}）未启用")
+        return group
+
     async def payload(self, db, *, config, entry):
-        groups = await self._read(config, path="groups/all", params={"platform": "openai"})
-        if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
-            raise Sub2apiError("Sub2API 分组响应格式错误")
-        group = only_match([item for item in groups if item.get("platform") == "openai"
-                            and item.get("status") in (None, "active")], name=GROUP_NAME, kind="分组")
-        if type(group.get("id")) is not int or group["id"] <= 0:
-            raise Sub2apiError("Sub2API 官key分组 ID 无效")
+        group = await self._group(config)
         template = await self._template(config)
         return build_payload(template, entry=entry, group_id=group["id"]), template["id"]
 
