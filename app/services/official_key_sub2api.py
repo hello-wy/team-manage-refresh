@@ -41,7 +41,7 @@ class OfficialKeySub2api:
             if page >= data["pages"]:
                 break
             page += 1
-        template = only_match(matches, name=TEMPLATE_NAME)
+        template = only_match(matches, name=TEMPLATE_NAME, kind="模板账号")
         return await self._read(config, path=f"accounts/{template['id']}")
 
     async def payload(self, db, *, config, entry):
@@ -49,7 +49,7 @@ class OfficialKeySub2api:
         if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
             raise Sub2apiError("Sub2API 分组响应格式错误")
         group = only_match([item for item in groups if item.get("platform") == "openai"
-                            and item.get("status") in (None, "active")], name=GROUP_NAME)
+                            and item.get("status") in (None, "active")], name=GROUP_NAME, kind="分组")
         if type(group.get("id")) is not int or group["id"] <= 0:
             raise Sub2apiError("Sub2API 官key分组 ID 无效")
         template = await self._template(config)

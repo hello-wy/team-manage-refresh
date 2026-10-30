@@ -34,7 +34,7 @@ class OfficialKeyExportTests(unittest.IsolatedAsyncioTestCase):
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         await self.prepare_database()
         self.prepare_template()
-        self.groups = [{"id": 56, "name": "openai 官key", "platform": "openai", "status": "active"},
+        self.groups = [{"id": 56, "name": "OpenAI 官 key", "platform": "openai", "status": "active"},
                        {"id": 99, "name": "oauth", "platform": "openai"}]
         self.pages = [[self.template]]
         self.writes = []
@@ -184,6 +184,22 @@ class OfficialKeyExportTests(unittest.IsolatedAsyncioTestCase):
             self.groups = groups
             response = await self.client.post(self.path)
             self.assertEqual(response.status_code, 400)
+            self.assertIn('分组「OpenAI 官 key」', response.json()["detail"])
+        self.assertEqual(self.writes, [])
+
+    async def test_previous_incorrect_group_name_does_not_select_an_unintended_group(self):
+        self.groups[0]["name"] = "openai 官key"
+        response = await self.client.post(self.path)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('分组「OpenAI 官 key」', response.json()["detail"])
+        self.assertIn("匹配 0 个", response.json()["detail"])
+        self.assertEqual(self.writes, [])
+
+    async def test_missing_template_error_identifies_template_instead_of_group(self):
+        self.pages = [[]]
+        response = await self.client.post(self.path)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('模板账号「官key」', response.json()["detail"])
         self.assertEqual(self.writes, [])
 
     async def test_wrong_template_type_is_not_exported_as_oauth(self):

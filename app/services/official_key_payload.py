@@ -5,7 +5,7 @@ from datetime import datetime
 from app.services.sub2api import Sub2apiError
 
 TEMPLATE_NAME = "官key"
-GROUP_NAME = "openai 官key"
+GROUP_NAME = "OpenAI 官 key"
 ACCOUNT_FIELDS = (
     "notes", "proxy_id", "concurrency", "priority", "rate_multiplier",
     "load_factor", "auto_pause_on_expired",
@@ -20,12 +20,12 @@ RUNTIME_EXTRA_FIELDS = frozenset({
 })
 
 
-def only_match(items, *, name):
+def only_match(items, *, name, kind):
     if not all(isinstance(item, dict) for item in items):
         raise Sub2apiError("Sub2API 配置列表格式错误")
     matches = [item for item in items if item.get("name") == name]
     if len(matches) != 1:
-        raise Sub2apiError(f"Sub2API 中需要唯一的「{name}」，当前匹配 {len(matches)} 个")
+        raise Sub2apiError(f"Sub2API 中需要唯一的{kind}「{name}」，当前匹配 {len(matches)} 个")
     return matches[0]
 
 
