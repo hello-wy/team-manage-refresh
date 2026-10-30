@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/team_expiration.html" import team_expiration %}
 
 {% block title %}{% if active_page == "welfare" %}福利车位 - GPT Team 管理系统{% else %}控制台 - GPT Team 管理系统{% endif %}{% endblock %}
 
@@ -1092,11 +1093,7 @@
                 </td>
                 <td data-label="订阅计划">{{ team.subscription_plan or '-' }}</td>
                 <td data-label="到期时间">
-                    {% if team.expires_at %}
-                    {{ team.expires_at|format_datetime }}
-                    {% else %}
-                    -
-                    {% endif %}
+                    {{ team_expiration(team.expires_at) }}
                 </td>
                 <td data-label="状态">
                     <div class="team-status-line">

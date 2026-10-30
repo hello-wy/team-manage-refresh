@@ -4,6 +4,7 @@
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+from pydantic import SecretStr
 
 from app import __version__
 
@@ -50,6 +51,9 @@ class Settings(BaseSettings):
 
     # 时区配置
     timezone: str = "Asia/Shanghai"
+
+    team_checkout_base_url: str = "https://pay.solidapi.top"
+    team_checkout_api_key: SecretStr = SecretStr("")
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

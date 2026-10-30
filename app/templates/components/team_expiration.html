@@ -1,0 +1,3 @@
+{% macro team_expiration(value) -%}
+<span class="team-expiration-time" title="北京时间（UTC+8）">{{ value|format_datetime if value else '-' }}</span>
+{%- endmacro %}

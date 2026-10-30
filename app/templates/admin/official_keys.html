@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}官key 管理 - GPT Team 管理系统{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/official-keys.css?v=20261030-balance-auto">
+{% endblock %}
+{% block content %}
+<div class="workspace-page official-keys-page">
+    <header class="page-header">
+        <div><h1>官key 管理</h1><p class="official-keys-description">保存官方 API Key，列表加载时通过 OpenAI 官方渠道读取可用余额；导出时沿用 Sub2API「官key」账号配置，绑定「openai 官key」分组，名称为「官key 邮箱」。</p></div>
+    </header>
+    <section class="card">
+        <div class="card-header"><h2 id="officialKeyFormTitle">新增官key</h2></div>
+        <div class="card-body">
+            <form id="officialKeyForm" class="official-key-form">
+                <div class="form-group">
+                    <label for="officialKeyAccount">账号</label>
+                    <input id="officialKeyAccount" name="account" class="form-control" placeholder="邮箱或账号名称" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="officialKeyValue">API Key</label>
+                    <textarea id="officialKeyValue" name="api_key" class="form-control" rows="2" placeholder="粘贴 API Key" required autocomplete="off" spellcheck="false"></textarea>
+                </div>
+                <div class="official-key-actions">
+                    <button type="submit" id="officialKeySave" class="btn btn-primary">保存</button>
+                    <button type="button" id="officialKeyCancel" class="btn btn-secondary" hidden>取消编辑</button>
+                </div>
+            </form>
+        </div>
+    </section>
+    <section class="card">
+        <div class="card-header official-key-list-header">
+            <h2>已保存的官key <span id="officialKeyCount"></span></h2>
+            <div class="official-key-actions">
+                <button type="button" id="officialKeyExportAll" class="btn btn-primary btn-sm">一键导出到 Sub2API</button>
+                <button type="button" id="officialKeyRefresh" class="btn btn-secondary btn-sm">刷新</button>
+            </div>
+        </div>
+        <div class="card-body">
+            <p id="officialKeyStatus" role="status" aria-live="polite">正在加载…</p>
+            <p id="officialKeyExportStatus" role="status" aria-live="polite" hidden></p>
+            <ul id="officialKeyExportErrors" hidden></ul>
+            <div class="table-container">
+                <table class="data-table official-key-table">
+                    <thead><tr><th>账号</th><th>到期时间</th><th>API Key</th><th>余额</th><th>Sub2API 状态</th><th>操作</th></tr></thead>
+                    <tbody id="officialKeyRows"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+    <section class="card">
+        <div class="card-header"><h2>对外接口</h2></div>
+        <div class="card-body official-key-api">
+            <p><code>GET /api/official-keys</code> 返回全部账号及 API Key。</p>
+            <p>请求头 <code>admintoken</code> 填写当前后台登录密码，无需单独配置；修改后台密码后，接口立即使用新密码。</p>
+            <pre><code>curl "$BASE_URL/api/official-keys" \
+  -H "admintoken: $ADMIN_TOKEN"</code></pre>
+        </div>
+    </section>
+</div>
+<template id="officialExpirationTemplate">
+    <form>
+        <h3 id="officialExpirationTitle">设置到期时间</h3>
+        <p data-account></p>
+        <label for="officialExpirationInput">到期时间（北京时间 UTC+8）</label>
+        <input id="officialExpirationInput" type="datetime-local" class="form-control" step="60">
+        <p>工作台未提供可用时间时，可在此手动设置。</p>
+        <p data-error role="alert" hidden></p>
+        <div class="page-confirm-actions">
+            <button type="button" class="btn btn-secondary" data-cancel>取消</button>
+            <button type="button" class="btn btn-secondary" data-clear>清除</button>
+            <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+    </form>
+</template>
+{% endblock %}
+{% block extra_js %}
+<script type="module" src="/static/js/official-keys.js?v=20261030-balance-auto"></script>
+{% endblock %}

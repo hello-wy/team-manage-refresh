@@ -34,6 +34,12 @@
                                 >
                                     <i data-lucide="download" aria-hidden="true"></i>
                                 导出 JSON</button>
+                                <button type="button" class="btn btn-sm btn-secondary account-pool-team-checkout-button"
+                                    title="生成 Team 支付链接" aria-label="生成 Team 支付链接"
+                                    data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}"
+                                    data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}">
+                                    <i data-lucide="credit-card" aria-hidden="true"></i>
+                                充值 Team</button>
                                 <button type="button" class="btn btn-sm btn-secondary account-pool-rotate-2fa-button" title="更换 2FA 密钥" aria-label="更换 2FA 密钥" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" {% if entry.is_owner %}disabled{% endif %}>
                                     <i data-lucide="key-round" aria-hidden="true"></i>
                                 更换 2FA</button>

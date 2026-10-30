@@ -1,0 +1,32 @@
+.official-keys-page { display: grid; gap: 1.25rem; }
+.official-keys-page .page-header { margin-bottom: 0; }
+.official-keys-page h2 { font-size: 1rem; margin: 0; }
+.official-keys-description { color: var(--text-secondary); margin: .5rem 0 0; }
+.official-key-form { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 2fr); gap: 1rem; }
+.official-key-form .form-group { margin-bottom: 0; }
+.official-key-form textarea { resize: vertical; }
+.official-key-actions { grid-column: 1 / -1; display: flex; gap: .5rem; flex-wrap: wrap; }
+.official-key-list-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.official-key-table { width: 100%; min-width: 980px; table-layout: fixed; }
+.official-key-table th:first-child { width: 20%; }
+.official-key-table th:nth-child(2) { width: 11rem; }
+.official-key-table th:last-child { width: 14rem; }
+.official-key-table th:nth-child(3) { width: 9rem; }
+.official-key-table th:nth-child(4) { width: 11rem; }
+.official-key-table th:nth-child(5) { width: 11rem; }
+.official-key-list-header > .official-key-actions { justify-content: flex-end; }
+#officialKeyExportErrors { color: var(--danger); overflow-wrap: anywhere; }
+.official-key-table td { vertical-align: top; overflow-wrap: anywhere; }
+.official-key-table code { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.official-key-balance-value { min-height: 1.4rem; }
+.official-expiration-source { display: block; color: var(--text-muted); margin: .35rem 0 .5rem; }
+.official-expiration-dialog form { display: grid; gap: .65rem; }
+.official-expiration-dialog [data-error] { color: var(--danger); }
+.official-key-table .official-key-actions { gap: .4rem; }
+.official-key-api p { margin: 0 0 .75rem; overflow-wrap: anywhere; }
+.official-key-api pre { overflow-x: auto; padding: 1rem; background: var(--bg-muted); border-radius: .5rem; }
+#officialKeyStatus[data-error="true"] { color: var(--danger); }
+.official-keys-page [hidden] { display: none !important; }
+@media (max-width: 640px) {
+    .official-key-form { grid-template-columns: 1fr; }
+}
