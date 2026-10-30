@@ -949,21 +949,15 @@
                     <button type="button" id="btnBatchPushSub2api" class="btn btn-primary btn-sm" title="批量推送母号到 sub2api">
                         <i data-lucide="send" style="width: 14px; height: 14px;"></i> 批量推送到 sub2api
                     </button>
+                    <button type="button" id="btnBatchPushCpa" class="btn btn-primary btn-sm" title="批量导出母号到 CPA">
+                        <img class="cpa-icon" src="/static/cpa-icon.jpg" alt="" aria-hidden="true"> 批量导出到 CPA
+                    </button>
                     <button type="button" id="btnBatchExportJson" class="btn btn-secondary btn-sm">
                         <i data-lucide="download" style="width: 14px; height: 14px;"></i> 批量导出 JSON
                     </button>
                     <button type="button" id="btnBatchDelete" class="btn btn-danger btn-sm">
                         <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i> 批量删除
                     </button>
-                    {% if active_page == "welfare" %}
-                    <button type="button" id="btnBatchTransferPool" class="btn btn-secondary btn-sm">
-                        <i data-lucide="arrow-left-right" style="width: 14px; height: 14px;"></i> 转入常规席位
-                    </button>
-                    {% else %}
-                    <button type="button" id="btnBatchTransferPool" class="btn btn-secondary btn-sm">
-                        <i data-lucide="arrow-left-right" style="width: 14px; height: 14px;"></i> 转入福利车位
-                    </button>
-                    {% endif %}
                     <span class="selected-count text-muted small">已选 0 项</span>
                 </div>
             </div>
@@ -1400,7 +1394,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/cpa-export.js?v=20261030-1"></script>
+<script src="/static/js/cpa-export.js?v=20261030-batch"></script>
 <script src="/static/js/team-workbench.js?v=20261030-cpa"></script>
 <script src="/static/js/team-seat-balances.js?v=20261024-seat-lifecycle"></script>
 <script src="/static/js/team-renewal-time.js?v=20261028-countdown"></script>
@@ -1464,9 +1458,9 @@
         // 绑定批量操作按钮（避免依赖内联 onclick，兼容更严格的 CSP）
         document.getElementById('btnBatchRefresh')?.addEventListener('click', handleBatchRefresh);
         document.getElementById('btnBatchPushSub2api')?.addEventListener('click', handleBatchPushSub2api);
+        document.getElementById('btnBatchPushCpa')?.addEventListener('click', window.batchPushTeamsToCpa);
         document.getElementById('btnBatchExportJson')?.addEventListener('click', handleBatchExportJson);
         document.getElementById('btnBatchDelete')?.addEventListener('click', handleBatchDelete);
-        document.getElementById('btnBatchTransferPool')?.addEventListener('click', handleBatchTransferPool);
         document.getElementById('btnCheckPoolTeamsLive')?.addEventListener('click', handleCheckPoolTeamsLive);
     });
 
@@ -2113,7 +2107,7 @@
     }
 
     function setBatchActionButtonsDisabled(disabled) {
-        ['btnBatchRefresh', 'btnBatchPushSub2api', 'btnBatchExportJson', 'btnBatchDelete', 'btnBatchTransferPool', 'btnCheckPoolTeamsLive'].forEach(id => {
+        ['btnBatchRefresh', 'btnBatchPushSub2api', 'btnBatchPushCpa', 'btnBatchExportJson', 'btnBatchDelete', 'btnCheckPoolTeamsLive'].forEach(id => {
             const button = document.getElementById(id);
             if (button) button.disabled = disabled;
         });
@@ -2500,21 +2494,6 @@
         } finally {
             setBatchActionButtonsDisabled(false);
         }
-    }
-
-    function handleBatchTransferPool() {
-        const isWelfarePage = '{{ active_page }}' === 'welfare';
-        const targetPoolType = isWelfarePage ? 'normal' : 'welfare';
-        const actionName = isWelfarePage ? '批量转入常规席位' : '批量转入福利车位';
-
-        handleBatchAction('/admin/teams/batch-transfer-pool', actionName, {
-            buildBody(selectedIds) {
-                return {
-                    ids: selectedIds,
-                    target_pool_type: targetPoolType,
-                };
-            }
-        });
     }
 
     function changePerPage(val) {

@@ -2,6 +2,7 @@
 (() => {
     const watchedJobs = new Set();
     const POLL_INTERVAL_MS = 2000;
+    const BATCH_RESULT_TOAST_DURATION_MS = 8600;
     const IN_PROGRESS = new Set(['pending', 'running']);
 
     async function request(url, options = {}) {
@@ -22,6 +23,20 @@
         } catch (error) {
             showToast(error.message, 'error');
         }
+    }
+
+    function batchPushTeamsToCpa() {
+        return handleBatchAction('/admin/teams/batch-push-cpa', '批量导出到 CPA', {
+            onSuccessToast(result) {
+                const failures = result.results.filter(item => !item.success);
+                const details = failures.map(item => `Team ${item.team_id}: ${item.error}`);
+                return {
+                    message: [result.message, ...details].join('。'),
+                    type: failures.length ? 'warning' : 'success',
+                    title: '批量 CPA 导出结果', duration: BATCH_RESULT_TOAST_DURATION_MS,
+                };
+            },
+        });
     }
 
     async function pushPoolToCpa(button) {
@@ -83,5 +98,6 @@
         if (button && !button.disabled) pushPoolToCpa(button);
     });
     window.pushTeamToCpa = pushTeamToCpa;
+    window.batchPushTeamsToCpa = batchPushTeamsToCpa;
     window.initCpaExportJobs = initJobs;
 })();

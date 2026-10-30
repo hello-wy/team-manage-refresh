@@ -4,7 +4,7 @@ import logging
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 from app.cpa_export_model import CpaExportJob
 from app.database import AsyncSessionLocal, get_db
@@ -24,6 +24,11 @@ NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 class CpaExportRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     workspace_id: str = ""
+
+
+class CpaBatchExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[PositiveInt] = Field(min_length=1)
 
 
 def get_cpa_service():
@@ -51,6 +56,34 @@ async def push_team(team_id: int, *, db=Depends(get_db), service=Depends(get_tea
         logger.exception("Team CPA 导出失败: team=%s", team_id)
         return JSONResponse({"success": False, "error": "CPA 导出失败，请检查服务端日志"},
                             status_code=500, headers=NO_STORE)
+
+
+async def _batch_team_result(team_id, *, db, service):
+    try:
+        return {**await service.push(team_id, db), "success": True}
+    except (MemberAuthorizationError, CpaExportError) as exc:
+        await db.rollback()
+        return {"team_id": team_id, "success": False, "error": str(exc)}
+    except Exception:
+        await db.rollback()
+        logger.exception("批量 CPA 导出失败: team=%s", team_id)
+        return {"team_id": team_id, "success": False, "error": "CPA 导出失败，请检查服务端日志"}
+
+
+@router.post("/teams/batch-push-cpa")
+async def push_teams(payload: CpaBatchExportRequest, *, db=Depends(get_db), service=Depends(get_team_export_service)):
+    results = []
+    for team_id in dict.fromkeys(payload.ids):
+        results.append(await _batch_team_result(team_id, db=db, service=service))
+    succeeded = sum(item["success"] for item in results)
+    failed = len(results) - succeeded
+    message = f"批量导出到 CPA：成功 {succeeded}，失败 {failed}"
+    details = "；".join(f"Team {item['team_id']}: {item['error']}" for item in results if not item["success"])
+    return JSONResponse({
+        "success": bool(succeeded), "message": message,
+        "error": f"{message}。{details}" if not succeeded else None,
+        "success_count": succeeded, "failed_count": failed, "results": results,
+    }, status_code=200 if succeeded else 400, headers=NO_STORE)
 
 
 @router.post("/account-pool/{entry_id}/export-cpa")
