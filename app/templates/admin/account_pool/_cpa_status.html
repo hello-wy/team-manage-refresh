@@ -1,0 +1,6 @@
+{% if entry.cpa_export_job %}
+{% set cpa_job = entry.cpa_export_job %}
+<small class="account-pool-cpa-status" data-cpa-job-id="{{ cpa_job.id }}" data-status="{{ cpa_job.status }}" role="status"{% if cpa_job.error %} title="{{ cpa_job.error }}"{% endif %}>
+    {% if cpa_job.status == 'completed' %}CPA 导出完成{% elif cpa_job.status == 'failed' %}CPA 导出失败 · 原因见“更多”{% else %}CPA 导出中{% endif %}
+</small>
+{% endif %}

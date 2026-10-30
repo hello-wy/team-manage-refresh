@@ -19,6 +19,7 @@ function menuHarness() {
     const document = {body, getElementById: () => menu, get activeElement() { return activeElement; },
         addEventListener: (name, fn) => { documentListeners[name] = fn; }};
     const window = {innerWidth: 800, innerHeight: 600, addEventListener: (name, fn) => { windowListeners[name] = fn; }};
+    window.pushTeamToCpa = (...args) => calls.push(args);
     const context = vm.createContext({document, window, closeFloatingDropdowns() {},
         escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
         exportTeamJson: (...args) => calls.push(args),
@@ -78,6 +79,17 @@ test('menu actions use the row that opened the menu and close before dispatch', 
     const item = {disabled: false, dataset: {action: 'export'}};
     env.click({closest: selector => selector === '#teamRowMenu button[data-action]' ? item : null});
     assert.deepEqual(env.calls, [['7', 'owner7@example.com']]);
+    assert.equal(env.menu.hidden, true);
+});
+
+test('CPA menu item uses the supplied logo and dispatches the current Team', () => {
+    const env = menuHarness();
+    env.click(env.trigger('12'));
+    assert.match(env.menu.innerHTML, /导出到 CPA/);
+    assert.match(env.menu.innerHTML, /src="\/static\/cpa-icon.jpg"/);
+    const item = {disabled: false, dataset: {action: 'cpa'}};
+    env.click({closest: selector => selector === '#teamRowMenu button[data-action]' ? item : null});
+    assert.deepEqual(env.calls, [['12', 'owner12@example.com']]);
     assert.equal(env.menu.hidden, true);
 });
 

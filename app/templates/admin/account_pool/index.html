@@ -16,6 +16,7 @@
 {% block title %}账号号池 - GPT Team 管理系统{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="/static/css/cpa-export.css?v=20261030-1">
 <link rel="stylesheet" href="/static/css/account-pool.css?v=20261024-inline-controls">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
@@ -198,57 +199,13 @@
                         </td>
                         <td data-label="操作">
                             {% include "admin/account_pool/_details.html" %}
-                            <div class="account-pool-row-actions">
-                                <span class="account-pool-action" data-pool-tooltip="{{ '所有者未保存号池凭据' if not entry.has_login_credentials else '复制邮箱----密码----2FA 密钥' }}" tabindex="0">
-                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-secret-button" onclick='copyAccountPoolCredential({{ entry.email|tojson }})' aria-label="复制 {{ entry.email }} 的邮箱、密码和 2FA 密钥" {% if not entry.has_login_credentials %}disabled{% endif %}><i data-lucide="copy" aria-hidden="true"></i></button>
-                                </span>
-                                <span class="account-pool-action" data-pool-tooltip="{% if entry.is_owner %}所有者不可加入其他 Team{% elif entry.status == 'unassigned' %}加入 Team{% elif entry.status == 'joined' %}已加入 Team，无需重复加入{% elif entry.status == 'invited' %}等待接受邀请，暂不可再次加入{% else %}当前状态不可加入 Team{% endif %}"{% if entry.status != 'unassigned' %} tabindex="0"{% endif %}>
-                                    <button
-                                    type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-invite-button"
-                                    aria-label="加入 Team"
-                                    data-entry-id="{{ entry.id }}"
-                                    data-email="{{ entry.email }}"
-                                    data-seat-type="{{ 'premium' if entry.seat_type == 'premium' else 'default' }}"
-                                    {% if entry.status != 'unassigned' %}disabled{% endif %}
-                                >
-                                    <i data-lucide="user-plus" aria-hidden="true"></i>
-                                </button>
-                                </span>
-                                <span class="account-pool-action" data-pool-tooltip="{{ '请先保存所有者的登录密码和 2FA 密钥' if entry.is_owner and not entry.has_login_credentials else '重新登录并导出到 Sub2API' }}" tabindex="0">
-                                    <button
-                                    type="button"
-                                    class="btn btn-sm btn-icon btn-minimal btn-primary account-pool-auto-login-button"
-                                    aria-label="重新登录并导出到 Sub2API" {% if entry.is_owner and not entry.has_login_credentials %}disabled{% endif %}
-                                    data-entry-id="{{ entry.id }}"
-                                    data-email="{{ entry.email }}"
-                                    data-workspace-id="{{ '' if entry.workspace_is_personal else (entry.workspace_id or '') }}"
-                                >
-                                    <img
-                                        class="account-pool-sub2api-icon"
-                                        src="/static/solidapi-s-icon.svg"
-                                        alt=""
-                                        aria-hidden="true"
-                                    >
-                                </button>
-                                </span>
-                                {% set can_import_16688 = rotation.can_import_16688 and not entry.is_owner and entry.has_login_credentials %}
-                                <span class="account-pool-action" data-pool-tooltip="{% if entry.is_owner %}所有者不可导入 16688{% elif not rotation.can_import_16688 %}仅待接受邀请的账户可导入 16688{% elif not entry.has_login_credentials %}请先补充账号密码和 2FA 密钥，再导入 16688{% else %}将邮箱---密码---2FA 补货至 16688{% endif %}"{% if not can_import_16688 %} tabindex="0"{% endif %}>
-                                    <button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary account-pool-16688-button"
-                                        data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}"
-                                        aria-label="将 {{ entry.email }} 导入 16688" {% if not can_import_16688 %}disabled{% endif %}>
-                                        <img class="account-pool-16688-icon" src="/static/stock-16688-icon.png" alt="" aria-hidden="true">
-                                    </button>
-                                </span>
-                                <span class="account-pool-action" data-pool-tooltip="更多操作与账号详情">
-                                    <button type="button" class="btn btn-sm btn-secondary account-pool-history-btn" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="{{ entry.email }} 的更多操作">更多</button>
-                                </span>
-                            </div>
+                            {% include "admin/account_pool/_row_actions.html" %}
                             {% if entry.export_job_id %}
                             <small class="account-pool-export-status" data-job-id="{{ entry.export_job_id }}" data-status="{{ entry.export_job_status }}" role="status">
                                 {% if entry.export_job_status == 'completed' %}Sub2API 导出完成{% elif entry.export_job_status == 'failed' %}导出失败 · 原因见“更多”{% else %}Sub2API 导出中{% endif %}
                             </small>
                             {% endif %}
+                            {% include "admin/account_pool/_cpa_status.html" %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -332,7 +289,8 @@
 <script src="/static/js/account-pool-team-checkout.js?v=20261029-2"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
-<script src="/static/js/account-pool.js?v=20261024-owner-join-sort"></script>
+<script src="/static/js/cpa-export.js?v=20261030-1"></script>
+<script src="/static/js/account-pool.js?v=20261030-cpa"></script>
 <script src="/static/js/account-pool-quota.js?v=20261024-liveness-refresh"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>

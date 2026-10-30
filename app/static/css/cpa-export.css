@@ -1,0 +1,13 @@
+.cpa-icon {
+    display: block;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    object-fit: contain;
+}
+
+.team-row-menu .cpa-icon { width: 16px; height: 16px; }
+.account-pool-cpa-button:disabled .cpa-icon { opacity: .5; }
+.account-pool-cpa-status { display: block; margin-top: .35rem; font-size: .75rem; color: var(--text-muted); }
+.account-pool-cpa-status[data-status="failed"] { color: var(--danger); }

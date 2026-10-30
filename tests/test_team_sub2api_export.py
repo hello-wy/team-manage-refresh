@@ -20,6 +20,8 @@ from app.services.sub2api import Sub2apiImportUncertain
 from app.services.team import TeamService
 from app.services.team_refresh import TeamRefreshDependencies, TeamRefreshService
 from app.services.team_sub2api_export import TeamSub2apiExportDependencies, TeamSub2apiExportService
+from app.services.cpa_export import TeamCpaExportService
+from app.services.cpa import build_auth_file
 
 EMAIL = "owner@example.com"
 WORKSPACE = "target-space"
@@ -142,3 +144,18 @@ class TeamSub2apiExportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(MemberAuthorizationError, "Team 不存在"):
             await self.service.push(99, self.db)
         self.login.login.assert_not_awaited()
+
+    async def test_cpa_uses_same_real_recovery_without_sub2api_side_effects(self):
+        cpa = SimpleNamespace(import_member=AsyncMock(return_value={"filename": "codex-owner.json"}))
+        service = TeamCpaExportService(preparation=self.service, cpa=cpa)
+        result = await service.push(1, self.db)
+        self.assertTrue(result["relogin_attempted"])
+        self.login.login.assert_awaited_once()
+        self.target.import_member.assert_not_awaited()
+        self.records.record_success.assert_not_awaited()
+        _, auth_file = build_auth_file(cpa.import_member.await_args.args[0])
+        self.assertEqual(auth_file["account_id"], WORKSPACE)
+        self.assertEqual(auth_file["refresh_token"], "recovered-refresh")
+        record = (await self.db.execute(select(MemberAuthorization))).scalar_one()
+        self.assertIsNone(record.sub2api_exported_at)
+        self.assertNotIn("recovered-refresh", json.dumps(result))

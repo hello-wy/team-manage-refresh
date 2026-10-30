@@ -4,6 +4,7 @@
 {% block title %}{% if active_page == "welfare" %}福利车位 - GPT Team 管理系统{% else %}控制台 - GPT Team 管理系统{% endif %}{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="/static/css/cpa-export.css?v=20261030-1">
 <style>
     .batch-progress-panel {
         position: fixed;
@@ -1399,7 +1400,8 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/team-workbench.js?v=20261024-remove-device-auth"></script>
+<script src="/static/js/cpa-export.js?v=20261030-1"></script>
+<script src="/static/js/team-workbench.js?v=20261030-cpa"></script>
 <script src="/static/js/team-seat-balances.js?v=20261024-seat-lifecycle"></script>
 <script src="/static/js/team-renewal-time.js?v=20261028-countdown"></script>
 <script>

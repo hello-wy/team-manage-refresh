@@ -891,6 +891,7 @@ function updateAccountPoolCountdowns() {
 }
 
 function initAccountPoolExportJobs() {
+    window.initCpaExportJobs?.();
     document.querySelectorAll('.account-pool-export-status').forEach(label => {
         if (label.dataset.status === 'pending' || label.dataset.status === 'running') {
             const email = label.closest('[data-account-pool-row]')?.dataset.email || '账号';

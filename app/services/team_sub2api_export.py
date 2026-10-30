@@ -14,11 +14,18 @@ class TeamSub2apiExportDependencies:
     records: Any
 
 
+@dataclass(frozen=True)
+class TeamOwnerExport:
+    team: Any
+    payload: dict
+    relogin_attempted: bool
+
+
 class TeamSub2apiExportService:
     def __init__(self, dependencies: TeamSub2apiExportDependencies):
         self._deps = dependencies
 
-    async def push(self, team_id, db):
+    async def prepare(self, team_id, db):
         team = await db.get(Team, team_id)
         if team is None:
             raise MemberAuthorizationError("Team 不存在")
@@ -27,9 +34,15 @@ class TeamSub2apiExportService:
         if not recovery.get("success"):
             raise MemberAuthorizationError(recovery.get("error") or "Team 凭证检查失败")
         if team.account_id != workspace_id:
-            raise MemberAuthorizationError("Team 工作区已变化，未向 Sub2API 推送，请核对目标 Team")
+            raise MemberAuthorizationError("Team 工作区已变化，未推送，请核对目标 Team")
         email = team.email.strip().lower()
         payload = await self._deps.authorization.export(team_id, email, db)
+        return TeamOwnerExport(team, payload, bool(recovery.get("relogin_attempted")))
+
+    async def push(self, team_id, db):
+        prepared = await self.prepare(team_id, db)
+        team, payload = prepared.team, prepared.payload
+        email = team.email.strip().lower()
         imported = await self._deps.sub2api.import_member(payload, db)
         await self._deps.records.record_success(
             db, email=email, team_space_id=str(team.account_id or ""),
@@ -40,4 +53,4 @@ class TeamSub2apiExportService:
             team_id, email, imported["account_id"], db
         )
         return {"team_id": team_id, "email": email, **imported,
-                "relogin_attempted": bool(recovery.get("relogin_attempted"))}
+                "relogin_attempted": prepared.relogin_attempted}

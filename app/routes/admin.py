@@ -72,6 +72,7 @@ from app.services.rotation_read_model import snapshot_usage
 from app.services.sub2api_export_records import sub2api_export_record_service
 from app.services.team_refresh import TeamRefreshDependencies, TeamRefreshService
 from app.services.team_sub2api_export import TeamSub2apiExportDependencies, TeamSub2apiExportService
+from app.services.cpa_export import attach_cpa_export_jobs
 from app.utils.time_utils import get_now
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
 
@@ -115,7 +116,7 @@ account_pool_liveness_service = AccountPoolLivenessService(
 )
 account_pool_export_service = AccountPoolExportService(
     AsyncSessionLocal, account_pool_authorization_service,
-    sub2api_service, sub2api_export_record_service,
+    sub2api=sub2api_service, records=sub2api_export_record_service,
 )
 redemption_service = RedemptionService()
 member_rotation_service = MemberRotationService(
@@ -513,6 +514,7 @@ async def account_pool_page(
         rotation_filter=rotation_filter, liveness_filter=liveness_filter, sort_order=sort_order,
     )
     listing["entries"] = await _attach_account_pool_cached_usage(db, listing["entries"])
+    listing["entries"] = await attach_cpa_export_jobs(db, listing["entries"])
     if not listing["rotation_filter"]:
         listing["entries"] = await attach_rotation_status(db, listing["entries"])
     context = await build_admin_base_context(request, db, current_user, "account_pool")

@@ -15,12 +15,14 @@
     }
 
     function menuItems(trigger) {
-        const items = [['push', 'send', '推送母号到 sub2api'], ['export', 'download', '导出 JSON'], null,
+        const items = [['push', 'send', '推送母号到 sub2api'], ['cpa', 'cpa', '导出到 CPA'], ['export', 'download', '导出 JSON'], null,
             ['delete', 'trash-2', '删除 Team', false, 'is-danger']];
         return `<div class="team-row-menu-header" role="presentation"><span class="team-row-menu-title">Team 操作</span>
             <span class="team-row-menu-email">${escapeHtml(trigger.dataset.email)}</span></div>`
             + items.map(item => item ? `<button type="button" role="menuitem" data-action="${item[0]}"
-                class="${item[4] || ''}" ${item[3] ? 'disabled' : ''}><i data-lucide="${item[1]}" aria-hidden="true"></i>${item[2]}</button>`
+                class="${item[4] || ''}" ${item[3] ? 'disabled' : ''}>${item[1] === 'cpa'
+                    ? '<img class="cpa-icon" src="/static/cpa-icon.jpg" alt="" aria-hidden="true">'
+                    : `<i data-lucide="${item[1]}" aria-hidden="true"></i>`}${item[2]}</button>`
                 : '<hr role="separator">').join('');
     }
 
@@ -58,6 +60,7 @@
         if (!trigger) return;
         const {id, email} = trigger.dataset;
         if (action === 'push') pushTeamToSub2api(id, email);
+        else if (action === 'cpa') window.pushTeamToCpa(id, email);
         else if (action === 'export') exportTeamJson(id, email);
         else if (action === 'delete') deleteTeam(Number(id), email);
     }

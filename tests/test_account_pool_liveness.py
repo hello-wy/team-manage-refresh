@@ -250,7 +250,7 @@ class AccountPoolLivenessTests(unittest.IsolatedAsyncioTestCase):
         entry_id = await self.add_account("owner@example.com----password----JBSWY3DPEHPK3PXP")
         sub2api = SimpleNamespace(import_member=AsyncMock(return_value={"account_id": 42}))
         records = SimpleNamespace(record_success=AsyncMock())
-        exporter = AccountPoolExportService(self.sessions, self.authorization, sub2api, records)
+        exporter = AccountPoolExportService(self.sessions, self.authorization, sub2api=sub2api, records=records)
         async with self.sessions() as db:
             db.add(Team(email="owner@example.com", account_id="workspace-1", access_token_encrypted="unused"))
             entry = await db.get(AccountPoolEntry, entry_id)

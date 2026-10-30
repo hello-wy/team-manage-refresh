@@ -48,5 +48,6 @@
                                 永久删除账号</button>
                                 {% endif %}</div>
                                 {% if entry.export_job_error %}<p class="account-pool-detail-error">Sub2API 导出失败：{{ entry.export_job_error }}</p>{% endif %}
+                                {% if entry.cpa_export_job and entry.cpa_export_job.error %}<p class="account-pool-detail-error">CPA 导出失败：{{ entry.cpa_export_job.error }}</p>{% endif %}
                                 <h4>加入记录 · {{ entry.history_count }} 次</h4>
                             </template>

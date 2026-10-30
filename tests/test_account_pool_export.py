@@ -32,7 +32,7 @@ class AccountPoolExportTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.records = SimpleNamespace(record_success=AsyncMock())
         self.service = AccountPoolExportService(
-            self.sessions, self.authorization, self.sub2api, self.records
+            self.sessions, self.authorization, sub2api=self.sub2api, records=self.records
         )
         async with self.sessions() as session:
             session.add(AccountPoolEntry(
@@ -65,7 +65,7 @@ class AccountPoolExportTests(unittest.IsolatedAsyncioTestCase):
         self.sub2api.import_member.side_effect = RuntimeError("remote unavailable")
         async with self.sessions() as session:
             job = await self.service.enqueue(session, 1, "team-b")
-        with self.assertLogs("app.services.account_pool_export", level="ERROR"):
+        with self.assertLogs("app.services.account_pool_export_job", level="ERROR"):
             await self.service.run(job.id)
         async with self.sessions() as session:
             stored = await session.get(AccountPoolExportJob, job.id)
@@ -76,7 +76,7 @@ class AccountPoolExportTests(unittest.IsolatedAsyncioTestCase):
         self.authorization.save_result.return_value = False
         async with self.sessions() as session:
             job = await self.service.enqueue(session, 1, "team-b")
-        with self.assertLogs("app.services.account_pool_export", level="ERROR"):
+        with self.assertLogs("app.services.account_pool_export_job", level="ERROR"):
             await self.service.run(job.id)
         self.assertIn("credential_version", self.authorization.save_result.await_args.kwargs)
         self.sub2api.import_member.assert_not_awaited()
