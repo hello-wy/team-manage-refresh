@@ -18,7 +18,6 @@
 #officialKeyExportErrors { color: var(--danger); overflow-wrap: anywhere; }
 .official-key-table td { vertical-align: top; overflow-wrap: anywhere; }
 .official-key-table code { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.official-key-balance-value { min-height: 1.4rem; }
 .official-expiration-source { display: block; color: var(--text-muted); margin: .35rem 0 .5rem; }
 .official-expiration-dialog form { display: grid; gap: .65rem; }
 .official-expiration-dialog [data-error] { color: var(--danger); }

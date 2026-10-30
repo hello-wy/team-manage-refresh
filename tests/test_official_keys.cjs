@@ -29,16 +29,7 @@ function response(status, data) {
         headers: {get: () => 'application/json'}, json: async () => data};
 }
 
-function successfulBalances() {
-    return Object.fromEntries(ENTRIES.map(entry => [entry.id, {
-        status: 'ok', balance: {
-            total_granted: '20', total_used: '3.25',
-            total_available: '16.75', currency: 'USD',
-        },
-    }]));
-}
-
-async function runtime(handler, balances = successfulBalances()) {
+async function runtime(handler) {
     const ids = {}, requests = [], toasts = [], copied = [];
     const names = ['Form', 'Account', 'Value', 'Cancel', 'Save', 'Status', 'Rows', 'FormTitle',
         'ExportAll', 'ExportStatus', 'ExportErrors', 'Count', 'Refresh'];
@@ -53,7 +44,7 @@ async function runtime(handler, balances = successfulBalances()) {
             if (url.endsWith('/data')) return response(200, {
                 keys: ENTRIES, exports: {}, expirations: Object.fromEntries(ENTRIES.map(entry => [
                     entry.id, {html: '<span>-</span>', can_edit: false, note: '测试到期信息'}
-                ])), balances,
+                ])),
             });
             return handler(url, options, ids);
         },
@@ -100,26 +91,18 @@ test('saving a key never automatically exports and preserves explicit API errors
 test('single export reports the target ID and refreshes statuses', async () => {
     const env = await runtime(async () => response(200, {export: {account_id: 1001}}));
     const row = env.ids.officialKeyRows.children[0];
-    const exportButton = row.children[5].children[0].children[1];
+    const exportButton = row.children[4].children[0].children[1];
     await exportButton.listeners.click();
     assert.equal(env.requests[1].url, '/admin/official-keys/1/sub2api');
     assert.deepEqual(env.toasts[0], ['已导出到 Sub2API（#1001）', 'success']);
     assert.equal(env.requests.at(-1).url, '/admin/official-keys/data');
 });
 
-test('balance column renders the server-provided available credit', async () => {
+test('official key rows omit the balance column', async () => {
     const env = await runtime(async () => response(200, {}));
     const row = env.ids.officialKeyRows.children[0];
-    assert.equal(row.children[3].children[0].textContent, '可用 16.75 USD');
-});
-
-test('balance column exposes per-key failures', async () => {
-    const env = await runtime(async () => response(200, {}), {
-        1: {status: 'error', error: '余额查询失败'},
-        2: {status: 'error', error: '余额查询失败'},
-        3: {status: 'error', error: '余额查询失败'},
-    });
-    assert.match(env.ids.officialKeyRows.children[0].children[3].children[0].textContent, /余额查询失败/);
+    assert.equal(row.children.length, 5);
+    assert.equal(row.children[3].textContent, '未导出');
 });
 
 test('non-JSON gateway failures remain visible for every affected record', async () => {

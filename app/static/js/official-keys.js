@@ -85,23 +85,6 @@ function exportLabel(result) {
     return `${labels[result.status]}${suffix}${result.error ? `：${result.error}` : ''}`;
 }
 
-function balanceLabel(result) {
-    if (!result) return '未查询';
-    if (result.status === 'error') return `查询失败：${result.error}`;
-    const balance = result.balance;
-    if (!balance) return '余额响应无效';
-    return `可用 ${balance.total_available} ${balance.currency}`;
-}
-
-function balanceCell(result) {
-    const cell = document.createElement('td');
-    const value = document.createElement('span');
-    value.className = 'official-key-balance-value';
-    value.textContent = balanceLabel(result);
-    cell.append(value);
-    return cell;
-}
-
 async function push(entry) {
     try {
         const data = await request(`${endpoint}/${entry.id}/sub2api`, {method: 'POST'});
@@ -111,7 +94,7 @@ async function push(entry) {
     }
 }
 
-function row(entry, {exported, expiration, balance}) {
+function row(entry, {exported, expiration}) {
     const tr = document.createElement('tr');
     tr.dataset.entryId = String(entry.id);
     tr.dataset.account = entry.account;
@@ -136,7 +119,7 @@ function row(entry, {exported, expiration, balance}) {
     );
     actionsCell.append(actions);
     const expiryCell = expirationCell(entry, {view: expiration, request, reload: load, action});
-    tr.append(accountCell, expiryCell, keyCell, balanceCell(balance), exportCell, actionsCell);
+    tr.append(accountCell, expiryCell, keyCell, exportCell, actionsCell);
     return tr;
 }
 
@@ -151,7 +134,6 @@ async function load() {
         rows.replaceChildren(...data.keys.map(entry => row(
             entry, {
                 exported: data.exports[entry.id], expiration: data.expirations[entry.id],
-                balance: data.balances[entry.id],
             }
         )));
         exportAll.disabled = data.keys.length === 0;
