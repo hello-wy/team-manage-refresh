@@ -2452,22 +2452,6 @@ async def batch_transfer_team_pool(
 
 # ==================== 兑换码管理路由 ====================
 
-@router.get("/codes/generation-capacity")
-async def code_generation_capacity(
-    has_warranty: bool = False,
-    count: int = Query(1, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin),
-):
-    """Return live standard-seat capacity and the workspaces backing it."""
-    result = await redemption_service.check_standard_seat_capacity(
-        db,
-        count=count,
-        has_warranty=has_warranty,
-        team_service=team_service,
-    )
-    return JSONResponse(content=result)
-
 @router.get("/codes", response_class=HTMLResponse)
 async def codes_list_page(
     request: Request,

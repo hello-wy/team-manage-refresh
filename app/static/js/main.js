@@ -958,10 +958,6 @@ function showModal(modalId) {
         if (modalId === 'importTeamModal') {
             setSingleImportMode('quick');
         }
-        if (modalId === 'generateCodeModal') {
-            refreshCodeGenerationCapacityPreview();
-        }
-
         syncToastMountTarget();
     }
 }
@@ -1031,7 +1027,6 @@ function switchModalTab(modalId, tabId) {
             panel.style.display = 'none';
         }
     });
-    if (modalId === 'generateCodeModal') refreshCodeGenerationCapacityPreview();
 }
 
 /**
@@ -1042,102 +1037,6 @@ function toggleWarrantyDays(checkbox, targetId) {
     if (target) {
         target.style.display = checkbox.checked ? 'block' : 'none';
     }
-}
-
-let codeGenerationCapacityRequestId = 0;
-const codeGenerationCapacityCache = new Map();
-
-function getCodeGenerationCapacityInputs() {
-    const batchPanel = document.getElementById('batchGenerate');
-    const batchCount = document.querySelector('#batchGenerate input[name="count"]');
-    const batchWarranty = document.querySelector('#batchGenerate input[name="hasWarranty"]');
-    const batchVisible = batchPanel && batchPanel.style.display !== 'none';
-    return {
-        count: batchVisible ? Math.max(1, parseInt(batchCount?.value || '1', 10) || 1) : 1,
-        hasWarranty: batchVisible ? Boolean(batchWarranty?.checked) : Boolean(
-            document.querySelector('#singleGenerate input[name="hasWarranty"]')?.checked
-        ),
-    };
-}
-
-function renderCodeGenerationCapacityPreview(payload, requested = 1) {
-    const preview = document.getElementById('codeGenerationCapacityPreview');
-    if (!preview) return;
-    const data = payload || {};
-    if (!data.success && !data.capacity_known) {
-        preview.className = 'alert alert-warning';
-        preview.innerHTML = `<strong>标准席位暂不可用</strong><div style="margin-top: 4px;">${escapeHtml(data.error || '余额读取失败，请稍后重试')}</div><button type="button" class="btn btn-sm btn-secondary" onclick="refreshCodeGenerationCapacityPreview()">重试</button>`;
-        return;
-    }
-
-    const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
-    const available = Number(data.available) || 0;
-    const enough = available >= requested;
-    preview.className = `alert ${enough ? 'alert-info' : 'alert-warning'}`;
-    const rows = workspaces.length ? workspaces.map((workspace) => `
-        <tr>
-            <td>${escapeHtml(workspace.workspace_name || '-')}</td>
-            <td><code>${escapeHtml(workspace.workspace_id || '-')}</code></td>
-            <td><code>${escapeHtml(workspace.team_id ?? '-')}</code></td>
-            <td style="text-align: right;">${Number(workspace.standard_remaining) || 0}</td>
-        </tr>`).join('') : '<tr><td colspan="4">暂无可用标准席位</td></tr>';
-    preview.innerHTML = `
-        <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center;">
-            <strong>可用标准席位：${available}，本次需要：${requested}</strong>
-            <button type="button" class="btn btn-sm btn-secondary" onclick="refreshCodeGenerationCapacityPreview()">刷新</button>
-        </div>
-        <div style="margin-top: 6px;">已扣除 ${Number(data.reserved_codes) || 0} 个未用兑换码预留。${enough ? '' : '标准席位不足，请减少生成数量。'}</div>
-        <div style="margin-top: 6px;">兑换时自动选择工作空间，生成时不固定绑定。以下为可分配容量预览。</div>
-        <div class="table-container" style="margin-top: 8px;">
-            <table class="data-table" style="margin: 0;">
-                <thead><tr><th>工作空间</th><th>Workspace ID</th><th>Team ID</th><th style="text-align: right;">剩余标准席位</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
-        </div>`;
-}
-
-function renderGeneratedCodeCapacitySnapshot(container, capacity, count) {
-    if (!container || !capacity) return;
-    const workspaces = Array.isArray(capacity.workspaces) ? capacity.workspaces : [];
-    const rows = workspaces.map((workspace) => `
-        <tr>
-            <td>${escapeHtml(workspace.workspace_name || '-')}</td>
-            <td><code>${escapeHtml(workspace.workspace_id || '-')}</code></td>
-            <td><code>${escapeHtml(workspace.team_id ?? '-')}</code></td>
-            <td style="text-align: right;">${Number(workspace.standard_remaining) || 0}</td>
-        </tr>`).join('');
-    container.innerHTML = `
-        <p>生成前可用标准席位：<strong>${Number(capacity.available) || 0}</strong>（已扣除 ${Number(capacity.reserved_codes) || 0} 个未用兑换码预留）；本次生成：<strong>${count}</strong></p>
-        <small>兑换时自动选择工作空间，生成时不固定绑定。以下为生成时的可分配容量预览。</small>
-        <div>可兑换工作空间来源：</div>
-        <div class="table-container" style="margin-top: 6px;">
-            <table class="data-table" style="margin: 0;">
-                <thead><tr><th>工作空间</th><th>Workspace ID</th><th>Team ID</th><th style="text-align: right;">可分配席位</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="4">无</td></tr>'}</tbody>
-            </table>
-        </div>`;
-}
-
-async function refreshCodeGenerationCapacityPreview(force = true) {
-    const preview = document.getElementById('codeGenerationCapacityPreview');
-    if (!preview) return;
-    const inputs = getCodeGenerationCapacityInputs();
-    const cached = codeGenerationCapacityCache.get(inputs.hasWarranty);
-    if (!force) {
-        if (cached) renderCodeGenerationCapacityPreview(cached, inputs.count);
-        return;
-    }
-    const requestId = ++codeGenerationCapacityRequestId;
-    preview.className = 'alert alert-info';
-    preview.textContent = '正在读取标准席位余额...';
-    const result = await apiCall(`/admin/codes/generation-capacity?has_warranty=${inputs.hasWarranty}`);
-    if (requestId !== codeGenerationCapacityRequestId) return;
-    if (!result.success) {
-        renderCodeGenerationCapacityPreview({ success: false, error: result.error }, inputs.count);
-        return;
-    }
-    if (result.data.capacity_known) codeGenerationCapacityCache.set(inputs.hasWarranty, result.data);
-    renderCodeGenerationCapacityPreview(result.data, getCodeGenerationCapacityInputs().count);
 }
 
 // === Team 导入逻辑 ===
@@ -1773,13 +1672,6 @@ async function generateSingle(event) {
         const { generatedCodeEl, singleResultEl } = ensureGenerateCodeResultNodes();
         if (generatedCodeEl && singleResultEl) {
             generatedCodeEl.textContent = result.data.code;
-            let capacityInfo = singleResultEl.querySelector('#singleCapacityInfo');
-            if (!capacityInfo) {
-                capacityInfo = document.createElement('div');
-                capacityInfo.id = 'singleCapacityInfo';
-                singleResultEl.appendChild(capacityInfo);
-            }
-            renderGeneratedCodeCapacitySnapshot(capacityInfo, result.data.capacity, 1);
             singleResultEl.style.display = 'block';
         } else {
             console.warn('生成兑换码结果区域缺失，已回退为 toast 展示', {
@@ -1790,8 +1682,6 @@ async function generateSingle(event) {
             showToast(`兑换码生成成功：${result.data.code}`, 'success');
         }
         form.reset();
-        codeGenerationCapacityCache.clear();
-        refreshCodeGenerationCapacityPreview();
         if (generatedCodeEl && singleResultEl) {
             showToast('兑换码生成成功', 'success');
         }
@@ -1834,13 +1724,6 @@ async function generateBatch(event) {
         if (batchTotalEl && batchCodesEl && batchResultEl) {
             batchTotalEl.textContent = result.data.total;
             batchCodesEl.value = result.data.codes.join('\n');
-            let capacityInfo = batchResultEl.querySelector('#batchCapacityInfo');
-            if (!capacityInfo) {
-                capacityInfo = document.createElement('div');
-                capacityInfo.id = 'batchCapacityInfo';
-                batchResultEl.insertBefore(capacityInfo, batchCodesEl);
-            }
-            renderGeneratedCodeCapacitySnapshot(capacityInfo, result.data.capacity, result.data.total);
             batchResultEl.style.display = 'block';
         } else {
             console.warn('批量生成结果区域缺失，已回退为 toast 展示', {
@@ -1852,8 +1735,6 @@ async function generateBatch(event) {
             showToast(`成功生成 ${result.data.total} 个兑换码`, 'success');
         }
         form.reset();
-        codeGenerationCapacityCache.clear();
-        refreshCodeGenerationCapacityPreview();
         if (batchTotalEl && batchCodesEl && batchResultEl) {
             showToast(`成功生成 ${result.data.total} 个兑换码`, 'success');
         }

@@ -805,11 +805,6 @@ eyJ..."></textarea>
                     <button class="modal-tab-btn"
                         onclick="switchModalTab('generateCodeModal', 'batchGenerate')">批量生成</button>
                 </div>
-                <div id="codeGenerationCapacityPreview" class="alert alert-info" role="status" aria-live="polite"
-                    style="margin: 0 1rem 1rem;">
-                    正在读取标准席位余额...
-                </div>
-
                 <div id="singleGenerate" class="card-body">
                     <form onsubmit="generateSingle(event)">
                         <div class="form-group">
@@ -825,7 +820,7 @@ eyJ..."></textarea>
                         <div class="form-group">
                             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                                 <input type="checkbox" name="hasWarranty" value="true" style="width: auto; margin: 0;"
-                                    onchange="toggleWarrantyDays(this, 'single-warranty-days-group'); refreshCodeGenerationCapacityPreview()">
+                                    onchange="toggleWarrantyDays(this, 'single-warranty-days-group')">
                                 <span>质保兑换码 (可重复使用)</span>
                             </label>
                             <small class="form-text">如果是质保兑换码，在质保期内，如果加入的 Team 被封号，可以重复使用</small>
@@ -833,7 +828,7 @@ eyJ..."></textarea>
                         <div class="form-group" id="single-warranty-days-group" style="display: none;">
                             <label>质保时长 (天) *</label>
                             <input type="number" name="warrantyDays" class="form-control" value="30" min="1" max="3650">
-                            <small class="form-text" style="display: block; margin-top: 8px; color: var(--warning, #c96a28);">已开启质保兑换码。请先在目标 Team 上开启质保车位模式，否则该兑换码将无法加入质保车位。</small>
+                            <small class="form-text" style="display: block; margin-top: 8px; color: var(--warning, #c96a28);">兑换时会自动选择已开启质保车位模式且有空位的 Team。</small>
                         </div>
                         <button type="submit" class="btn btn-primary">生成兑换码</button>
                     </form>
@@ -851,7 +846,7 @@ eyJ..."></textarea>
                         <div class="form-group">
                             <label>生成数量 *</label>
                             <input type="number" name="count" class="form-control" placeholder="请输入生成数量" min="1"
-                                max="1000" required oninput="refreshCodeGenerationCapacityPreview(false)">
+                                max="1000" required>
                         </div>
                         <div class="form-group">
                             <label>有效期 (天数, 可选)</label>
@@ -861,7 +856,7 @@ eyJ..."></textarea>
                         <div class="form-group">
                             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                                 <input type="checkbox" name="hasWarranty" value="true" style="width: auto; margin: 0;"
-                                    onchange="toggleWarrantyDays(this, 'batch-warranty-days-group'); refreshCodeGenerationCapacityPreview()">
+                                    onchange="toggleWarrantyDays(this, 'batch-warranty-days-group')">
                                 <span>质保兑换码 (可重复使用)</span>
                             </label>
                             <small class="form-text">如果是质保兑换码，在质保期内，如果加入的 Team 被封号，可以重复使用</small>
@@ -869,7 +864,7 @@ eyJ..."></textarea>
                         <div class="form-group" id="batch-warranty-days-group" style="display: none;">
                             <label>质保时长 (天) *</label>
                             <input type="number" name="warrantyDays" class="form-control" value="30" min="1" max="3650">
-                            <small class="form-text" style="display: block; margin-top: 8px; color: var(--warning, #c96a28);">已开启质保兑换码。请先在目标 Team 上开启质保车位模式，否则该兑换码将无法加入质保车位。</small>
+                            <small class="form-text" style="display: block; margin-top: 8px; color: var(--warning, #c96a28);">兑换时会自动选择已开启质保车位模式且有空位的 Team。</small>
                         </div>
                         <button type="submit" class="btn btn-primary">批量生成</button>
                     </form>
@@ -900,7 +895,7 @@ eyJ..."></textarea>
     <script src="/static/js/invited-member-credentials.js?v=20261022"></script>
     <script src="/static/js/member-seats.js?v=20261024-rotation-count"></script>
     <script src="/static/js/member-list.js?v=20261024-seat-rules"></script>
-    <script src="/static/js/main.js?v=20261025-code-capacity"></script>
+    <script src="/static/js/main.js?v=20261031-code-generation"></script>
     <script src="/static/js/team-import.js?v=20261025-team-import-text"></script>
     <script>window.initLucideIcons();</script>
     {% block extra_js %}{% endblock %}
