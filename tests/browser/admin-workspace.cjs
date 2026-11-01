@@ -61,7 +61,7 @@ async function ready(page, selector) {
 
 async function navigate({page, base}, path, selector) {
     await page.locator(`.desktop-nav-link[href="${path}"]`).click();
-    await page.waitForURL(`${base}${path}`);
+    await page.waitForURL(`${base}${path === '/admin' ? '/admin/' : path}`);
     return ready(page, selector);
 }
 

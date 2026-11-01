@@ -6,7 +6,10 @@ const ADMIN_PAGES = new Set([
 export function pageUrl(value) {
     const url = new URL(value, window.location.href);
     const path = url.pathname.replace(/\/$/, '');
-    return url.origin === window.location.origin && ADMIN_PAGES.has(path) ? url : null;
+    if (url.origin !== window.location.origin || !ADMIN_PAGES.has(path)) return null;
+    // Match FastAPI's dashboard route directly; proxy redirects may use HTTP internally.
+    if (path === '/admin') url.pathname = '/admin/';
+    return url;
 }
 
 export function isPlainClick(event) {
