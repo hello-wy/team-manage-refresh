@@ -1,4 +1,4 @@
-import {linkDestination, pageUrl} from './admin-workspace-routing.js';
+import {linkDestination, pageUrl} from './admin-workspace-routing.js?v=20261101-https';
 
 function syncNavigation(url) {
     const path = url.pathname.replace(/\/$/, '');
