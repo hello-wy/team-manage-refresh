@@ -1,14 +1,13 @@
 """Admin endpoints for quota rotation."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.database import get_db
 from app.dependencies.auth import require_admin
 from app.models import RotationAction, Team, TeamEmailMapping
-from app.routes.admin import build_admin_base_context, team_service
+from app.routes.admin import team_service
 from app.services.account_pool_usage import account_pool_usage_service
 from app.services.quota_rotation import RotationDependencies, run_team
 from app.services.quota_sync import refresh_team, store_quota
@@ -34,16 +33,6 @@ async def _team_view(db, team):
     if balance is None:
         balance = {"success": False, "error": live.get("error") or "席位余额未知"}
     return await load_team_rotation(db, team, balance)
-
-
-@router.get("/rotation", response_class=HTMLResponse)
-async def rotation_page(request: Request, db=Depends(get_db), user=Depends(require_admin)):
-    from app.main import templates
-    teams = (await db.execute(select(Team).order_by(Team.id))).scalars().all()
-    views = [await load_team_rotation(db, team) for team in teams]
-    context = await build_admin_base_context(request, db, user, "rotation")
-    context["rotation_teams"] = views
-    return templates.TemplateResponse(request, "admin/rotation/index.html", context)
 
 
 @router.get("/rotation/data")

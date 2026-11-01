@@ -218,10 +218,11 @@ test('mode switching enables only the active credential text and account ID', ()
 });
 
 test('quick import template exposes only one combined import button', () => {
-    const html = readFileSync(join(__dirname, '../app/templates/base.html'), 'utf8');
+    const html = readFileSync(join(__dirname, '../app/templates/admin/shared/import_team_modal.html'), 'utf8');
     const section = html.slice(html.indexOf('id="oauthQuickSection"'), html.indexOf('id="manualTokenSection"'));
     assert.doesNotMatch(section, /btnParseOAuthCallback|解析并自动填充/);
     assert.equal((section.match(/type="submit"/g) || []).length, 1);
     assert.ok(section.includes('id="btnQuickImportTeam" class="btn btn-primary">导入</button>'));
-    assert.ok(html.indexOf('/static/js/team-import.js?') > html.indexOf('/static/js/main.js?'));
+    const layout = readFileSync(join(__dirname, '../app/templates/layouts/document.html'), 'utf8');
+    assert.ok(layout.indexOf('/static/js/team-import.js?') > layout.indexOf('/static/js/main.js?'));
 });

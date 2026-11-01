@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}GPT Team 管理系统{% endblock %}</title>
+    {% if not admin_content %}
+    <link rel="icon" type="image/svg+xml" href="/static/brand-mark.svg">
+    {% endif %}
+    <script>
+        (function () {
+            try {
+                var saved = localStorage.getItem('ui_theme');
+                var normalized = (saved === 'warm' || saved === 'ocean') ? saved : null;
+                if (normalized) {
+                    document.documentElement.classList.remove('theme-ocean', 'theme-warm');
+                    document.documentElement.classList.add('theme-' + normalized);
+                    window.__EARLY_UI_THEME = normalized;
+                }
+            } catch (e) {
+                window.__EARLY_UI_THEME = null;
+            }
+            try {
+                var savedStyle = localStorage.getItem('ui_style');
+                var normStyle = (savedStyle === 'classic' || savedStyle === 'cartoon') ? savedStyle : null;
+                if (normStyle) {
+                    document.documentElement.classList.remove('style-classic', 'style-cartoon');
+                    document.documentElement.classList.add('style-' + normStyle);
+                    window.__EARLY_UI_STYLE = normStyle;
+                }
+            } catch (e) {
+                window.__EARLY_UI_STYLE = null;
+            }
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"></noscript>
+    <link rel="stylesheet" href="/static/css/style.css?v=20261024-team-hours">
+    <link rel="stylesheet" href="/static/css/page-confirm.css?v=20260927-1">
+    <link rel="stylesheet" href="/static/css/totp-code.css?v=20260927-display-only">
+    <link rel="stylesheet" href="/static/css/member-account-credentials.css?v=20260920-auto-login">
+    <link rel="stylesheet" href="/static/css/member-management.css?v=20261024-team-hours">
+    <link rel="stylesheet" href="/static/css/member-seats.css?v=20261024-rotation-count">
+    <link rel="stylesheet" href="/static/css/invited-member-credentials.css?v=20261022">
+    <!-- Lucide Icons: defer prevents a slow third-party response from blocking first paint. -->
+    <script>
+        window.initLucideIcons = function () {
+            if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                window.lucide.createIcons();
+            }
+        };
+    </script>
+    <script defer src="https://unpkg.com/lucide@1.48.0/dist/umd/lucide.min.js" onload="window.initLucideIcons()"></script>
+    <link rel="stylesheet" href="/static/css/admin-workspace.css?v=20261101">
+    {% if not admin_shell %}{% block extra_css %}{% endblock %}{% endif %}
+</head>
+<body class="bg-gray-50 text-slate-900 admin-theme theme-{{ ui_theme|default('ocean') }} style-{{ ui_style|default('cartoon') }}{% if not user %} auth-page{% endif %}{% if admin_shell %} admin-workspace-shell{% elif admin_content %} admin-workspace-content{% endif %}" data-pool-type="{% if active_page == 'welfare' %}welfare{% else %}normal{% endif %}" data-ui-theme="{{ ui_theme|default('ocean') }}" data-ui-style="{{ ui_style|default('cartoon') }}">
+    {% block layout_body %}{% endblock %}
+    {% if user and not admin_content %}
+        {% include "admin/shared/header_modals.html" %}
+        <script src="/static/js/renewal-card.js?v=20261101"></script>
+        <script src="/static/js/renewal-notifications.js?v=20261101"></script>
+        <script src="/static/js/renewal-actions.js?v=20261101"></script>
+    {% endif %}
+    {% if not admin_shell %}
+        {% include "admin/shared/import_team_modal.html" %}
+        {% include "admin/shared/generate_code_modal.html" %}
+        {% include "admin/_manage_members_modal.html" %}
+        {% include "admin/_member_authorization_modal.html" %}
+    {% endif %}
+    <div id="toast" class="toast"></div>
+    <script>window.SYSTEM_UI_THEME = {{ ui_theme|default("ocean")|tojson }};</script>
+    <script src="/static/js/totp.js?v=20260920-3"></script>
+    <script src="/static/js/account-pool-credential-store.js?v=20260920"></script>
+    <script src="/static/js/totp-code.js?v=20260927-display-only"></script>
+    <script src="/static/js/member-account-credentials.js?v=20260920-2"></script>
+    <script src="/static/js/page-confirm.js?v=20260927-1"></script>
+    <script src="/static/js/member-seat-summary.js?v=20261023-member-tabs"></script>
+    <script src="/static/js/invited-member-credentials.js?v=20261022"></script>
+    <script src="/static/js/member-seats.js?v=20261024-rotation-count"></script>
+    <script src="/static/js/member-list.js?v=20261024-seat-rules"></script>
+    <script src="/static/js/main.js?v=20261031-code-generation"></script>
+    <script src="/static/js/team-import.js?v=20261025-team-import-text"></script>
+    <script>window.initLucideIcons();</script>
+
+    {% if not admin_shell %}{% block extra_js %}{% endblock %}{% endif %}
+    {% if user %}<script type="module" src="/static/js/admin-workspace.js?v=20261101"></script>{% endif %}
+</body>
+</html>

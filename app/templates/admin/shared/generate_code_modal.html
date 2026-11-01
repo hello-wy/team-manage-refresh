@@ -1,0 +1,89 @@
+<!-- 生成兑换码 模态框 -->
+<div id="generateCodeModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>生成兑换码</h3>
+            <button class="modal-close" onclick="hideModal('generateCodeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="modal-tabs">
+                <button class="modal-tab-btn active"
+                    onclick="switchModalTab('generateCodeModal', 'singleGenerate')">单个生成</button>
+                <button class="modal-tab-btn"
+                    onclick="switchModalTab('generateCodeModal', 'batchGenerate')">批量生成</button>
+            </div>
+            <div id="singleGenerate" class="card-body">
+                <form onsubmit="generateSingle(event)">
+                    <div class="form-group">
+                        <label>自定义兑换码 (可选)</label>
+                        <input type="text" name="customCode" class="form-control" placeholder="留空则自动生成"
+                            maxlength="32">
+                    </div>
+                    <div class="form-group">
+                        <label>有效期 (天数, 可选)</label>
+                        <input type="number" name="expiresDays" class="form-control" placeholder="留空则永久有效" min="1"
+                            max="3650">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="hasWarranty" value="true" style="width: auto; margin: 0;"
+                                onchange="toggleWarrantyDays(this, 'single-warranty-days-group')">
+                            <span>质保兑换码 (可重复使用)</span>
+                        </label>
+                        <small class="form-text">如果是质保兑换码，在质保期内，如果加入的 Team 被封号，可以重复使用</small>
+                    </div>
+                    <div class="form-group" id="single-warranty-days-group" style="display: none;">
+                        <label>质保时长 (天) *</label>
+                        <input type="number" name="warrantyDays" class="form-control" value="30" min="1" max="3650">
+                        <small class="form-text" style="display: block; margin-top: 8px; color: var(--warning, #c96a28);">兑换时会自动选择已开启质保车位模式且有空位的 Team。</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">生成兑换码</button>
+                </form>
+                <div id="singleResult" class="result-box" style="display: none;">
+                    <h4>生成成功</h4>
+                    <div class="code-display">
+                        <code id="generatedCode"></code>
+                        <button onclick="copyCode()" class="btn btn-sm btn-secondary">复制</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="batchGenerate" class="card-body" style="display: none;">
+                <form onsubmit="generateBatch(event)">
+                    <div class="form-group">
+                        <label>生成数量 *</label>
+                        <input type="number" name="count" class="form-control" placeholder="请输入生成数量" min="1"
+                            max="1000" required>
+                    </div>
+                    <div class="form-group">
+                        <label>有效期 (天数, 可选)</label>
+                        <input type="number" name="expiresDays" class="form-control" placeholder="留空则永久有效" min="1"
+                            max="3650">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="hasWarranty" value="true" style="width: auto; margin: 0;"
+                                onchange="toggleWarrantyDays(this, 'batch-warranty-days-group')">
+                            <span>质保兑换码 (可重复使用)</span>
+                        </label>
+                        <small class="form-text">如果是质保兑换码，在质保期内，如果加入的 Team 被封号，可以重复使用</small>
+                    </div>
+                    <div class="form-group" id="batch-warranty-days-group" style="display: none;">
+                        <label>质保时长 (天) *</label>
+                        <input type="number" name="warrantyDays" class="form-control" value="30" min="1" max="3650">
+                        <small class="form-text" style="display: block; margin-top: 8px; color: var(--warning, #c96a28);">兑换时会自动选择已开启质保车位模式且有空位的 Team。</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">批量生成</button>
+                </form>
+                <div id="batchResult" class="result-box" style="display: none;">
+                    <h4>批量生成成功</h4>
+                    <p>成功生成 <strong id="batchTotal">0</strong> 个兑换码</p>
+                    <textarea id="batchCodes" readonly rows="5" class="form-control"
+                        style="margin: 10px 0;"></textarea>
+                    <button onclick="copyBatchCodes()" class="btn btn-sm btn-secondary">复制全部</button>
+                    <button onclick="downloadCodes()" class="btn btn-sm btn-secondary">下载</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -2892,44 +2892,6 @@ async def batch_delete_codes(
         )
 
 
-@router.get("/records", response_class=HTMLResponse)
-async def records_page(
-    request: Request,
-    search: str = "",
-    usage_filter: str = "",
-    joined_filter: str = "all",
-    page: int = 1,
-    per_page: int = 20,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_admin),
-):
-    """Show deduplicated Sub2API exports with live quota information."""
-    from app.main import templates
-    from app.services.records_listing import list_export_records
-
-    per_page = max(1, min(int(per_page or 20), 100))
-    search_value = str(search or "").strip()
-    usage_filter = usage_filter if usage_filter in {"exhausted", "available"} else ""
-    joined_filter = joined_filter if joined_filter == "within_7_days" else "all"
-    listing = await list_export_records(db, {
-        "search": search_value,
-        "usage_filter": usage_filter,
-        "joined_filter": joined_filter,
-        "page": int(page or 1),
-        "per_page": per_page,
-    })
-    context = await build_admin_base_context(request, db, current_user, "records")
-    context.update({
-        **listing,
-        "filters": {
-            "search": search_value,
-            "usage_filter": usage_filter,
-            "joined_filter": joined_filter,
-        },
-    })
-    return templates.TemplateResponse(request, "admin/records/index.html", context)
-
-
 @router.post("/records/{record_id}/withdraw")
 async def withdraw_record(
     record_id: int,

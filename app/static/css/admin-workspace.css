@@ -1,0 +1,54 @@
+/* The shell owns the header and favicon; only the same-origin workspace navigates. */
+body.admin-theme.admin-workspace-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.admin-workspace-shell > .navbar {
+    flex: 0 0 auto;
+    position: relative;
+}
+
+.admin-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+}
+
+#adminWorkspaceFrame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+}
+
+.admin-workspace-shell.modal-open .admin-workspace {
+    pointer-events: none;
+}
+
+.admin-workspace-content .main-content {
+    min-height: 0;
+}
+
+.admin-workspace-shell .desktop-nav-link {
+    white-space: nowrap;
+}
+
+.admin-workspace-shell .desktop-nav-link svg {
+    flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+    .admin-workspace-shell .sidebar {
+        height: 100dvh;
+        min-height: 0;
+    }
+
+    body.admin-workspace-shell .sidebar:not(.open) {
+        box-shadow: none;
+    }
+}

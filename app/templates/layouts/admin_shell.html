@@ -1,0 +1,8 @@
+{% extends "layouts/document.html" %}
+{% block layout_body %}
+    {% include "admin/shared/navigation.html" %}
+    <div class="admin-workspace" id="adminWorkspace" aria-label="后台工作区">
+        <iframe id="adminWorkspaceFrame" name="adminWorkspaceFrame" title="后台页面内容"
+                src="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}"></iframe>
+    </div>
+{% endblock %}

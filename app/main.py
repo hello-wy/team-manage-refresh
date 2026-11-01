@@ -10,7 +10,7 @@ if __package__ in {None, ""}:
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from app.utils.workspace_templates import WorkspaceTemplates
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -661,7 +661,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 # 配置模板引擎
-templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+templates = WorkspaceTemplates(directory=str(APP_DIR / "templates"))
 
 # 添加模板过滤器
 def format_datetime(dt):

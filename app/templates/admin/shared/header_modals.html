@@ -1,0 +1,63 @@
+<!-- 待处理任务 模态框 -->
+<div id="renewalRequestsModal" class="modal-overlay">
+    <div class="modal modal-large">
+        <div class="modal-header">
+            <h3>
+                <i data-lucide="list-todo" style="width: 18px; height: 18px;"></i>
+                待处理任务
+            </h3>
+            <button class="modal-close" onclick="hideModal('renewalRequestsModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="renewal-modal-tip">用户提交的质保续期申请会汇总在这里。处理完会自动从列表中移除并把对应兑换码的质保到期/剩余天数同步更新。</p>
+            <div id="renewalRequestsModalContent" class="renewal-modal-content">
+                <div class="renewal-modal-loading">
+                    <i data-lucide="loader-2" class="spin" style="width: 18px; height: 18px;"></i>
+                    加载中…
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 个人资料 模态框 -->
+<div id="profileModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>
+                <i data-lucide="user-cog" style="width: 18px; height: 18px;"></i>
+                个人资料
+            </h3>
+            <button class="modal-close" onclick="hideModal('profileModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="profile-avatar-row">
+                <div class="profile-avatar-preview-wrap">
+                    <img id="profileAvatarPreview" alt="" hidden>
+                    <span id="profileAvatarFallback" class="profile-avatar-fallback">A</span>
+                </div>
+                <div class="profile-avatar-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" id="profileAvatarPickBtn">
+                        <i data-lucide="upload" style="width: 14px; height: 14px;"></i>
+                        <span>选择图片</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="profileAvatarClearBtn">
+                        <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                        <span>清除头像</span>
+                    </button>
+                    <input type="file" id="profileAvatarInput" accept="image/*" hidden>
+                    <p class="profile-hint">图片会自动裁剪为正方形并压缩，建议小于 1MB</p>
+                </div>
+            </div>
+            <div class="form-group" style="margin-top: 18px;">
+                <label for="profileNickname">昵称</label>
+                <input type="text" id="profileNickname" class="form-control" maxlength="32" placeholder="管理员">
+                <p class="profile-hint" style="margin-top: 6px;">留空将默认显示「管理员」</p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="hideModal('profileModal')">取消</button>
+            <button type="button" class="btn btn-primary" id="profileSaveBtn">保存</button>
+        </div>
+    </div>
+</div>
