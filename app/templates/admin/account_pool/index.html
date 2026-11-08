@@ -17,7 +17,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/cpa-export.css?v=20261030-1">
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20261024-inline-controls">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20261108-proxy">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -159,6 +159,7 @@
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
                         <td data-label="账号">
                             <strong>{{ entry.email }}</strong>
+                            <a class="account-proxy-link" href="/admin/proxies?account={{ entry.email|urlencode }}#accounts">登录出口</a>
                         </td>
                         <td data-label="名称">{{ entry.name or '未获取' }}</td>
                         <td data-label="Team / 席位">

@@ -26,6 +26,7 @@ from app.services.openai_workspace_discovery import discover_workspaces
 from app.services.openai_workspace import inspect_workspace_claims, resolve_workspace_id, token_workspace_id
 from app.services.openai_auth_totp import complete_totp
 from app.services.operation_progress import report_progress
+from app.services.proxy_manager import ProxyRoutingError
 
 MAX_REDIRECTS = 20
 
@@ -38,7 +39,7 @@ class OpenAIAutomaticLoginService:
 
     async def login(self, request: AutomaticLoginRequest) -> dict[str, Any]:
         await self._dependencies.clear_session(request.identifier)
-        session = await self._dependencies.get_session(request.db_session, request.identifier)
+        session = await self._login_session(request)
         device_id = secrets.token_hex(16)
         self._set_device_cookie(session, device_id)
         sentinel_token = await self._sentinel(session, device_id)
@@ -89,7 +90,7 @@ class OpenAIAutomaticLoginService:
         """Verify password/TOTP without selecting a workspace or exchanging tokens."""
         await self._dependencies.clear_session(request.identifier)
         try:
-            session = await self._dependencies.get_session(request.db_session, request.identifier)
+            session = await self._login_session(request)
             device_id = secrets.token_hex(16)
             self._set_device_cookie(session, device_id)
             sentinel_token = await self._sentinel(session, device_id)
@@ -108,6 +109,14 @@ class OpenAIAutomaticLoginService:
             )
         finally:
             await self._dependencies.clear_session(request.identifier)
+
+    async def _login_session(self, request):
+        try:
+            return await self._dependencies.get_session(
+                request.db_session, request.identifier, email=request.email,
+            )
+        except ProxyRoutingError as exc:
+            raise OpenAIAutomaticLoginError(str(exc)) from exc
 
     async def _sentinel(self, session: Any, device_id: str) -> str:
         try:

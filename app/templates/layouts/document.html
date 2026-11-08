@@ -53,7 +53,7 @@
         };
     </script>
     <script defer src="https://unpkg.com/lucide@1.48.0/dist/umd/lucide.min.js" onload="window.initLucideIcons()"></script>
-    <link rel="stylesheet" href="/static/css/admin-workspace.css?v=20261101">
+    <link rel="stylesheet" href="/static/css/admin-workspace.css?v=20261108-proxy">
     {% if not admin_shell %}{% block extra_css %}{% endblock %}{% endif %}
 </head>
 <body class="bg-gray-50 text-slate-900 admin-theme theme-{{ ui_theme|default('ocean') }} style-{{ ui_style|default('cartoon') }}{% if not user %} auth-page{% endif %}{% if admin_shell %} admin-workspace-shell{% elif admin_content %} admin-workspace-content{% endif %}" data-pool-type="{% if active_page == 'welfare' %}welfare{% else %}normal{% endif %}" data-ui-theme="{{ ui_theme|default('ocean') }}" data-ui-style="{{ ui_style|default('cartoon') }}">
@@ -86,6 +86,6 @@
     <script>window.initLucideIcons();</script>
 
     {% if not admin_shell %}{% block extra_js %}{% endblock %}{% endif %}
-    {% if user %}<script type="module" src="/static/js/admin-workspace.js?v=20261101-https"></script>{% endif %}
+    {% if user %}<script type="module" src="/static/js/admin-workspace.js?v=20261108-proxy"></script>{% endif %}
 </body>
 </html>

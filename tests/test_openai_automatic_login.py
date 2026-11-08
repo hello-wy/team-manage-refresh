@@ -79,6 +79,26 @@ class OpenAIAutomaticLoginTests(unittest.IsolatedAsyncioTestCase):
             phone_verification=phone_verification,
         )
 
+    async def test_invalid_proxy_blocks_login_and_liveness_before_any_upstream_request(self):
+        from app.services.proxy_manager import ProxyRoutingError
+        for method in ("login", "verify_credentials"):
+            with self.subTest(method=method):
+                get_session = AsyncMock(side_effect=ProxyRoutingError("账号指定的代理已停用"))
+                sentinel = AsyncMock()
+                exchange = AsyncMock()
+                service = OpenAIAutomaticLoginService(AutomaticLoginDependencies(
+                    get_session=get_session, clear_session=AsyncMock(),
+                    exchange_code=exchange, issue_sentinel=sentinel,
+                ))
+                request = self.request()
+                with self.assertRaisesRegex(OpenAIAutomaticLoginError, "代理已停用"):
+                    await getattr(service, method)(request)
+                get_session.assert_awaited_once_with(
+                    request.db_session, request.identifier, email=request.email,
+                )
+                sentinel.assert_not_awaited()
+                exchange.assert_not_awaited()
+
     async def test_phone_verification_runs_only_when_explicitly_requested(self):
         session = FakeSession(
             get_responses=[

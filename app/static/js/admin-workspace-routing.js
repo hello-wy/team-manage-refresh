@@ -1,5 +1,5 @@
 const ADMIN_PAGES = new Set([
-    '/admin', '/admin/account-pool', '/admin/phone-verification', '/admin/codes',
+    '/admin', '/admin/account-pool', '/admin/proxies', '/admin/phone-verification', '/admin/codes',
     '/admin/official-keys', '/admin/settings', '/admin/announcement', '/admin/renewal-requests',
 ]);
 

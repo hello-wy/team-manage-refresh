@@ -61,7 +61,7 @@
                 <input type="checkbox" id="proxyEnabled" name="enabled" {% if proxy_enabled %}checked{% endif %}>
                 <span>启用代理</span>
             </label>
-            <p class="form-help">出站请求将经代理转发，包括 ChatGPT / CliproxyAPI / Webhook。</p>
+            <p class="form-help">系统默认代理用于 CliproxyAPI / Webhook 等请求。账号登录出口可在<a href="/admin/proxies">代理管理</a>中统一设置，账号指定出口优先。</p>
         </div>
 
         <div class="form-group">

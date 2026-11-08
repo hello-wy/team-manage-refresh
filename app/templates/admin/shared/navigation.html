@@ -32,6 +32,10 @@
                     <i data-lucide="mail-plus"></i>
                     <span>账号号池</span>
                 </a>
+                <a href="/admin/proxies" class="desktop-nav-link {% if active_page == 'proxies' %}active{% endif %}">
+                    <i data-lucide="network"></i>
+                    <span>代理管理</span>
+                </a>
                 <a href="/admin/phone-verification" class="desktop-nav-link {% if active_page == 'phone_verification' %}active{% endif %}">
                     <i data-lucide="smartphone"></i>
                     <span>手机号接码</span>
@@ -107,6 +111,12 @@
                 <a href="/admin/account-pool">
                     <span class="menu-icon" data-lucide="mail-plus"></span>
                     <span class="menu-text">账号号池</span>
+                </a>
+            </li>
+            <li class="menu-item {% if active_page == 'proxies' %}active{% endif %}">
+                <a href="/admin/proxies">
+                    <span class="menu-icon" data-lucide="network"></span>
+                    <span class="menu-text">代理管理</span>
                 </a>
             </li>
             <li class="menu-item {% if active_page == 'phone_verification' %}active{% endif %}">

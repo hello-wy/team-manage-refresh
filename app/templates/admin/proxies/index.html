@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}代理管理 - GPT Team 管理系统{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/proxies.css?v=20261108-1">{% endblock %}
+{% block content %}
+<div class="proxy-page" id="proxyPage">
+    <header class="page-header proxy-header">
+        <div class="page-header-copy">
+            <div class="page-header-kicker"><i data-lucide="network"></i><span>Network Routing</span></div>
+            <h2>代理管理</h2>
+            <p class="proxy-subtitle">集中管理代理节点，为每个账号选择登录出口。</p>
+        </div>
+        <button class="btn btn-primary" id="proxyAdd" type="button"><i data-lucide="plus"></i>新增代理</button>
+    </header>
+
+    <div class="proxy-metrics" aria-label="代理概况">
+        <div><span class="proxy-metric-dot"></span><strong id="proxyTotal">—</strong><span>代理节点</span></div>
+        <div><span class="proxy-metric-dot online"></span><strong id="proxyOnline">—</strong><span>最近检测可用</span></div>
+        <div><i data-lucide="route"></i><strong id="proxyBound">—</strong><span>账号指定代理</span></div>
+    </div>
+
+    <section class="content-section proxy-default" aria-labelledby="proxyDefaultTitle">
+        <div class="proxy-default-copy"><span class="proxy-section-icon"><i data-lucide="git-branch"></i></span><div>
+            <h3 id="proxyDefaultTitle">默认登录出口</h3>
+            <p id="proxyDefaultHint">正在读取出口配置…</p>
+        </div></div>
+        <form id="proxyDefaultForm" class="proxy-default-form">
+            <label class="sr-only" for="proxyDefaultSelect">默认登录出口</label>
+            <select id="proxyDefaultSelect" class="form-control" disabled></select>
+            <button class="btn btn-secondary" type="submit" id="proxyDefaultSave" disabled>保存默认</button>
+        </form>
+    </section>
+
+    <section class="content-section proxy-workspace">
+        <div class="proxy-toolbar">
+            <div class="proxy-tabs" role="tablist" aria-label="代理管理视图">
+                <button type="button" id="proxyNodesTab" role="tab" aria-selected="true" aria-controls="proxyNodesPanel" tabindex="0">代理节点 <span id="proxyNodeCount">0</span></button>
+                <button type="button" id="proxyAccountsTab" role="tab" aria-selected="false" aria-controls="proxyAccountsPanel" tabindex="-1">账号出口 <span id="proxyAccountCount">0</span></button>
+            </div>
+            <div class="proxy-toolbar-actions">
+                <label class="proxy-search"><i data-lucide="search"></i><input type="search" id="proxySearch" placeholder="搜索节点名称、地址…" aria-label="搜索代理或账号"></label>
+                <button class="btn btn-secondary btn-sm" id="proxyTestAll" type="button" disabled><i data-lucide="activity"></i><span>检测全部</span></button>
+            </div>
+        </div>
+        <p id="proxyPageMessage" class="proxy-page-message" role="status" aria-live="polite">正在加载代理与账号…</p>
+        <button type="button" class="btn btn-secondary btn-sm" id="proxyRetry" hidden>重新加载</button>
+        <div id="proxyNodesPanel" role="tabpanel" aria-labelledby="proxyNodesTab">
+            <div class="proxy-table-wrap"><table class="data-table proxy-table">
+                <thead><tr><th>节点 / 地址</th><th>出口 IP / 地理位置</th><th>检测耗时</th><th>状态 / 检测时间</th><th>绑定</th><th class="proxy-actions-heading">操作</th></tr></thead>
+                <tbody id="proxyNodesBody"></tbody>
+            </table></div>
+            <div id="proxyNodesEmpty" class="proxy-empty" hidden><i data-lucide="network"></i><h3>添加第一个代理节点</h3><p>支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H，保存后即可检测出口。</p><button type="button" class="btn btn-secondary" id="proxyEmptyAdd">新增代理</button></div>
+            <p class="proxy-footnote">耗时为服务器经代理访问出口检测服务的时间；地理位置与 IP 为最近一次检测结果。需要固定出口时，请使用静态 IP 代理。</p>
+        </div>
+        <div id="proxyAccountsPanel" role="tabpanel" aria-labelledby="proxyAccountsTab" hidden>
+            <p class="proxy-account-help">同一邮箱共用一份出口设置，适用于登录、验活、授权及 Token 刷新。指定代理不可用时会报错，不会自动改为直连。</p>
+            <div class="proxy-table-wrap"><table class="data-table proxy-table proxy-account-table">
+                <thead><tr><th>账号</th><th>身份 / 验活</th><th>登录出口</th><th>最近检测的出口</th><th class="proxy-actions-heading">操作</th></tr></thead>
+                <tbody id="proxyAccountsBody"></tbody>
+            </table></div>
+            <div id="proxyAccountsEmpty" class="proxy-empty" hidden><i data-lucide="users"></i><h3>没有匹配的账号</h3><p>可先在账号号池导入账号，或更换搜索条件。</p><a class="btn btn-secondary" href="/admin/account-pool">前往账号号池</a></div>
+        </div>
+    </section>
+
+    <dialog id="proxyEditor" class="proxy-dialog" aria-labelledby="proxyEditorTitle">
+        <form id="proxyEditorForm">
+            <div class="proxy-dialog-header"><div><span class="proxy-dialog-kicker">代理节点</span><h3 id="proxyEditorTitle">新增代理</h3></div><button type="button" class="proxy-icon-button" id="proxyEditorClose" aria-label="关闭代理编辑"><i data-lucide="x"></i></button></div>
+            <div class="form-group"><label for="proxyName">节点名称</label><input id="proxyName" class="form-control" maxlength="80" placeholder="例如：美国 · 静态出口 01" required></div>
+            <div class="form-group"><label for="proxyUrl">完整代理地址</label><div class="proxy-secret-input"><input id="proxyUrl" type="password" class="form-control" maxlength="4096" autocomplete="new-password" spellcheck="false" placeholder="http://user:password@host:port"><button type="button" id="proxyReveal" class="proxy-icon-button" aria-label="显示输入的代理地址" aria-pressed="false"><i data-lucide="eye"></i></button></div><small id="proxyUrlHint" class="proxy-form-help">支持 http://、https://、socks5://、socks5h://；账号密码中的特殊字符请 URL 编码。</small></div>
+            <label class="proxy-checkbox"><input id="proxyEnabled" type="checkbox" checked><span>启用节点</span></label>
+            <p id="proxyEditorError" class="proxy-form-error" role="alert" hidden></p>
+            <div class="proxy-dialog-footer"><button type="button" class="btn btn-secondary" id="proxyEditorCancel">取消</button><button type="submit" class="btn btn-primary" id="proxyEditorSave">保存代理</button></div>
+        </form>
+    </dialog>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/proxies.js?v=20261108-1" defer></script>{% endblock %}

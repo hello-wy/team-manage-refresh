@@ -1,6 +1,6 @@
-import {syncAppearance} from './admin-workspace-routing.js?v=20261101-https';
-import {connectShell, createWorkspace} from './admin-workspace-shell.js?v=20261101-https';
-import {connectContent} from './admin-workspace-content.js?v=20261101-https';
+import {syncAppearance} from './admin-workspace-routing.js?v=20261108-proxy';
+import {connectShell, createWorkspace} from './admin-workspace-shell.js?v=20261108-proxy';
+import {connectContent} from './admin-workspace-content.js?v=20261108-proxy';
 
 window.addEventListener('storage', syncAppearance);
 

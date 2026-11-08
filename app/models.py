@@ -2,12 +2,47 @@
 数据库模型定义
 定义所有数据库表的 SQLAlchemy 模型
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index, and_, or_, case
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index, CheckConstraint, and_, or_, case
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 from app.utils.time_utils import get_now
+
+
+class ProxyEndpoint(Base):
+    """Managed outbound proxies; authentication stays encrypted at rest."""
+    __tablename__ = "proxy_endpoints"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(80), nullable=False)
+    url_encrypted = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    test_status = Column(String(20), nullable=False, default="untested")
+    exit_ip = Column(String(64))
+    country = Column(String(100))
+    region = Column(String(100))
+    city = Column(String(100))
+    latency_ms = Column(Integer)
+    test_message = Column(String(255))
+    tested_at = Column(DateTime)
+    created_at = Column(DateTime, nullable=False, default=get_now)
+
+
+class AccountProxyRoute(Base):
+    """One route per email, shared across pool/owner/member login identities.
+
+    The reserved email '*' holds the default login route. Missing rows inherit.
+    """
+    __tablename__ = "account_proxy_routes"
+
+    email = Column(String(255), primary_key=True)
+    mode = Column(String(20), nullable=False)
+    proxy_id = Column(Integer, ForeignKey("proxy_endpoints.id"), index=True)
+    __table_args__ = (CheckConstraint(
+        "(mode = 'direct' AND proxy_id IS NULL) OR (mode = 'proxy' AND proxy_id IS NOT NULL)",
+        name="valid_account_proxy_route",
+    ),)
 
 
 class Team(Base):

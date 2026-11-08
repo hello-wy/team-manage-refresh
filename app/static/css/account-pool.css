@@ -4,6 +4,8 @@
     min-width: 0;
 }
 
+.account-proxy-link { display: block; margin-top: .3rem; color: var(--text-muted); font-size: .74rem; }
+
 .account-pool-page > *,
 .account-pool-form,
 .account-pool-form > *,

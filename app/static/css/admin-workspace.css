@@ -42,6 +42,12 @@ body.admin-theme.admin-workspace-shell {
     flex-shrink: 0;
 }
 
+/* Seven destinations need a second row on compact desktop widths. */
+@media (min-width: 769px) and (max-width: 1400px) {
+    .admin-workspace-shell .navbar-container { grid-template-columns: auto 1fr; }
+    .admin-workspace-shell .navbar-center { order: 3; grid-column: 1 / -1; justify-content: flex-start; }
+}
+
 @media (max-width: 768px) {
     .admin-workspace-shell .sidebar {
         height: 100dvh;

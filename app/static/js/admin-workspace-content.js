@@ -1,4 +1,4 @@
-import {linkDestination, pageUrl} from './admin-workspace-routing.js?v=20261101-https';
+import {linkDestination, pageUrl} from './admin-workspace-routing.js?v=20261108-proxy';
 
 function bridgeHistory(workspace) {
     const replaceState = window.history.replaceState.bind(window.history);

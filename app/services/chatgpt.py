@@ -18,10 +18,12 @@ from app.utils.jwt_parser import JWTParser
 from app.utils.proxy import build_curl_cffi_proxies
 from app.utils.seats import upstream_seat_type
 from app.services.member_pagination import MEMBER_PAGE_SIZE, fetch_all_members, fetch_member_batch
+from app.services.proxy_manager import resolve_login_proxy
 
 logger = logging.getLogger(__name__)
 
 TEAM_PLAN_TYPES = frozenset({"team", "business", "self_serve_business_prolite"})
+_GLOBAL_PROXY = object()
 
 
 class ChatGPTService:
@@ -39,6 +41,9 @@ class ChatGPTService:
         self.jwt_parser = JWTParser()
         # 会话池：按标识符（如 Email 或 TeamID）隔离，防止身份泄漏并提高 CF 稳定性
         self._sessions: Dict[str, AsyncSession] = {}
+        self._session_proxy_urls = {}
+        self._session_emails = {}
+        self._session_locks = {}
         self.proxy: Optional[str] = None
 
     async def _get_proxy_config(self, db_session: DBAsyncSession) -> Optional[str]:
@@ -50,11 +55,12 @@ class ChatGPTService:
             return proxy_config["proxy"]
         return None
 
-    async def _create_session(self, db_session: DBAsyncSession) -> AsyncSession:
+    async def _create_session(self, db_session: DBAsyncSession, *, proxy=_GLOBAL_PROXY) -> AsyncSession:
         """
         创建 HTTP 会话
         """
-        proxy = await self._get_proxy_config(db_session)
+        if proxy is _GLOBAL_PROXY:
+            proxy = await self._get_proxy_config(db_session)
 
         proxies = build_curl_cffi_proxies(proxy)
         if proxies:
@@ -72,7 +78,7 @@ class ChatGPTService:
                     proxy_port,
                 )
             except Exception:
-                logger.info("创建 ChatGPT 会话代理: %s", normalized_proxy)
+                logger.info("创建 ChatGPT 会话代理: configured")
         else:
             logger.info("创建 ChatGPT 会话代理: disabled")
 
@@ -80,19 +86,31 @@ class ChatGPTService:
         session = AsyncSession(
             impersonate="chrome110",
             proxies=proxies,
+            trust_env=False,
             timeout=30,
             verify=False # 某些代理环境下需要，或根据需求开启
         )
         return session
 
-    async def _get_session(self, db_session: DBAsyncSession, identifier: str) -> AsyncSession:
+    async def _get_session(self, db_session: DBAsyncSession, identifier: str, *, email=None) -> AsyncSession:
         """
         根据标识符获取或创建持久会话
         """
-        if identifier not in self._sessions:
-            logger.info(f"为标识符 {identifier} 创建新会话")
-            self._sessions[identifier] = await self._create_session(db_session)
-        return self._sessions[identifier]
+        lock = self._session_locks.setdefault(identifier, asyncio.Lock())
+        async with lock:
+            routing_email = email or self._session_emails.get(identifier)
+            proxy = await resolve_login_proxy(
+                db_session, identifier, email=routing_email,
+            )
+            if identifier in self._sessions and self._session_proxy_urls.get(identifier) != proxy:
+                await self.clear_session(identifier)
+            if identifier not in self._sessions:
+                logger.info(f"为标识符 {identifier} 创建新会话")
+                self._sessions[identifier] = await self._create_session(db_session, proxy=proxy)
+                self._session_proxy_urls[identifier] = proxy
+            if routing_email:
+                self._session_emails[identifier] = routing_email.strip().lower()
+            return self._sessions[identifier]
 
     async def _make_request(
         self,
@@ -107,20 +125,18 @@ class ChatGPTService:
         """
         发送 HTTP 请求 (使用持久化隔离会话，提高 CF 通过率并防止污染)
         """
-        # 尝试从 Header 或 Token 自动提取标识符，确保身份绝对隔离
+        token_email = None
+        if "Authorization" in headers:
+            token_email = self.jwt_parser.extract_email(headers["Authorization"].replace("Bearer ", ""))
+        # 优先按实际账号邮箱隔离，同一工作区的成员仍有各自的登录出口。
         if identifier == "default":
-            # 优先从账号 ID 识别，这对 Team 邀请等操作最重要
             acc_id = headers.get("chatgpt-account-id")
-            if acc_id:
+            if token_email:
+                identifier = token_email
+            elif acc_id:
                 identifier = f"acc_{acc_id}"
-            # 其次从 Token 解析邮箱
-            elif "Authorization" in headers:
-                token = headers["Authorization"].replace("Bearer ", "")
-                email = self.jwt_parser.extract_email(token)
-                if email:
-                    identifier = email
 
-        session = await self._get_session(db_session, identifier)
+        session = await self._get_session(db_session, identifier, email=token_email)
         
         # 补全基础浏览器请求头
         base_headers = {
@@ -642,6 +658,8 @@ class ChatGPTService:
     async def clear_session(self, identifier: Optional[str] = None):
         """清理指定身份的会话，若不提供则清理所有"""
         if identifier:
+            self._session_proxy_urls.pop(identifier, None)
+            self._session_emails.pop(identifier, None)
             if identifier in self._sessions:
                 try:
                     await self._sessions[identifier].close()
@@ -659,6 +677,8 @@ class ChatGPTService:
             except:
                 pass
         self._sessions.clear()
+        self._session_proxy_urls.clear()
+        self._session_emails.clear()
 
 
 # 创建全局实例
