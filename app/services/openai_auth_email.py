@@ -51,6 +51,10 @@ def email_login_options(session, response):
             isinstance(method, dict) and method.get("type") == "password"
             for method in methods
         )
+    if mode == "passwordless_login":
+        # Older sessions omit login_methods; the web client's password alternative
+        # still navigates to /log-in/password. The destination must confirm access.
+        return mode, True
     parser = _PasswordLinkParser()
     parser.feed(html)
     return mode, parser.available

@@ -63,6 +63,10 @@ class EmailModeTests(unittest.TestCase):
     def test_malformed_session_mode_does_not_crash(self):
         self.assertEqual(email_login_options(FakeSession([], []), email_page([])), ('unknown', False))
 
+    def test_legacy_passwordless_session_without_methods_can_use_password_route(self):
+        self.assertEqual(email_login_options(FakeSession([], []), email_page(login_methods=None)),
+                         ('passwordless_login', True))
+
     def test_required_email_and_reauth_are_not_overridden_by_password_link(self):
         for mode, fields in [('post_auth_email_verification', {}), ('passwordless_signup', {}),
                              ('passwordless_login', {'reauth': True}),
