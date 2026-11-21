@@ -27,6 +27,9 @@ from app.services.openai_workspace import inspect_workspace_claims, resolve_work
 from app.services.openai_auth_totp import complete_totp
 from app.services.operation_progress import report_progress
 from app.services.proxy_manager import ProxyRoutingError
+from app.services.openai_auth_email import (
+    PASSWORD_URL, email_login_options, is_email_verification, is_password_login,
+)
 
 MAX_REDIRECTS = 20
 
@@ -173,15 +176,67 @@ class OpenAIAutomaticLoginService:
         next_url = _next_url(response)
         if not next_url:
             raise OpenAIAutomaticLoginError("账号提交后未返回登录步骤")
-        _, current_url = await self._follow(session, next_url, device_id, sentinel_token)
-        if "password" not in current_url.lower():
+        page, current_url = await self._follow(session, next_url, device_id, sentinel_token)
+        if is_email_verification(current_url):
+            current_url = await self._choose_password_login(
+                session, page, device_id, sentinel_token, stage="after_email",
+            )
+        if not is_password_login(current_url):
             raise OpenAIAutomaticLoginError("该账号未进入密码登录流程，无法执行自动登录")
         return current_url
+
+    async def _choose_password_login(
+        self, session, response, device_id, sentinel_token, *, stage, identifier="unknown",
+        allow_switch=True,
+    ):
+        if getattr(response, "status_code", None) != 200:
+            raise OpenAIAutomaticLoginError("读取邮箱验证页面失败，无法确认可用登录方式")
+        mode, password_available = email_login_options(session, response)
+        logger.info(
+            "OpenAI 邮箱验证步骤: stage=%s mode=%s password_available=%s identifier=%s",
+            stage, mode, password_available, identifier,
+        )
+        if mode == "post_auth_email_verification":
+            raise OpenAIAutomaticLoginError(
+                "OpenAI 在密码/2FA 步骤后仍要求验证邮箱（post_auth_email_verification），"
+                "OAuth 授权尚未完成；请先在官方登录流程完成邮箱验证后重试"
+            )
+        if not password_available:
+            raise OpenAIAutomaticLoginError(
+                "OpenAI 当前要求邮箱验证，未提供可切换的密码登录入口；请在官方登录流程完成验证后重试"
+            )
+        if not allow_switch:
+            raise OpenAIAutomaticLoginError(
+                "已切换密码登录，但 OpenAI 仍返回邮箱验证，自动登录已停止；请在官方登录流程确认验证要求"
+            )
+        page, url = await self._follow(session, PASSWORD_URL, device_id, sentinel_token)
+        if (not is_password_login(url) or getattr(page, "status_code", None) != 200):
+            raise OpenAIAutomaticLoginError(
+                "OpenAI 未允许切换到密码登录，仍需在官方登录流程完成验证"
+            )
+        return url
 
     async def _submit_password_and_totp(
         self, session: Any, request: AutomaticLoginRequest, current_url: str,
         device_id: str, sentinel_token: str,
     ) -> tuple[str, str]:
+        # At most one advertised password fallback; never loop on an OTP challenge.
+        for attempt in range(2):
+            response, current_url, factor_id = await self._verify_password_and_totp_once(
+                session, request, current_url, device_id, sentinel_token,
+            )
+            if not is_email_verification(current_url):
+                return current_url, factor_id
+            current_url = await self._choose_password_login(
+                session, response, device_id, sentinel_token, stage="after_password",
+                identifier=request.identifier, allow_switch=attempt == 0,
+            )
+        raise OpenAIAutomaticLoginError("密码登录未完成")
+
+    async def _verify_password_and_totp_once(
+        self, session: Any, request: AutomaticLoginRequest, current_url: str,
+        device_id: str, sentinel_token: str,
+    ) -> tuple[Any, str, str]:
         response = await session.post(
             f"{AUTH_ORIGIN}/api/accounts/password/verify",
             headers=_auth_headers(
@@ -204,10 +259,8 @@ class OpenAIAutomaticLoginService:
             )
         if not next_url:
             raise OpenAIAutomaticLoginError("密码验证后未返回下一步")
-        _, current_url = await self._follow(session, next_url, device_id, sentinel_token)
-        if "email-verification" in current_url.lower():
-            raise OpenAIAutomaticLoginError("该账号还要求邮箱验证码，当前自动登录仅支持密码和 2FA")
-        return current_url, verified_totp_factor_id
+        page, current_url = await self._follow(session, next_url, device_id, sentinel_token)
+        return page, current_url, verified_totp_factor_id
 
     async def _select_workspace(
         self, session: Any, current_url: str, account_id: str,

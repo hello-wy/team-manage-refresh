@@ -88,6 +88,23 @@ def inspect_auth_page_workspace(html: str) -> dict[str, Any]:
     return merge_workspace_scans(scans)
 
 
+def inspect_auth_page_session(html: str) -> dict[str, Any]:
+    """Read current auth state, not similarly named feature-gate settings."""
+    session = {}
+    for serialized in _serialized_documents(html):
+        document = _decode_document(serialized)
+        loaders = document.get("loaderData") if isinstance(document, dict) else None
+        if not isinstance(loaders, dict):
+            continue
+        # The email route's loader can contain a newer session than the layout.
+        for key in ("routes/layouts/client-auth-session-layout/layout", "EMAIL_VERIFICATION"):
+            route = loaders.get(key)
+            current = route.get("session") if isinstance(route, dict) else None
+            if isinstance(current, dict) and not current.get("is_missing_session"):
+                session.update(current)
+    return session
+
+
 def _serialized_documents(html: str) -> list[str]:
     documents = []
     for match in _ENQUEUE_PATTERN.finditer(str(html or "")):
