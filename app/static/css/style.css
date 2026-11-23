@@ -989,7 +989,8 @@ body.admin-theme .toast {
     color: var(--danger);
 }
 
-#manageMembersModal .member-auto-kick-toggle {
+#manageMembersModal .member-auto-kick-toggle,
+#manageMembersModal .member-expiration-edit {
     width: 32px;
     height: 32px;
     min-width: 32px;
@@ -997,7 +998,8 @@ body.admin-theme .toast {
     padding: 0 !important;
 }
 
-.member-auto-kick-toggle svg {
+.member-auto-kick-toggle svg,
+.member-expiration-edit svg {
     width: 16px;
     height: 16px;
 }

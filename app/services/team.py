@@ -1479,6 +1479,28 @@ class TeamService:
             logger.exception("更新 Team 失败")
             return {"success": False, "error": "更新失败，请稍后重试"}
 
+    async def update_team_expiration(self, team_id: int, expires_at, db_session: AsyncSession) -> Dict[str, Any]:
+        """保存管理员手动设置的 Team 到期时间，并同步标准席位计划。"""
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return {"success": False, "error": "Team 不存在"}
+        team.expires_at = expires_at
+        if team.status in {"active", "full", "expired"}:
+            if expires_at and expires_at < get_now():
+                team.status = "expired"
+            elif team.current_members is not None and team.current_members >= (team.max_members or 0):
+                team.status = "full"
+            else:
+                team.status = "active"
+        mappings = (await db_session.execute(select(TeamEmailMapping).where(
+            TeamEmailMapping.team_id == team_id,
+            TeamEmailMapping.status == TEAM_EMAIL_STATUS_JOINED,
+        ))).scalars().all()
+        await protect_team_mappings(db_session, team_id, mappings)
+        await db_session.commit()
+        return {"success": True, "message": "Team 到期时间已更新",
+                "expires_at": to_local_iso(expires_at) if expires_at else None}
+
     async def batch_transfer_pool(
         self,
         ids: List[int],

@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from typing import Any, Optional, List, Dict, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status, Request
@@ -73,7 +74,7 @@ from app.services.sub2api_export_records import sub2api_export_record_service
 from app.services.team_refresh import TeamRefreshDependencies, TeamRefreshService
 from app.services.team_sub2api_export import TeamSub2apiExportDependencies, TeamSub2apiExportService
 from app.services.cpa_export import attach_cpa_export_jobs
-from app.utils.time_utils import get_now
+from app.utils.time_utils import get_now, to_local_datetime
 from app.utils.proxy import mask_proxy_url, normalize_proxy_url
 
 logger = logging.getLogger(__name__)
@@ -299,6 +300,10 @@ class MemberAutoKickHoursRequest(BaseModel):
 
 class MemberAutoKickParticipationRequest(BaseModel):
     enabled: bool = Field(..., description="该成员是否参与自动下线")
+
+
+class MemberExpirationRequest(BaseModel):
+    expires_at: Optional[datetime] = Field(..., description="到期时间；为空时恢复自动计算")
 
 
 class CodeGenerateRequest(BaseModel):
@@ -1736,6 +1741,33 @@ async def update_member_auto_kick_participation(
     current_user: dict = Depends(require_admin),
 ):
     result = await member_auto_kick_service.update_member_participation(team_id, user_id, payload.enabled, db)
+    return JSONResponse(content=result, status_code=200 if result["success"] else 400)
+
+
+@router.put("/teams/{team_id}/expiration")
+async def update_team_expiration(
+    team_id: int,
+    payload: MemberExpirationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await team_service.update_team_expiration(
+        team_id, to_local_datetime(payload.expires_at), db,
+    )
+    return JSONResponse(content=result, status_code=200 if result["success"] else 400)
+
+
+@router.put("/teams/{team_id}/members/{user_id}/expiration")
+async def update_member_expiration(
+    team_id: int,
+    user_id: str,
+    payload: MemberExpirationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    result = await member_auto_kick_service.update_member_expiration(
+        team_id, user_id, to_local_datetime(payload.expires_at), db,
+    )
     return JSONResponse(content=result, status_code=200 if result["success"] else 400)
 
 

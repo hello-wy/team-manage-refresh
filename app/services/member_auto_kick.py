@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RotationAction, Team, TeamEmailMapping, TeamReplacementQueue
 from app.services.member_auto_kick_policy import (
-    EXPIRY_POLICIES, MAX_AUTO_KICK_HOURS, MIN_AUTO_KICK_HOURS, OWNER_ROLE, auto_kick_enabled_condition, participates,
+    EXPIRY_POLICIES, MANUAL_EXPIRY_POLICY, MAX_AUTO_KICK_HOURS, MIN_AUTO_KICK_HOURS, OWNER_ROLE,
+    auto_kick_enabled_condition, participates,
     record_failure, refresh_deadline, set_participation, team_auto_kick_hours,
 )
 from app.utils.time_utils import get_now
@@ -112,6 +113,47 @@ class MemberAutoKickService:
                 "message": "该成员将按 Team 时长自动下线" if enabled else "该成员不会自动下线",
                 "seat_type": mapping.seat_type,
                 **schedule_payload(mapping)}
+
+    async def update_member_expiration(
+        self, team_id: int, user_id: str, expires_at, db_session: AsyncSession,
+    ) -> Dict[str, object]:
+        team = await db_session.get(Team, team_id)
+        if not team:
+            return {"success": False, "error": "Team 不存在"}
+        mapping = await self._joined_mapping(team_id, user_id, db_session)
+        if not mapping:
+            return {"success": False, "error": "该成员已不在当前 Team 中，请刷新列表"}
+        if mapping.member_role == OWNER_ROLE:
+            return {"success": False, "error": "Team 所有者不会自动下线，不能编辑退出时间"}
+        if await is_warranty_member(db_session, team_id, mapping.email):
+            protect_mapping(mapping, team)
+            await db_session.commit()
+            return {"success": False, "error": "质保兑换成员只能在 Team 到期时退出"}
+        if expires_at is None:
+            mapping.departure_policy = "timed"
+            mapping.auto_kick_enabled = True
+            mapping.auto_kick_exempt = False
+            refresh_deadline(mapping, team_auto_kick_hours(team), team=team)
+            message = "已恢复按 Team 到期时间计算退出时间" if mapping.seat_type == "standard" else "已恢复按 Team 时长计算退出时间"
+        else:
+            mapping.departure_policy = MANUAL_EXPIRY_POLICY
+            mapping.auto_kick_enabled = True
+            mapping.auto_kick_exempt = False
+            mapping.auto_kick_at = expires_at
+            mapping.auto_kick_failures = 0
+            mapping.auto_kick_last_error = None
+            mapping.auto_kick_retry_at = None
+            message = "成员退出时间已更新"
+        await db_session.commit()
+        return {"success": True, "message": message, "seat_type": mapping.seat_type,
+                **schedule_payload(mapping)}
+
+    async def _joined_mapping(self, team_id: int, user_id: str, db_session: AsyncSession):
+        return (await db_session.execute(select(TeamEmailMapping).where(
+            TeamEmailMapping.team_id == team_id,
+            TeamEmailMapping.upstream_user_id == user_id,
+            TeamEmailMapping.status == JOINED_STATUS,
+        ))).scalar_one_or_none()
 
     async def run_due_members(
         self,
@@ -351,8 +393,11 @@ class MemberAutoKickService:
     async def _due_members(self, db_session: AsyncSession) -> list[DueMember]:
         now = get_now()
         warranty = warranty_member_condition(TeamEmailMapping.team_id, TeamEmailMapping.email)
-        expires_with_team = or_(warranty, TeamEmailMapping.seat_type == "standard")
+        manual_expiry = TeamEmailMapping.departure_policy == MANUAL_EXPIRY_POLICY
+        expires_with_team = or_(warranty, TeamEmailMapping.seat_type == "standard") & ~manual_expiry
         team_expiry_due = expires_with_team & Team.expires_at.is_not(None) & (Team.expires_at <= now)
+        manual_due = (manual_expiry & auto_kick_enabled_condition()
+                      & (TeamEmailMapping.auto_kick_at <= now))
         timed_due = (~expires_with_team & (TeamEmailMapping.seat_type == "premium")
                      & auto_kick_enabled_condition() & (TeamEmailMapping.auto_kick_at <= now)
                      & ~exists().where(
@@ -367,7 +412,7 @@ class MemberAutoKickService:
                 or_(TeamEmailMapping.auto_kick_retry_at.is_(None), TeamEmailMapping.auto_kick_retry_at <= now,
                     team_expiry_due & or_(TeamEmailMapping.auto_kick_at.is_(None),
                                        TeamEmailMapping.auto_kick_at != Team.expires_at)),
-                or_(team_expiry_due, timed_due),
+                or_(team_expiry_due, timed_due, manual_due),
                 TeamEmailMapping.upstream_user_id.is_not(None),
                 func.coalesce(TeamEmailMapping.member_role, "") != OWNER_ROLE,
                 func.lower(func.trim(TeamEmailMapping.email)) != func.lower(func.trim(Team.email)),

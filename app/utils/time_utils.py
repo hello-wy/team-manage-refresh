@@ -13,3 +13,9 @@ def to_local_iso(dt: datetime) -> str:
     tz = pytz.timezone(settings.timezone)
     localized = tz.localize(dt) if dt.tzinfo is None else dt.astimezone(tz)
     return localized.isoformat()
+
+def to_local_datetime(value: datetime | None) -> datetime | None:
+    """将带时区输入转换为数据库使用的本地 naive datetime。"""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(pytz.timezone(settings.timezone)).replace(tzinfo=None)

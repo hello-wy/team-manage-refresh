@@ -7,6 +7,7 @@ from app.models import Team, TeamEmailMapping
 
 OWNER_ROLE = "account-owner"
 EXPIRY_POLICIES = ("team_expiry", "standard_expiry")
+MANUAL_EXPIRY_POLICY = "manual_expiry"
 DEFAULT_AUTO_KICK_HOURS = 2
 MIN_AUTO_KICK_HOURS = 1
 MAX_AUTO_KICK_HOURS = 8760
@@ -28,6 +29,8 @@ def participates(mapping):
 def departure_deadline(mapping, team=None):
     if mapping.member_role == OWNER_ROLE or mapping.status != "joined":
         return None
+    if getattr(mapping, "departure_policy", None) == MANUAL_EXPIRY_POLICY:
+        return mapping.auto_kick_at
     if mapping.seat_type == "standard" or getattr(mapping, "departure_policy", None) in EXPIRY_POLICIES:
         return team.expires_at if team is not None else mapping.auto_kick_at
     return mapping.auto_kick_at if participates(mapping) else None
@@ -38,7 +41,8 @@ def has_auto_kick_schedule(mapping, team=None):
 
 
 def auto_kick_deadline_expression():
-    return case((or_(TeamEmailMapping.seat_type == "standard",
+    return case((TeamEmailMapping.departure_policy == MANUAL_EXPIRY_POLICY, TeamEmailMapping.auto_kick_at),
+                (or_(TeamEmailMapping.seat_type == "standard",
                      TeamEmailMapping.departure_policy == "team_expiry"), Team.expires_at),
                 else_=TeamEmailMapping.auto_kick_at)
 
@@ -60,6 +64,8 @@ def _reset_failures(mapping):
 def refresh_deadline(mapping, hours, *, team=None):
     if getattr(mapping, "departure_policy", None) == "team_expiry":
         return  # 质保规则由兑换记录保护流程设置。
+    if getattr(mapping, "departure_policy", None) == MANUAL_EXPIRY_POLICY:
+        return  # 管理员手动设置的成员时间不能被同步覆盖。
     previous_policy = getattr(mapping, "departure_policy", None)
     mapping.departure_policy = "standard_expiry" if mapping.seat_type == "standard" else "timed"
     start = getattr(mapping, "usage_started_at", None) or mapping.joined_at

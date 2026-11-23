@@ -22,6 +22,9 @@
     height: 14px;
 }
 
+.member-expiration-dialog form { display: grid; gap: 0.65rem; }
+.member-expiration-dialog [data-error] { color: var(--danger); }
+
 #manageMembersModal .member-balance-refresh {
     /* 覆盖全局卡通主题控件上的粗边框和硬阴影。 */
     border: 1px solid var(--member-border) !important;

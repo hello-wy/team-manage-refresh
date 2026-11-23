@@ -58,7 +58,8 @@ async def decorate_seat_status(db, team, members):
         protected = member.get('departure_policy') == 'team_expiry'
         standard = normalize_seat_type(member.get('seat_type')) == 'standard'
         # 实际席位优先于旧参与标志；缺少映射的成员也按 Team 到期时间展示。
-        if standard and member.get('role') != 'account-owner':
+        if (standard and member.get('role') != 'account-owner'
+                and member.get('departure_policy') != 'manual_expiry'):
             member.update(departure_policy='team_expiry' if protected else 'standard_expiry',
                           auto_kick_enabled=False,
                           auto_kick_at=iso(team.expires_at) if member.get('status') == 'joined' else None)
@@ -80,6 +81,10 @@ async def decorate_seat_status(db, team, members):
             else:
                 state, label = 'protected', '质保信息待同步'
             reason = '免小时级及额度清退，Team 到期后下线' if team.expires_at else 'Team 到期时间待同步'
+        elif member.get('departure_policy') == 'manual_expiry' and deadline:
+            overdue = deadline <= iso(now)
+            state, label = ('overdue', '到期待下线') if overdue else ('timed', '定时使用中')
+            reason = '管理员手动设置退出时间'
         elif standard:
             overdue = bool(team.expires_at and team.expires_at <= now)
             state, label = ('overdue', '到期待下线') if overdue else ('retained', '保留至 Team 到期')

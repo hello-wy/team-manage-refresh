@@ -3,7 +3,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.models import RedemptionCode, RedemptionRecord, Team, TeamEmailMapping
-from app.services.member_auto_kick_policy import refresh_deadline, team_auto_kick_hours
+from app.services.member_auto_kick_policy import MANUAL_EXPIRY_POLICY, refresh_deadline, team_auto_kick_hours
 from app.utils.time_utils import get_now
 
 
@@ -53,7 +53,14 @@ async def is_standard_member(db, team_id, email):
 
 
 async def scheduled_departure_allowed(db, team_id, email):
-    if not (await is_standard_member(db, team_id, email) or await is_warranty_member(db, team_id, email)):
+    mapping = await db.scalar(select(TeamEmailMapping).where(
+        TeamEmailMapping.team_id == team_id,
+        TeamEmailMapping.email == (email or '').strip().lower(),
+        TeamEmailMapping.status == "joined",
+    ))
+    if mapping and mapping.departure_policy == MANUAL_EXPIRY_POLICY:
+        return True
+    if not (mapping and mapping.seat_type == "standard") and not await is_warranty_member(db, team_id, email):
         return True
     # 执行前重读当前订阅到期时间，续费或降为标准后不能执行旧小时计划。
     expiry = await db.scalar(select(Team.expires_at).where(Team.id == team_id))
@@ -80,5 +87,6 @@ async def protect_team_mappings(db, team_id, mappings):
         if mapping.email.strip().lower() in normalized:
             protect_mapping(mapping, team)
             mapping.join_source = "redeem"
-        elif mapping.seat_type == "standard" or mapping.departure_policy == "standard_expiry":
+        elif (mapping.departure_policy != "manual_expiry"
+              and (mapping.seat_type == "standard" or mapping.departure_policy == "standard_expiry")):
             refresh_deadline(mapping, team_auto_kick_hours(team), team=team)

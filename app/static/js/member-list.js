@@ -142,7 +142,7 @@ function renderJoinedMemberRow(teamId, member) {
         <td>${['premium', 'prolite'].includes((member.seat_type || '').trim().toLowerCase())
             ? formatDateTime(member.joined_at || member.added_at) : '—'}</td>
         <td><div class="member-auto-kick-cell">${renderMemberAutoKickTime(member)}
-            ${renderMemberAutoKickControl(teamId, member)}</div></td>
+            ${renderMemberExpirationControl(teamId, member)}${renderMemberAutoKickControl(teamId, member)}</div></td>
         <td style="text-align: right;">${renderMemberAuthorizationActions(teamId, member)}</td>
     </tr>`;
 }

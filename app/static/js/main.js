@@ -2177,7 +2177,8 @@ function renderMemberAutoKickTime(member) {
             || member.departure_policy === 'team_expiry'
             || (member.departure_policy === 'standard_expiry'
                 && !['premium', 'prolite'].includes((member.seat_type || '').trim().toLowerCase()))) {
-        const expiry = Object.hasOwn(member, 'team_expires_at') ? member.team_expires_at : member.auto_kick_at;
+        const expiry = member.departure_policy === 'manual_expiry' ? member.auto_kick_at
+            : Object.hasOwn(member, 'team_expires_at') ? member.team_expires_at : member.auto_kick_at;
         return `<span class="member-auto-kick-time">${expiry ? formatDateTime(expiry) : 'Team 到期时间待同步'}</span>`;
     }
     if (member.auto_kick_enabled === false) {
@@ -2205,6 +2206,88 @@ function renderMemberAutoKickControl(teamId, member) {
         data-team-id="${Number(teamId)}" data-user-id="${escapeHtml(member.user_id)}" data-email="${escapeHtml(member.email)}"
         data-enabled="${enabled}" aria-pressed="${enabled}" title="${label}" aria-label="${label}：${escapeHtml(member.email)}"
         onclick="toggleMemberAutoKickParticipation(this)"><i data-lucide="${enabled ? 'clock-3' : 'shield-off'}" aria-hidden="true"></i></button>`;
+}
+
+function renderMemberExpirationControl(teamId, member) {
+    if (member.role === 'account-owner' || member.status !== 'joined' || member.warranty_protected) return '';
+    const seatType = (member.seat_type || '').trim().toLowerCase();
+    const standard = ['default', 'standard'].includes(seatType);
+    if (!standard && !['premium', 'prolite'].includes(seatType)) return '';
+    const expiry = member.departure_policy === 'manual_expiry' ? member.auto_kick_at
+        : standard ? member.team_expires_at : member.auto_kick_at;
+    const label = standard ? '编辑成员到期时间' : '编辑成员退出时间';
+    const userId = escapeHtml(member.user_id || '');
+    return `<button type="button" class="btn btn-sm btn-icon btn-minimal btn-secondary member-expiration-edit"
+        data-team-id="${Number(teamId)}" data-user-id="${userId}" data-expiration-scope="member"
+        data-expiration-at="${escapeHtml(expiry || '')}" title="${label}" aria-label="${label}"
+        onclick="openMemberExpirationEditor(this)"><i data-lucide="pencil" aria-hidden="true"></i></button>`;
+}
+
+function memberExpirationInputValue(value) {
+    return value ? String(value).replace(/([+-]\d{2}:\d{2}|Z)$/, '').slice(0, 16) : '';
+}
+
+function closeMemberExpirationEditor(dialog) {
+    dialog.close();
+    dialog.remove();
+}
+
+async function saveMemberExpiration(dialog) {
+    const teamId = Number(dialog.dataset.teamId);
+    const scope = dialog.dataset.expirationScope;
+    const userId = dialog.dataset.userId;
+    const value = dialog.querySelector('input').value || null;
+    const url = scope === 'team'
+        ? `/admin/teams/${teamId}/expiration`
+        : `/admin/teams/${teamId}/members/${encodeURIComponent(userId)}/expiration`;
+    const buttons = dialog.querySelectorAll('button');
+    buttons.forEach(button => { button.disabled = true; });
+    const error = dialog.querySelector('[data-error]');
+    error.hidden = true;
+    const result = await apiCall(url, {method: 'PUT', body: JSON.stringify({expires_at: value})});
+    if (!result.success || !result.data?.success) {
+        error.textContent = result.error || result.data?.error || '到期时间保存失败';
+        error.hidden = false;
+        buttons.forEach(button => { button.disabled = false; });
+        return;
+    }
+    closeMemberExpirationEditor(dialog);
+    showToast(result.data.message || '到期时间已保存', 'success');
+    await loadModalMemberList(teamId);
+}
+
+function openMemberExpirationEditor(button) {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'page-confirm member-expiration-dialog';
+    dialog.dataset.teamId = button.dataset.teamId;
+    dialog.dataset.userId = button.dataset.userId || '';
+    dialog.dataset.expirationScope = button.dataset.expirationScope;
+    dialog.innerHTML = `<form method="dialog">
+        <h3>编辑成员到期时间</h3>
+        <p>该时间只会应用到当前成员，不会修改其他成员或 Team 订阅到期时间。</p>
+        <label>到期时间（北京时间 UTC+8）</label>
+        <input type="datetime-local" class="form-control" step="60" value="${memberExpirationInputValue(button.dataset.expirationAt)}">
+        <p data-error role="alert" hidden></p>
+        <div class="page-confirm-actions">
+            <button type="button" class="btn btn-secondary" data-cancel>取消</button>
+            <button type="button" class="btn btn-secondary" data-clear>清除</button>
+            <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+    </form>`;
+    dialog.querySelector('form').addEventListener('submit', event => {
+        event.preventDefault();
+        saveMemberExpiration(dialog);
+    });
+    dialog.querySelector('[data-clear]').addEventListener('click', () => {
+        dialog.querySelector('input').value = '';
+        saveMemberExpiration(dialog);
+    });
+    dialog.querySelector('[data-cancel]').addEventListener('click', () => closeMemberExpirationEditor(dialog));
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.addEventListener('keydown', event => event.stopPropagation());
+    document.body.append(dialog);
+    dialog.showModal();
+    dialog.querySelector('input').focus();
 }
 
 async function toggleMemberAutoKickParticipation(button) {
