@@ -190,7 +190,7 @@ class AccountPoolCredentialServiceTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
             request = Request({
                 "type": "http", "method": "GET", "path": "/admin/account-pool",
-                "headers": [], "query_string": b"", "server": ("localhost", 8008),
+                "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("localhost", 8008),
             })
             page = await account_pool_page(request, db=session, current_user={"username": "admin"})
             html = page.body.decode()

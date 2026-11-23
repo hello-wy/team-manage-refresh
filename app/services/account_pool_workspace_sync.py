@@ -4,6 +4,7 @@ import json
 from sqlalchemy import func, or_, select, update
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace, Team, TeamEmailMapping
+from app.services.openai_subscription import personal_subscription, workspace_personal_subscription
 from app.utils.team_names import team_display_name
 from app.utils.time_utils import get_now
 
@@ -99,6 +100,17 @@ def _export_state(entry, saved, selected):
 async def persist_workspace_scan(db, entry, *, discovered, credential_version):
     teams = [item for item in discovered if not item["is_personal"]]
     options = teams or discovered
+    previous = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
+    previous_options = {item["id"]: item for item in previous.get("available_workspaces", [])}
+    options = [dict(item) for item in options]
+    for item in options:
+        if not item["is_personal"] or personal_subscription(item):
+            continue
+        plan = personal_subscription(previous_options.get(item["id"], {}))
+        if not plan and (not entry.workspace_id or entry.workspace_id == item["id"]):
+            plan = personal_subscription(previous)
+        if plan:
+            item["personal_plan"] = plan
     current = _selected_workspace(entry, options)
     selected = current["id"] if current else None
     saved = (await db.execute(select(AccountPoolWorkspace).where(
@@ -106,6 +118,9 @@ async def persist_workspace_scan(db, entry, *, discovered, credential_version):
         AccountPoolWorkspace.workspace_id == selected,
     ))).scalar_one_or_none() if selected else None
     state = {"available_workspaces": options}
+    personal_plan = workspace_personal_subscription({"available_workspaces": discovered}) or workspace_personal_subscription(previous)
+    if personal_plan:
+        state["personal_plan"] = personal_plan
     updated = await db.execute(update(AccountPoolEntry).where(
         AccountPoolEntry.id == entry.id, AccountPoolEntry.deleted_at.is_(None),
         AccountPoolEntry.password_encrypted == credential_version[0],

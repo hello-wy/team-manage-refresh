@@ -10,6 +10,8 @@ const IMPORT_URL = '/admin/teams/import';
 test('quick import parses and submits fresh credentials in one action', async () => {
     const h = harness();
     assert.equal(h.form.accessToken.disabled, true);
+    assert.equal(h.credentials.style.display, 'block');
+    assert.equal(h.credentialForm.loginCredentials.disabled, false);
     await h.submit();
     assert.deepEqual(h.calls.map(call => call.url), [PARSE_URL, IMPORT_URL]);
     assert.equal(h.calls[0].body.callback_text, h.callback.value);
@@ -107,6 +109,7 @@ test('duplicate submits while parsing issue only one parse and import', async ()
     assert.ok(h.buttons.every(button => button.disabled));
     assert.equal(h.quickButton.textContent, '解析并导入中...');
     await h.submit();
+    await h.submitCredentials();
     assert.equal(h.calls.length, 1);
     resolveParse(parseResult);
     await pending;
@@ -140,6 +143,8 @@ test('manual import submits supplied fields without parsing a callback', async (
     const h = harness();
     h.context.setSingleImportMode('manual');
     assert.equal(h.form.accessToken.disabled, false);
+    assert.equal(h.credentials.style.display, 'block');
+    assert.equal(h.credentialForm.loginCredentials.disabled, false);
     h.callback.value = '';
     await h.submit();
     assert.deepEqual(h.calls.map(call => call.url), [IMPORT_URL]);
@@ -151,22 +156,49 @@ test('manual import submits supplied fields without parsing a callback', async (
 
 test('credential import submits email, password and 2FA login payload', async () => {
     const h = harness();
-    h.context.setSingleImportMode('credentials');
-    await h.submit();
+    await h.submitCredentials();
     assert.deepEqual(h.calls.map(call => call.url), [IMPORT_URL]);
     assert.deepEqual(h.calls[0].body, {
         import_type: 'credentials', email: 'owner@example.com', password: 'owner-password',
         two_factor_secret: 'JBSWY3DPEHPK3PXP', account_id: 'owner-team', pool_type: 'welfare',
     });
     assert.equal(h.credentialButton.textContent, '登录并导入 Team');
+    assert.equal(h.credentialForm.resetCount, 1);
+    assert.equal(h.form.resetCount, 0);
+});
+
+test('credential import preserves cached OAuth callback for a pending token import', async () => {
+    const h = harness();
+    h.context.importResult = {success: false, error: '导入暂时失败'};
+    await h.submit();
+    h.context.importResult = {success: true, data: {success: true}};
+    await h.submitCredentials();
+    await h.submit();
+    assert.deepEqual(h.calls.map(call => call.url), [PARSE_URL, IMPORT_URL, IMPORT_URL, IMPORT_URL]);
+    assert.equal(h.calls[3].body.access_token, 'new-at');
+});
+
+test('credential import failure preserves inputs and prevents concurrent token submission', async () => {
+    const h = harness();
+    let resolveImport;
+    h.context.importResult = new Promise(resolve => { resolveImport = resolve; });
+    const pending = h.submitCredentials();
+    assert.ok(h.buttons.every(button => button.disabled));
+    await h.submit();
+    assert.equal(h.calls.length, 1);
+    resolveImport({success: false, error: '登录失败'});
+    await pending;
+    assert.equal(h.credentialForm.resetCount, 0);
+    assert.equal(h.credentialForm.loginCredentials.value, 'owner@example.com----owner-password----JBSWY3DPEHPK3PXP');
+    assert.ok(h.buttons.every(button => !button.disabled));
+    assert.deepEqual(h.toasts, [['登录失败', 'error']]);
 });
 
 test('credential text preserves password whitespace, symbols and embedded separators', async () => {
     const h = harness();
-    h.context.setSingleImportMode('credentials');
-    h.form.loginCredentials.value = '  Owner@Example.com ---- p#A----B$! ---- JBSWY3DPEHPK3PXP \n';
-    h.form.loginAccountId.value = '';
-    await h.submit();
+    h.credentialForm.loginCredentials.value = '  Owner@Example.com ---- p#A----B$! ---- JBSWY3DPEHPK3PXP \n';
+    h.credentialForm.loginAccountId.value = '';
+    await h.submitCredentials();
     assert.equal(h.calls[0].body.email, 'Owner@Example.com');
     assert.equal(h.calls[0].body.password, ' p#A----B$! ');
     assert.equal(h.calls[0].body.two_factor_secret, 'JBSWY3DPEHPK3PXP');
@@ -175,10 +207,9 @@ test('credential text preserves password whitespace, symbols and embedded separa
 
 test('credential text accepts an otpauth link without changing its contents', async () => {
     const h = harness();
-    h.context.setSingleImportMode('credentials');
     const secret = 'otpauth://totp/Example:owner?secret=JBSWY3DPEHPK3PXP&issuer=Example';
-    h.form.loginCredentials.value = `owner@example.com----password----${secret}`;
-    await h.submit();
+    h.credentialForm.loginCredentials.value = `owner@example.com----password----${secret}`;
+    await h.submitCredentials();
     assert.equal(h.calls[0].body.two_factor_secret, secret);
 });
 
@@ -195,9 +226,8 @@ const invalidCredentials = [
 for (const [value, message] of invalidCredentials) {
     test('invalid credential text prevents login: ' + message + ' (' + value.length + ')', async () => {
         const h = harness();
-        h.context.setSingleImportMode('credentials');
-        h.form.loginCredentials.value = value;
-        await h.submit();
+        h.credentialForm.loginCredentials.value = value;
+        await h.submitCredentials();
         assert.equal(h.calls.length, 0);
         assert.equal(h.form.resetCount, 0);
         assert.deepEqual(h.toasts, [[message, 'error']]);
@@ -205,16 +235,15 @@ for (const [value, message] of invalidCredentials) {
     });
 }
 
-test('mode switching enables only the active credential text and account ID', () => {
+test('token mode switching preserves the independent credential form', () => {
     const h = harness();
-    assert.equal(h.form.loginCredentials.disabled, true);
-    h.context.setSingleImportMode('credentials');
-    assert.equal(h.form.loginCredentials.disabled, false);
-    assert.equal(h.form.loginAccountId.disabled, false);
+    assert.equal(h.credentialForm.loginCredentials.disabled, false);
+    assert.equal(h.credentialForm.loginAccountId.disabled, false);
     assert.equal(h.form.accessToken.disabled, true);
     h.context.setSingleImportMode('manual');
-    assert.equal(h.form.loginCredentials.disabled, true);
-    assert.equal(h.form.loginAccountId.disabled, true);
+    assert.equal(h.form.accessToken.disabled, false);
+    assert.equal(h.credentialForm.loginCredentials.disabled, false);
+    assert.equal(h.credentialForm.loginAccountId.disabled, false);
 });
 
 test('quick import template exposes only one combined import button', () => {

@@ -35,6 +35,7 @@ def render_team_list(teams):
         escape_js=json.dumps,
     )
     return templates.get_template("admin/index.html").render(
+        request={"headers": {"x-requested-with": "XMLHttpRequest"}},
         user={"username": "test"}, admin_profile={"avatar": "", "nickname": "管理员"},
         active_page="dashboard", stats={"total_teams": len(teams), "available_teams": len(teams)},
         teams=teams,

@@ -1,0 +1,20 @@
+<dialog id="accountPoolProxyDialog" class="account-pool-proxy-dialog" aria-labelledby="accountPoolProxyTitle" aria-describedby="accountPoolProxyDescription">
+    <form id="accountPoolProxyForm">
+        <div class="account-pool-import-heading">
+            <div><h3 id="accountPoolProxyTitle">设置账号代理</h3><p id="accountPoolProxyEmail"></p></div>
+            <button type="button" class="account-pool-dialog-close" data-close-pool-proxy aria-label="关闭代理设置"><i data-lucide="x" aria-hidden="true"></i></button>
+        </div>
+        <div class="form-group">
+            <label for="accountPoolProxySelect">登录出口</label>
+            <select id="accountPoolProxySelect" class="form-control" disabled><option>正在加载代理…</option></select>
+            <p id="accountPoolProxyPreview" class="account-pool-proxy-preview" role="status" aria-live="polite"></p>
+        </div>
+        <p id="accountPoolProxyDescription" class="account-pool-hint">同一邮箱共用代理设置，适用于登录、验活、授权及 Token 刷新。指定代理不可用时会报错，不会自动切换为直连。</p>
+        <p id="accountPoolProxyError" class="account-pool-proxy-error" role="alert" hidden></p>
+        <div class="account-pool-proxy-footer">
+            <a href="/admin/proxies" class="account-pool-proxy-manage">管理代理节点<i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+            <button type="button" class="btn btn-secondary" data-close-pool-proxy>取消</button>
+            <button type="submit" class="btn btn-primary" id="accountPoolProxySave" disabled>保存设置</button>
+        </div>
+    </form>
+</dialog>

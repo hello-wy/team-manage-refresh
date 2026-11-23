@@ -209,7 +209,10 @@ class Stock16688Tests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         listing = await account_pool_service.list_entries(self.db)
         listing['entries'] = await attach_rotation_status(self.db, listing['entries'])
+        from app.services.proxy_manager import attach_login_proxy_labels
+        listing['entries'] = await attach_login_proxy_labels(self.db, listing['entries'])
         html = templates.get_template('admin/account_pool/index.html').render(
+            request={'headers': {'x-requested-with': 'XMLHttpRequest'}},
             **listing, user={'username': 'admin'}, admin_profile={'nickname': '管理员'},
             active_page='account_pool', filter_url=lambda **kwargs: '#')
         buttons = re.findall(r'<button\b[^>]*class="[^"]*\baccount-pool-16688-button\b[^"]*"[^>]*>', html)

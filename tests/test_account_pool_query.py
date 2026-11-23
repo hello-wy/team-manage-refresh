@@ -250,7 +250,7 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         from starlette.requests import Request
         from app.routes.admin import account_pool_page
         request = Request({'type': 'http', 'method': 'GET', 'path': '/admin/account-pool',
-                           'query_string': b'rotation_filter=excluded', 'headers': []})
+                           'query_string': b'rotation_filter=excluded', 'headers': [(b'x-requested-with', b'XMLHttpRequest')]})
         async with self.sessions() as db:
             response = await account_pool_page(request, db=db, current_user={'username': 'admin'},
                                                rotation_filter='excluded', per_page=1)
@@ -322,12 +322,13 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
                 entry.liveness_checked_at = self.now
             await db.commit()
             request = Request({'type': 'http', 'method': 'GET', 'path': '/admin/account-pool',
-                               'query_string': b'liveness_filter=alive', 'headers': []})
+                               'query_string': b'liveness_filter=alive', 'headers': [(b'x-requested-with', b'XMLHttpRequest')]})
             response = await account_pool_page(request, db=db, current_user={'username': 'admin'},
                                                liveness_filter='alive', per_page=1)
         html = response.body.decode()
         self.assertNotIn(message, html)
-        self.assertIn('class="account-pool-liveness-message" hidden', html)
+        self.assertRegex(html, r'class="account-pool-liveness-reason"[^>]* hidden')
+        self.assertNotIn('class="account-pool-liveness-message"', html)
         self.assertIn('value="alive" selected', html)
         self.assertIn('id="accountPoolBatchLiveness"', html)
         self.assertIn('liveness_filter=alive', response.context['filter_url'](page=2, seat_filter='standard'))
@@ -339,7 +340,7 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         from starlette.requests import Request
         from app.routes.admin import account_pool_page
         request = Request({'type': 'http', 'method': 'GET', 'path': '/admin/account-pool',
-                           'query_string': b'', 'headers': []})
+                           'query_string': b'', 'headers': [(b'x-requested-with', b'XMLHttpRequest')]})
         async with self.sessions() as db:
             response = await account_pool_page(request, db=db, current_user={'username': 'admin'},
                                                sort_by='email', sort_order='desc')
@@ -350,6 +351,9 @@ class AccountPoolQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('data-sort-by="email"', html)
         self.assertNotIn('data-sort-by="id"', html)
         self.assertNotIn('data-label="ID"', html)
+        self.assertIn('<th>代理</th>', html)
+        self.assertIn('data-label="代理"', html)
+        self.assertNotRegex(html, r'data-label="账号">[^<]*<strong>[^<]*</strong>\s*<a')
         self.assertIn('name="sort_order" value="desc"', html)
         self.assertIn('sort_order=desc', response.context['filter_url'](page=2))
 

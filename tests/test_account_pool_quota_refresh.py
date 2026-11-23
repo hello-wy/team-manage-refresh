@@ -49,7 +49,7 @@ class AccountPoolQuotaRefreshTests(unittest.IsolatedAsyncioTestCase):
 
     async def page(self):
         request = Request({"type": "http", "method": "GET", "path": "/admin/account-pool",
-                           "headers": [], "query_string": b"", "server": ("test", 80)})
+                           "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("test", 80)})
         page = await admin.account_pool_page(request, search=EMAIL, db=self.db, current_user={"username": "admin"})
         return page.body.decode()
 

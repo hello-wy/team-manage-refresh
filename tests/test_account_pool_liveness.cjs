@@ -27,13 +27,13 @@ function runtime() {
         await refreshCallback?.();
     };
     function addCell(id) {
-        const badge = {textContent: '未检测'}, message = {}, time = {}, detail = {}, checked = {};
+        const badge = {textContent: '未检测'}, reason = {dataset: {}}, time = {}, detail = {}, checked = {};
         const button = {disabled: false, dataset: {entryId: id, email: `${id}@example.com`},
             addEventListener() {}, closest: () => cell};
-        const cell = {button, badge, message, time, detail, checked, dataset: {entryId: id},
+        const cell = {button, badge, reason, time, detail, checked, dataset: {entryId: id},
             setAttribute(name, value) {this[name] = value;},
             closest: () => ({querySelector: key => key === '[data-liveness-message]' ? detail : checked}),
-            querySelector: key => ({'.status-badge': badge, '.account-pool-liveness-message': message,
+            querySelector: key => ({'.status-badge': badge, '.account-pool-liveness-reason': reason,
                 '.account-pool-liveness-time': time, '.account-pool-entry-liveness': button})[key]};
         cells.push(cell);
         return cell;
@@ -51,6 +51,7 @@ test('click immediately shows checking in the chosen column and prevents duplica
     assert.equal(first.badge.textContent, '验活中');
     assert.equal(first['aria-busy'], 'true');
     assert.equal(first.button.disabled, true);
+    assert.equal(first.reason.hidden, true);
     assert.equal(other.badge.textContent, '未检测');
     await env.context.checkAccountPoolEntryLiveness(first.button);
     assert.equal(env.requests.length, 1);
@@ -65,25 +66,30 @@ test('click immediately shows checking in the chosen column and prevents duplica
     assert.equal(first.button.disabled, false);
     assert.equal(first.time.hidden, false);
     assert.equal(first.detail.textContent, '密码、2FA 登录验证通过');
+    assert.equal(first.reason.hidden, true);
     assert.equal(env.refreshes.length, 1);
     assert.equal(env.refreshes[0].refreshQuotas, false);
     assert.equal(other.badge.textContent, '未检测');
 });
 
-test('failure is visible in the column with its reason and can be retried', async () => {
+test('failure exposes its reason in the icon tooltip and hides it while retrying or healthy', async () => {
     const env = runtime(), cell = env.addCell('-1');
     const check = env.context.checkAccountPoolEntryLiveness(cell.button);
     env.respond(0, {success: true, status: 'invalid', message: '<Token 已失效>', checked_at: '2030-01-01T12:00:00+08:00'});
     await check;
     assert.equal(cell.badge.textContent, '异常');
-    assert.equal(cell.message.textContent, '<Token 已失效>');
+    assert.equal(cell.reason.dataset.poolTooltip, '<Token 已失效>');
+    assert.equal(cell.reason.hidden, false);
+    assert.equal(cell.reason.textContent, undefined);
     assert.match(cell.badge.className, /status-error/);
     assert.equal(cell.button.disabled, false);
     const retry = env.context.checkAccountPoolEntryLiveness(cell.button);
     assert.equal(cell.badge.textContent, '验活中');
+    assert.equal(cell.reason.hidden, true);
     env.respond(1, {success: true, status: 'alive', message: 'Token 验证通过'});
     await retry;
     assert.equal(cell.badge.textContent, '正常');
+    assert.equal(cell.reason.hidden, true);
 });
 
 test('partial list redraw retains in-flight state and completion updates the replacement row', async () => {
@@ -120,7 +126,8 @@ test('network failure and server conflict show feedback and restore the retry bu
     env.context.fetch = async () => {throw new Error('网络连接失败');};
     await env.context.checkAccountPoolEntryLiveness(cell.button);
     assert.equal(cell.badge.textContent, '异常');
-    assert.equal(cell.message.textContent, '网络连接失败');
+    assert.equal(cell.reason.dataset.poolTooltip, '网络连接失败');
+    assert.equal(cell.reason.hidden, false);
     assert.equal(cell.button.disabled, false);
     env.context.fetch = async () => ({ok: false, json: async () => ({success: false, code: 'checking', error: '该账号正在验活'})});
     await env.context.checkAccountPoolEntryLiveness(cell.button);

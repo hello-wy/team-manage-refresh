@@ -101,7 +101,7 @@ class AccountPoolNamePersistenceTests(unittest.IsolatedAsyncioTestCase):
         await save_import_account_name(self.db, 1, self.result("<Kohei>").payload)
         await self.db.commit()
         request = Request({"type": "http", "method": "GET", "path": "/admin/account-pool",
-                           "headers": [], "query_string": b"", "server": ("localhost", 8008)})
+                           "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("localhost", 8008)})
         page = await account_pool_page(request, db=self.db, current_user={"username": "admin"})
         html = page.body.decode()
         self.assertIn('data-sort-by="name"', html)

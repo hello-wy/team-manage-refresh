@@ -1,6 +1,4 @@
-"""Authenticated proxy inventory and per-account outbound routing."""
-from typing import Literal
-
+"""Authenticated proxy inventory and diagnostics."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, SecretStr, field_validator
@@ -13,10 +11,8 @@ from app.models import AccountProxyRoute, ProxyEndpoint
 from app.routes.admin import build_admin_base_context
 from app.services.encryption import encryption_service
 from app.services.proxy_manager import (
-    DEFAULT_ROUTE, known_accounts, proxy_probe, public_proxy, save_route, validate_managed_proxy,
+    proxy_probe, public_proxy, validate_managed_proxy,
 )
-from app.services.settings import settings_service
-from app.utils.proxy import mask_proxy_url
 
 router = APIRouter(prefix="/admin/proxies", tags=["admin-proxies"], dependencies=[Depends(require_admin)])
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
@@ -36,15 +32,6 @@ class ProxyInput(BaseModel):
         return value
 
 
-class RouteInput(BaseModel):
-    mode: Literal["inherit", "direct", "proxy"]
-    proxy_id: int | None = Field(default=None, gt=0)
-
-
-class AccountRouteInput(RouteInput):
-    email: str = Field(min_length=3, max_length=255)
-
-
 @router.get("", response_class=HTMLResponse)
 async def proxy_page(request: Request, db: AsyncSession = Depends(get_db), user: dict = Depends(require_admin)):
     from app.main import templates
@@ -55,13 +42,8 @@ async def proxy_page(request: Request, db: AsyncSession = Depends(get_db), user:
 @router.get("/data")
 async def proxy_data(db: AsyncSession = Depends(get_db)):
     proxies = (await db.scalars(select(ProxyEndpoint).order_by(ProxyEndpoint.id))).all()
-    default = await db.get(AccountProxyRoute, DEFAULT_ROUTE)
-    legacy = await settings_service.get_proxy_config(db)
     return JSONResponse({
         "success": True, "proxies": [await public_proxy(db, proxy) for proxy in proxies],
-        "accounts": await known_accounts(db),
-        "default": {"mode": default.mode if default else "inherit", "proxy_id": default.proxy_id if default else None},
-        "legacy": {"enabled": legacy["enabled"], "address": mask_proxy_url(legacy["proxy"]) if legacy["proxy"] else ""},
     }, headers=NO_STORE)
 
 
@@ -114,7 +96,7 @@ async def delete_proxy(proxy_id: int, db: AsyncSession = Depends(get_db)):
         AccountProxyRoute.proxy_id == proxy_id,
     ))
     if count:
-        raise HTTPException(409, "该代理仍用于账号或默认出口，请先调整绑定再删除")
+        raise HTTPException(409, "该代理仍用于账号或默认出口，请先在账号号池更换代理再删除")
     await db.delete(proxy)
     await db.commit()
     return JSONResponse({"success": True}, headers=NO_STORE)
@@ -129,23 +111,3 @@ async def test_proxy(proxy_id: int, db: AsyncSession = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return JSONResponse({"success": True, "proxy": result}, headers=NO_STORE)
-
-
-@router.put("/default")
-async def update_default(payload: RouteInput, db: AsyncSession = Depends(get_db)):
-    try:
-        await save_route(db, DEFAULT_ROUTE, payload.mode, payload.proxy_id)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return JSONResponse({"success": True}, headers=NO_STORE)
-
-
-@router.put("/accounts")
-async def update_account_route(payload: AccountRouteInput, db: AsyncSession = Depends(get_db)):
-    if payload.email.strip() == DEFAULT_ROUTE:
-        raise HTTPException(400, "请使用默认出口设置")
-    try:
-        await save_route(db, payload.email, payload.mode, payload.proxy_id)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return JSONResponse({"success": True}, headers=NO_STORE)

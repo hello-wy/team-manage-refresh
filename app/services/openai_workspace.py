@@ -5,6 +5,8 @@ import base64
 import json
 from typing import Any
 
+from app.services.openai_subscription import personal_subscription
+
 MAX_SCAN_DEPTH = 6
 WORKSPACE_COLLECTION_KEYS = frozenset({"accounts", "workspaces", "organizations"})
 CURRENT_ID_KEYS = (
@@ -51,7 +53,7 @@ def merge_workspace_scans(scans):
         if scan.get("workspace_id"):
             current_id = scan["workspace_id"]
         for item in scan.get("available_workspaces", []):
-            workspaces[item["id"]] = item
+            workspaces[item["id"]] = {**workspaces.get(item["id"], {}), **item}
     return inspect_workspace_claims({
         "workspace_id": current_id,
         "workspaces": list(workspaces.values()),
@@ -211,10 +213,14 @@ def _record_workspace(
         "is_personal": bool(
             node.get("is_personal") or node.get("isPersonal") or node.get("personal")
             or str(node.get("kind") or "").strip().lower() == "personal"
+            or personal_subscription(node) or current.get("is_personal")
         ),
         "is_default": bool(any(node.get(marker) for marker in DEFAULT_MARKERS)),
         "role": str(node.get("role") or node.get("account_user_role") or ""),
     }
+    plan = personal_subscription(node) or current.get("personal_plan")
+    if plan:
+        found[workspace_id]["personal_plan"] = plan
 
 
 def _node_workspace_id(node: dict[str, Any]) -> str:

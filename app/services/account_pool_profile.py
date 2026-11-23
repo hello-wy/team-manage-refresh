@@ -6,7 +6,8 @@ from sqlalchemy import update
 
 from app.models import AccountPoolEntry
 
-from app.services.openai_workspace import token_claims
+from app.services.openai_workspace import token_claims, token_plan_type
+from app.services.openai_subscription import personal_subscription
 
 MAX_ACCOUNT_NAME_LENGTH = 255
 PROFILE_CLAIM = "https://api.openai.com/profile"
@@ -44,9 +45,18 @@ def login_result_values(entry, result, *, cipher, now, update_current, workspace
     values = {"workspace_checked_at": now}
     if update_current:
         previous = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
-        full_state = workspace_state or (
-            previous if previous.get("available_workspaces") else result.workspace
-        )
+        current_state = dict(result.workspace)
+        if not current_state.get("personal_plan"):
+            current_state.pop("personal_plan", None)
+        full_state = {**previous, **(workspace_state or {}), **current_state}
+        options = (workspace_state if workspace_state is not None else previous).get("available_workspaces")
+        if options is not None:
+            full_state["available_workspaces"] = [
+                {**item, "personal_plan": result.workspace["personal_plan"]}
+                if item.get("id") == result.workspace.get("workspace_id")
+                and result.workspace.get("personal_plan") else item
+                for item in options
+            ]
         values = {
             **values, "workspace_id": result.workspace.get("workspace_id") or None,
             "workspace_name": result.workspace.get("workspace_name") or None,
@@ -58,6 +68,16 @@ def login_result_values(entry, result, *, cipher, now, update_current, workspace
     return values
 
 
+def credential_personal_plan(payload):
+    credentials = payload["accounts"][0]["credentials"] if "accounts" in payload else payload
+    access = token_claims(credentials.get("access_token", ""))
+    primary_plan = token_plan_type(access, credentials)
+    if primary_plan and primary_plan != "personal" and not personal_subscription({"plan_type": primary_plan}):
+        return ""
+    return (personal_subscription(credentials) or personal_subscription(access)
+            or personal_subscription(token_claims(credentials.get("id_token", ""))))
+
+
 async def save_import_account_name(db, entry_id, payload):
     entry = await db.get(AccountPoolEntry, entry_id)
     if entry is None or entry.deleted_at is not None:
@@ -67,8 +87,13 @@ async def save_import_account_name(db, entry_id, payload):
     name = credential_account_name(payload, entry.email)
     if name is None:
         raise ValueError("导入登录未返回账号姓名")
+    values = {"name": name, "name_key": account_name_key(name)}
+    plan = credential_personal_plan(payload)
+    if plan:
+        state = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
+        values["workspace_state_json"] = json.dumps({**state, "personal_plan": plan}, ensure_ascii=False)
     result = await db.execute(update(AccountPoolEntry).where(
         AccountPoolEntry.id == entry_id, AccountPoolEntry.deleted_at.is_(None),
         AccountPoolEntry.name.is_(None),
-    ).values(name=name, name_key=account_name_key(name)))
+    ).values(**values))
     return bool(result.rowcount)

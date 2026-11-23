@@ -1,5 +1,6 @@
 """Verify a single account without logging in to every workspace or exporting JSON."""
 import asyncio
+import json
 import logging
 import time
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import AccountPoolEntry, Team
 from app.services.account_pool_owner_liveness import AccountPoolOwnerLivenessService
+from app.services.openai_subscription import workspace_personal_subscription
 from app.services.account_pool_authorization import (
     AccountPoolAuthorizationError,
     AccountPoolAuthorizationService,
@@ -76,7 +78,10 @@ class AccountPoolLivenessService:
             )
             logger.info("账号验活阶段完成: email=%s stage=oauth elapsed=%.3fs",
                         entry.email, time.monotonic() - started)
-            status = await self._save_status(session, entry_id, version, "alive", "密码、2FA 与 OAuth 登录验证通过")
+            status = await self._save_status(
+                session, entry_id, version, "alive", "密码、2FA 与 OAuth 登录验证通过",
+                personal_plan=workspace_personal_subscription(scan),
+            )
             if status is None:
                 return None
             if refresh_team:
@@ -114,8 +119,23 @@ class AccountPoolLivenessService:
         version: tuple[str | None, str | None],
         status: str,
         message: str,
+        *,
+        personal_plan: str = "",
     ) -> str | None:
         now = get_now()
+        values = {
+            "liveness_status": status, "liveness_message": message, "liveness_checked_at": now,
+        }
+        if personal_plan:
+            entry = await session.get(AccountPoolEntry, entry_id)
+            state = json.loads(entry.workspace_state_json) if entry and entry.workspace_state_json else {}
+            state["personal_plan"] = personal_plan
+            if "available_workspaces" in state:
+                state["available_workspaces"] = [
+                    {**item, "personal_plan": personal_plan} if item.get("is_personal") else item
+                    for item in state["available_workspaces"]
+                ]
+            values["workspace_state_json"] = json.dumps(state, ensure_ascii=False)
         saved = await session.execute(
             update(AccountPoolEntry)
             .where(
@@ -124,11 +144,7 @@ class AccountPoolLivenessService:
                 AccountPoolEntry.password_encrypted == version[0],
                 AccountPoolEntry.two_factor_secret_encrypted == version[1],
             )
-            .values(
-                liveness_status=status,
-                liveness_message=message,
-                liveness_checked_at=now,
-            )
+            .values(**values)
         )
         await session.commit()
         return status if saved.rowcount else None

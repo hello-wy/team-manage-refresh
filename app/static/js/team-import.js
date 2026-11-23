@@ -71,19 +71,23 @@ async function submitTeamImport(payload) {
 async function handleSingleImport(event) {
     event.preventDefault();
     const form = event.target;
-    if (form.dataset.importing === 'true') return;
+    const importForms = [
+        document.getElementById('singleImportForm'),
+        document.getElementById('teamCredentialImportForm'),
+    ].filter(Boolean);
+    if (importForms.some(item => item.dataset.importing === 'true')) return;
 
     const quickSection = document.getElementById('oauthQuickSection');
     const credentialSection = document.getElementById('teamCredentialLoginSection');
-    const isCredential = !!credentialSection && credentialSection.style.display !== 'none';
+    const isCredential = form.dataset.importMode === 'credentials';
     const isQuick = !isCredential && quickSection.style.display !== 'none';
     const activeSection = isCredential ? credentialSection
         : isQuick ? quickSection : document.getElementById('manualTokenSection');
     const submitButton = activeSection.querySelector('button[type="submit"]');
     const buttonText = submitButton.textContent;
-    const buttonStates = Array.from(form.querySelectorAll('button'), button => ({
+    const buttonStates = importForms.flatMap(item => Array.from(item.querySelectorAll('button'), button => ({
         button, disabled: button.disabled
-    }));
+    })));
     form.dataset.importing = 'true';
     buttonStates.forEach(({button}) => { button.disabled = true; });
     submitButton.textContent = isQuick ? '解析并导入中...' : isCredential ? '登录并导入中...' : '导入中...';
@@ -96,7 +100,7 @@ async function handleSingleImport(event) {
         await submitTeamImport(payload);
         showToast('Team 导入成功！', 'success');
         form.reset();
-        clearOAuthParsedCache();
+        if (!isCredential) clearOAuthParsedCache();
         await refreshVisibleAdminData();
     } catch (error) {
         showToast(getFriendlyAdminErrorMessage(error.message || '导入失败', 0, 'import'), 'error');

@@ -71,12 +71,12 @@ function updateAccountPoolLiveness(entryId, state) {
         badge.textContent = queued ? '等待验活' : checking ? '验活中' : state.status === 'alive' ? '正常' : state.status ? '异常' : '未检测';
         badge.className = `status-badge ${busy ? 'status-pending' : state.status === 'alive' ? 'status-active' : state.status ? 'status-error' : 'status-banned'}`;
         cell.dataset.status = state.status || '';
+        cell.dataset.message = state.message || '';
         cell.dataset.checkedAt = state.checkedAt || '';
         cell.setAttribute('aria-busy', String(busy));
-        cell.title = state.message || '';
-        const message = cell.querySelector('.account-pool-liveness-message');
-        message.textContent = state.message || '';
-        message.hidden = !state.message;
+        const reason = cell.querySelector('.account-pool-liveness-reason');
+        reason.dataset.poolTooltip = state.message || '验活失败，未返回具体原因';
+        reason.hidden = busy || !state.status || state.status === 'alive';
         const time = cell.querySelector('.account-pool-liveness-time');
         time.textContent = state.checkedAt ? accountPoolFormatDate(state.checkedAt) : '';
         time.hidden = !state.checkedAt;
@@ -94,7 +94,7 @@ function updateAccountPoolLiveness(entryId, state) {
 function accountPoolLivenessPrevious(entryId) {
     const cell = [...document.querySelectorAll('.account-pool-liveness[data-entry-id]')]
         .find(cell => cell.dataset.entryId === String(entryId));
-    return {status: cell?.dataset.status || '', message: cell?.title || '', checkedAt: cell?.dataset.checkedAt};
+    return {status: cell?.dataset.status || '', message: cell?.dataset.message || '', checkedAt: cell?.dataset.checkedAt};
 }
 
 async function checkAccountPoolEntryLiveness(button) {
@@ -480,10 +480,14 @@ async function submitAccountPoolForm(event) {
     event.preventDefault();
     const input = document.getElementById('accountPoolEmails');
     const button = document.getElementById('accountPoolSubmitBtn');
+    if (button.disabled) return;
     const content = input.value.trim();
-    const rotate2fa = document.getElementById('accountPoolAutoRotate').checked;
+    const rotationToggle = document.getElementById('accountPoolAutoRotate');
+    const rotate2fa = rotationToggle.checked;
     if (!content) return showToast('请先输入邮箱', 'warning');
     button.disabled = true;
+    input.disabled = true;
+    rotationToggle.disabled = true;
     try {
         const response = await fetch('/admin/account-pool', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -501,6 +505,7 @@ async function submitAccountPoolForm(event) {
             issues.forEach(message => showToast(message, 'warning'));
         }
         input.value = '';
+        closeAccountPoolImport();
         [...(payload.added || []), ...(payload.restored || []), ...(payload.updated || [])]
             .forEach(email => window.accountPoolCredentialStore.clear(email));
         if (payload.rotation_error) {
@@ -517,6 +522,8 @@ async function submitAccountPoolForm(event) {
         showToast(error.message || '添加失败', 'error');
     } finally {
         button.disabled = false;
+        input.disabled = false;
+        rotationToggle.disabled = false;
     }
 }
 
@@ -531,7 +538,7 @@ function initAccountPoolColumnToggler() {
         return;
     }
 
-    const storageKey = 'account_pool_list_columns_v6';
+    const storageKey = 'account_pool_list_columns_v7';
     const hiddenColumns = loadAccountPoolHiddenColumns(storageKey);
     container.innerHTML = '<div class="dropdown-header">显示/隐藏列</div>';
 
@@ -599,8 +606,18 @@ function toggleAccountPoolColumnDropdown(button) {
 
     menu.classList.add('show');
     button.setAttribute('aria-expanded', 'true');
+    positionAccountPoolColumnDropdown(menu, button);
+    requestAnimationFrame(() => positionAccountPoolColumnDropdown(menu, button));
+}
+
+function positionAccountPoolColumnDropdown(menu, button) {
     positionFloatingDropdown(menu, button);
-    requestAnimationFrame(() => positionFloatingDropdown(menu, button));
+    menu.style.maxHeight = `${Math.max(120, window.innerHeight - 32)}px`;
+    menu.style.overflowY = 'auto';
+    const rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - 16) {
+        menu.style.top = `${Math.max(16, window.innerHeight - rect.height - 16)}px`;
+    }
 }
 
 function initAccountPoolColumnDropdown() {
@@ -618,10 +635,10 @@ function initAccountPoolColumnDropdown() {
         if (event.key === 'Escape') closeAccountPoolColumnDropdown();
     });
     window.addEventListener('resize', () => {
-        if (menu.classList.contains('show')) positionFloatingDropdown(menu, button);
+        if (menu.classList.contains('show')) positionAccountPoolColumnDropdown(menu, button);
     });
     window.addEventListener('scroll', () => {
-        if (menu.classList.contains('show')) positionFloatingDropdown(menu, button);
+        if (menu.classList.contains('show')) positionAccountPoolColumnDropdown(menu, button);
     }, true);
 }
 
@@ -649,9 +666,15 @@ function getAccountPoolTableUrl({page, perPage, statusFilter, search, teamFilter
 }
 
 function syncAccountPoolFilters(fragment, url) {
+    const total = document.getElementById('accountPoolTotal');
+    const nextTotal = fragment.getElementById('accountPoolTotal');
+    if (total && nextTotal) total.textContent = nextTotal.textContent;
     const filters = document.getElementById('accountPoolFilters');
     const nextFilters = fragment.getElementById('accountPoolFilters');
+    const advancedOpen = document.getElementById('accountPoolAdvancedFilters')?.open;
     if (filters && nextFilters) filters.replaceChildren(...nextFilters.childNodes);
+    const advanced = document.getElementById('accountPoolAdvancedFilters');
+    if (advanced) advanced.open = Boolean(advancedOpen);
     const form = document.getElementById('accountPoolSearchForm');
     for (const key of ['search', 'team_filter', 'seat_filter', 'rotation_filter', 'liveness_filter', 'status_filter', 'sort_by', 'sort_order', 'per_page']) {
         if (form?.elements[key]) form.elements[key].value = url.searchParams.get(key) || '';
@@ -668,7 +691,18 @@ function initAccountPoolFilters() {
     document.addEventListener('click', event => {
         const button = event.target.closest('.account-pool-sort[data-sort-by]');
         if (button) sortAccountPoolTable(button.dataset.sortBy);
+        document.querySelectorAll('.account-pool-menu[open]').forEach(menu => {
+            if (!menu.contains(event.target) && !event.target.closest('#accountPoolColumnToggleDropdown')) menu.open = false;
+        });
     });
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        document.querySelectorAll('.account-pool-menu[open]').forEach(menu => {
+            menu.open = false;
+            if (menu.contains(document.activeElement)) menu.querySelector('summary')?.focus();
+        });
+    });
+    document.getElementById('accountPoolRefreshList')?.addEventListener('click', () => refreshAccountPoolTable());
     document.getElementById('accountPoolCheckAllLiveness')?.addEventListener('click', checkAllAccountPoolLiveness);
     document.getElementById('accountPoolFilters')?.addEventListener('click', event => {
         const link = event.target.closest('a[href]');
@@ -699,16 +733,31 @@ function initAccountPoolFilters() {
         event.preventDefault();
         refreshAccountPoolTable({page: 1, search: event.currentTarget.elements.search.value});
     });
+}
+
+function closeAccountPoolImport() {
+    document.getElementById('accountPoolImportDialog')?.close();
+}
+
+function initAccountPoolImport() {
+    const dialog = document.getElementById('accountPoolImportDialog');
+    if (!dialog) return;
     const toggle = document.getElementById('accountPoolImportToggle');
-    const panel = document.getElementById('accountPoolImportPanel');
-    const setImportOpen = open => {
-        panel.hidden = !open;
-        toggle.setAttribute('aria-expanded', String(open));
-        if (open) document.getElementById('accountPoolEmails').focus();
-        else toggle.focus();
-    };
-    toggle?.addEventListener('click', () => setImportOpen(panel.hidden));
-    document.getElementById('accountPoolImportClose')?.addEventListener('click', () => setImportOpen(false));
+    toggle?.addEventListener('click', () => {
+        if (!dialog.open) dialog.showModal();
+        document.getElementById('accountPoolEmails')?.focus();
+    });
+    dialog.querySelectorAll('[data-close-pool-import]').forEach(button => {
+        button.addEventListener('click', closeAccountPoolImport);
+    });
+    dialog.addEventListener('close', () => toggle?.focus());
+    dialog.addEventListener('click', event => {
+        if (event.target !== dialog) return;
+        const rect = dialog.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+            closeAccountPoolImport();
+        }
+    });
 }
 
 async function refreshAccountPoolTable(options = {}) {
@@ -949,6 +998,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initAccountPoolExportJobs();
     initAccountPoolPageSizeControl();
     initAccountPoolFilters();
+    initAccountPoolImport();
     initAccountPoolColumnToggler();
     initAccountPoolColumnDropdown();
     formatQuotaResetTimes();

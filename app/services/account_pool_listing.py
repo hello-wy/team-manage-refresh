@@ -18,8 +18,33 @@ from app.models import (
 )
 
 from app.utils.team_names import readable_name, team_display_name
+from app.services.account_pool_profile import credential_personal_plan
+from app.services.encryption import encryption_service
+from app.services.openai_subscription import personal_subscription, workspace_personal_subscription
 
 ACTIVE_MAPPING_STATUSES = ("invited", "joined")
+
+
+def _personal_plan(entry, saved):
+    state = json.loads(entry.workspace_state_json) if entry.workspace_state_json else {}
+    selected = next((item for item in state.get("available_workspaces", [])
+                     if item.get("id") == entry.workspace_id and item.get("is_personal")), {})
+    plan = personal_subscription(selected) or workspace_personal_subscription(state)
+    if plan:
+        return plan
+    encrypted_sources = [entry.export_json_encrypted]
+    encrypted_sources.extend(item.export_json_encrypted for item in saved.values() if item.is_personal)
+    for encrypted in encrypted_sources:
+        if not encrypted:
+            continue
+        try:
+            plan = credential_personal_plan(json.loads(encryption_service.decrypt_token(encrypted)))
+            if plan:
+                return plan
+        except Exception:
+            # Legacy or unreadable exports must not prevent rendering the list.
+            continue
+    return ""
 
 
 async def _active_mappings(db: AsyncSession, entries: list[AccountPoolEntry]):
@@ -196,6 +221,7 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
         "id": entry.id,
         "email": entry.email,
         "name": entry.name,
+        "personal_plan": _personal_plan(entry, saved),
         "seat_type": seat_type,
         "status": status,
         "team_id": current[1].id if current[1] else None,

@@ -16,6 +16,7 @@ class TeamSeatLayoutTests(unittest.TestCase):
         )
         templates.filters.update(format_datetime=lambda value: str(value or "-"), escape_js=json.dumps)
         html = templates.get_template("admin/index.html").render(
+            request={"headers": {"x-requested-with": "XMLHttpRequest"}},
             user={"username": "test"}, admin_profile={"avatar": "", "nickname": "管理员"},
             active_page="dashboard", stats={"total_teams": 1, "available_teams": 1},
             teams=[{"id": 1, "email": "owner@example.com", "team_name": "Example",
@@ -36,6 +37,7 @@ class TeamSeatLayoutTests(unittest.TestCase):
         )
         templates.filters.update(format_datetime=lambda value: str(value or "-"), escape_js=json.dumps)
         html = templates.get_template("admin/index.html").render(
+            request={"headers": {"x-requested-with": "XMLHttpRequest"}},
             user={"username": "test"}, admin_profile={"avatar": "", "nickname": "管理员"},
             active_page="dashboard", stats={"total_teams": 1, "available_teams": 1},
             teams=[{"id": 1, "email": "owner@example.com", "team_name": "Example",
