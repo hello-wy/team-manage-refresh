@@ -211,11 +211,11 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         from app.routes.admin import account_pool_page
 
         request = Request({"type": "http", "method": "GET", "path": "/admin/account-pool",
-                           "headers": [], "query_string": b"", "server": ("test", 80)})
+                           "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("test", 80)})
         response = await account_pool_page(request, search=email, db=self.db, current_user={"username": "admin"})
         html = response.body.decode()
         row = html.partition(f'data-email="{email}"')[2].split("</tr>", 1)[0]
-        return row.partition('<td data-label="Team / 席位">')[2].split("</td>", 1)[0]
+        return row.partition('<td data-label="归属 / 订阅">')[2].split("</td>", 1)[0]
 
     async def test_invited_member_is_not_falsely_marked_joined(self):
         entry = await self.add_member("pending@example.com")

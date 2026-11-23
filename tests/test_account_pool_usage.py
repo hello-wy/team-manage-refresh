@@ -310,7 +310,7 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
             await record_seat_switch(db, team_id=team.id, email=entry.email, seat_type="standard")
             await db.commit()
             request = Request({"type": "http", "method": "GET", "path": "/admin/account-pool",
-                               "headers": [], "query_string": b"", "server": ("test", 80)})
+                               "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("test", 80)})
             with patch.object(admin, "_attach_account_pool_usage", new=AsyncMock(side_effect=lambda db, rows: rows)):
                 response = await admin.account_pool_page(request, 1, 20, "member@", "", db, {"username": "admin"})
                 self.assertNotIn("高级待确认", response.body.decode())

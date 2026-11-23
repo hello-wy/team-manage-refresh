@@ -376,11 +376,11 @@ class AccountPoolManualLivenessPageTests(unittest.IsolatedAsyncioTestCase):
             )
             settings_request = Request({
                 "type": "http", "method": "GET", "path": "/admin/settings",
-                "headers": [], "query_string": b"", "server": ("test", 80),
+                "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("test", 80),
             })
             pool_request = Request({
                 "type": "http", "method": "GET", "path": "/admin/account-pool",
-                "headers": [], "query_string": b"", "server": ("test", 80),
+                "headers": [(b"x-requested-with", b"XMLHttpRequest")], "query_string": b"", "server": ("test", 80),
             })
             settings_response = await settings_page(settings_request, session, {"username": "admin"})
             pool_response = await account_pool_page(

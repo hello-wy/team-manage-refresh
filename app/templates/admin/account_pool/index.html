@@ -17,7 +17,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/cpa-export.css?v=20261030-1">
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20261108-proxy">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20261122-proxy-dialog">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -25,32 +25,33 @@
 <div class="account-pool-page">
     <div class="page-header account-pool-page-header">
         <div class="page-header-copy">
-            <div class="page-header-kicker"><i data-lucide="mail-plus"></i><span>Account Pool</span></div>
             <h2>账号号池</h2>
-            <div class="page-header-meta"><span class="page-meta-pill"><i data-lucide="database"></i> 当前 {{ total }} 个账号</span></div>
+            <span class="account-pool-total" id="accountPoolTotal">{{ total }} 个账号</span>
         </div>
-        <button type="button" class="btn btn-primary" id="accountPoolImportToggle" aria-expanded="false" aria-controls="accountPoolImportPanel">
-            <i data-lucide="plus"></i> 导入账号
-        </button>
     </div>
-    <section id="accountPoolImportPanel" class="content-section account-pool-import-panel" hidden>
+    <dialog id="accountPoolImportDialog" class="account-pool-import-dialog" aria-labelledby="accountPoolImportTitle" aria-describedby="accountPoolImportDescription">
         <form id="accountPoolForm" class="account-pool-form">
+            <div class="account-pool-import-heading">
+                <div><h3 id="accountPoolImportTitle">导入账号</h3><p id="accountPoolImportDescription">每行一个账号，支持批量粘贴。</p></div>
+                <button type="button" class="account-pool-dialog-close" data-close-pool-import aria-label="关闭导入弹窗"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
             <div class="form-group">
-                <label for="accountPoolEmails">批量加入账号</label>
-                <textarea id="accountPoolEmails" class="form-control" placeholder="alice@example.com----password----2FA_SECRET&#10;bob@example.com"></textarea>
+                <label for="accountPoolEmails">账号信息</label>
+                <textarea id="accountPoolEmails" class="form-control" rows="8" placeholder="alice@example.com----password----2FA_SECRET&#10;bob@example.com" aria-describedby="accountPoolImportFormat" autofocus></textarea>
+                <small id="accountPoolImportFormat" class="account-pool-hint">格式：邮箱----密码----2FA 密钥，也可仅填写邮箱。</small>
                 <label class="account-pool-auto-rotate" for="accountPoolAutoRotate">
                     <input id="accountPoolAutoRotate" type="checkbox" aria-describedby="accountPoolAutoRotateHint">
                     <span>加入后立即更换 2FA</span>
                 </label>
-                <small class="account-pool-hint">首次导入且密码、2FA 齐全时登录一次获取姓名；不会定时登录补姓名。开启更换 2FA 时复用同一次登录。</small>
-                <small id="accountPoolAutoRotateHint" class="account-pool-hint">新增或恢复且凭据齐全的账号会在后台更换，成功后新密钥自动保存，进度见下方或「2FA 记录」。补姓名失败不影响更换。已有账号跳过；如需更新已有凭据，请取消勾选。</small>
+                <small class="account-pool-hint">首次导入且凭据齐全时登录一次获取姓名与订阅信息，开启更换 2FA 时复用本次登录。不会定时补姓名。</small>
+                <small id="accountPoolAutoRotateHint" class="account-pool-hint">新增或恢复的账号在后台更换 2FA 并保存新密钥，可在「更多操作 → 2FA 记录」查看进度；补姓名失败不影响更换。已有账号跳过；如需更新已有凭据，请取消勾选。</small>
             </div>
             <div class="account-pool-import-actions">
-                <button type="button" class="btn btn-secondary" id="accountPoolImportClose">收起</button>
+                <button type="button" class="btn btn-secondary" data-close-pool-import>取消</button>
                 <button type="submit" class="btn btn-primary" id="accountPoolSubmitBtn"><i data-lucide="plus-circle"></i> 加入号池</button>
             </div>
         </form>
-    </section>
+    </dialog>
 
     <section class="content-section account-pool-list-section">
         <div class="account-pool-controls-row">
@@ -67,28 +68,11 @@
                             <button type="submit" aria-label="搜索" title="搜索"><i data-lucide="arrow-right" aria-hidden="true"></i></button>
                         </div>
                         <div class="account-pool-filter-select"{% if team_filter %} data-filter-active="true"{% endif %}>
-                            <select id="accountPoolTeamFilter" name="team_filter" aria-label="Team 筛选">
-                                <option value="">全部 Team</option>
+                            <select id="accountPoolTeamFilter" name="team_filter" aria-label="账号归属">
+                                <option value="">全部归属</option>
                                 <option value="personal" {% if team_filter == 'personal' %}selected{% endif %}>个人账户</option>
                                 {% for team in filter_teams %}
                                 <option value="{{ team.id }}" {% if team_filter == team.id|string %}selected{% endif %}>{{ team.name }} #{{ team.id }}</option>
-                                {% endfor %}
-                            </select>
-                            <i data-lucide="chevron-down" aria-hidden="true"></i>
-                        </div>
-                        <div class="account-pool-filter-select"{% if seat_filter %} data-filter-active="true"{% endif %}>
-                            <select id="accountPoolSeatFilter" name="seat_filter" aria-label="席位筛选">
-                                {% for value, label in [('', '全部席位'), ('premium', '高级席位'), ('standard', '标准席位'), ('unknown', '未分配 / 未知')] %}
-                                <option value="{{ value }}" {% if seat_filter == value %}selected{% endif %}>{{ label }}</option>
-                                {% endfor %}
-                            </select>
-                            <i data-lucide="chevron-down" aria-hidden="true"></i>
-                        </div>
-                        <div class="account-pool-filter-select"{% if rotation_filter %} data-filter-active="true"{% endif %}>
-                            <select id="accountPoolRotationFilter" name="rotation_filter" aria-label="轮转状态">
-                                <option value="">全部轮转状态</option>
-                                {% for value, label in rotation_filter_options.items() %}
-                                <option value="{{ value }}" {% if rotation_filter == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
                             <i data-lucide="chevron-down" aria-hidden="true"></i>
@@ -97,11 +81,35 @@
                             <select id="accountPoolLivenessFilter" name="liveness_filter" aria-label="验活状态">
                                 <option value="">全部验活状态</option>
                                 {% for value, label in liveness_filter_options.items() %}
-                                <option value="{{ value }}" {% if liveness_filter == value %}selected{% endif %}>验活{{ label }}</option>
+                                <option value="{{ value }}" {% if liveness_filter == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
                             <i data-lucide="chevron-down" aria-hidden="true"></i>
                         </div>
+                        <details class="account-pool-filter-more account-pool-menu" id="accountPoolAdvancedFilters">
+                            <summary class="btn btn-secondary"{% if seat_filter or rotation_filter %} data-filter-active="true"{% endif %}><i data-lucide="sliders-horizontal" aria-hidden="true"></i>更多筛选{% if seat_filter or rotation_filter %}<span class="account-pool-filter-count">{{ (1 if seat_filter else 0) + (1 if rotation_filter else 0) }}</span>{% endif %}</summary>
+                            <div class="account-pool-menu-panel account-pool-advanced-panel">
+                                <label for="accountPoolSeatFilter">席位类型</label>
+                                <div class="account-pool-filter-select"{% if seat_filter %} data-filter-active="true"{% endif %}>
+                                    <select id="accountPoolSeatFilter" name="seat_filter" aria-label="席位筛选">
+                                        {% for value, label in [('', '全部席位'), ('premium', '高级席位'), ('standard', '标准席位'), ('unknown', '未分配 / 未知')] %}
+                                        <option value="{{ value }}" {% if seat_filter == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                                </div>
+                                <label for="accountPoolRotationFilter">轮转状态</label>
+                                <div class="account-pool-filter-select"{% if rotation_filter %} data-filter-active="true"{% endif %}>
+                                    <select id="accountPoolRotationFilter" name="rotation_filter" aria-label="轮转状态">
+                                        <option value="">全部轮转状态</option>
+                                        {% for value, label in rotation_filter_options.items() %}
+                                        <option value="{{ value }}" {% if rotation_filter == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                                </div>
+                            </div>
+                        </details>
                     </div>
                     {% if team_filter or seat_filter or rotation_filter or liveness_filter or search or status_filter %}
                     <a data-filter-kind="reset" class="account-pool-filter-reset" href="{{ filter_url(team_filter='', seat_filter='', rotation_filter='', liveness_filter='', search='', status_filter='') }}"><i data-lucide="rotate-ccw" aria-hidden="true"></i> 重置筛选</a>
@@ -110,14 +118,22 @@
             </form>
             <div class="account-pool-toolbar">
                 <div class="account-pool-toolbar-actions">
+                    <button type="button" class="btn btn-secondary btn-sm account-pool-refresh-list" id="accountPoolRefreshList" title="刷新列表" aria-label="刷新账号列表"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
                     <button type="button" class="btn btn-secondary btn-sm" id="accountPoolCheckAllLiveness" title="检测当前筛选结果的全部账号，包含所有分页">
                         <i data-lucide="shield-check" aria-hidden="true"></i><span id="accountPoolCheckAllLabel">一键验活</span>
                     </button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="accountPoolBatchHistory"><i data-lucide="history"></i> 2FA 记录</button>
-                    <div class="dropdown-wrapper">
-                        <button id="accountPoolColumnToggleBtn" type="button" class="btn btn-secondary btn-sm dropdown-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="accountPoolColumnToggleDropdown"><i data-lucide="columns"></i> 列设置</button>
-                        <div id="accountPoolColumnToggleDropdown" class="dropdown-menu dropdown-menu-floating" role="menu"></div>
-                    </div>
+                    <details class="account-pool-menu account-pool-more-actions">
+                        <summary class="btn btn-secondary btn-sm"><i data-lucide="ellipsis" aria-hidden="true"></i>更多操作<i data-lucide="chevron-down" aria-hidden="true"></i></summary>
+                        <div class="account-pool-menu-panel">
+                            <button type="button" class="btn btn-secondary btn-sm" id="accountPoolDefaultProxy" aria-haspopup="dialog" aria-controls="accountPoolProxyDialog"><i data-lucide="network" aria-hidden="true"></i> 默认代理</button>
+                            <button type="button" class="btn btn-secondary btn-sm" id="accountPoolBatchHistory"><i data-lucide="history"></i> 2FA 记录</button>
+                            <div class="dropdown-wrapper">
+                                <button id="accountPoolColumnToggleBtn" type="button" class="btn btn-secondary btn-sm dropdown-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="accountPoolColumnToggleDropdown"><i data-lucide="columns"></i> 列设置</button>
+                                <div id="accountPoolColumnToggleDropdown" class="dropdown-menu dropdown-menu-floating" role="menu"></div>
+                            </div>
+                        </div>
+                    </details>
+                    <button type="button" class="btn btn-primary" id="accountPoolImportToggle" aria-haspopup="dialog" aria-controls="accountPoolImportDialog"><i data-lucide="plus" aria-hidden="true"></i>导入账号</button>
                 </div>
             </div>
         </div>
@@ -142,7 +158,8 @@
                         <th class="account-pool-select-cell"><input type="checkbox" id="accountPoolSelectPage" aria-label="选择本页全部账号"></th>
                         {{ sortable_header('账号', 'email') }}
                         {{ sortable_header('名称', 'name') }}
-                        {{ sortable_header('Team / 席位', 'team') }}
+                        <th>代理</th>
+                        {{ sortable_header('归属 / 订阅', 'team') }}
                         {{ sortable_header('验活状态', 'liveness') }}
                         <th>额度</th>
                         {{ sortable_header('轮转状态', 'deadline', '按下线时间排序') }}
@@ -159,23 +176,28 @@
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
                         <td data-label="账号">
                             <strong>{{ entry.email }}</strong>
-                            <a class="account-proxy-link" href="/admin/proxies?account={{ entry.email|urlencode }}#accounts">登录出口</a>
                         </td>
                         <td data-label="名称">{{ entry.name or '未获取' }}</td>
-                        <td data-label="Team / 席位">
+                        <td data-label="代理">
+                            <div class="account-pool-proxy">
+                                <button type="button" class="account-proxy-link account-pool-proxy-button{% if entry.login_proxy.unavailable %} is-unavailable{% endif %}" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" data-pool-tooltip="{{ entry.login_proxy.detail }}" aria-haspopup="dialog" aria-controls="accountPoolProxyDialog" aria-label="{{ entry.email }} 的登录代理：{{ entry.login_proxy.name }}，点击配置"><i data-lucide="{{ 'network' if entry.login_proxy.name != '服务器直连' else 'unplug' }}" aria-hidden="true"></i><span>{{ entry.login_proxy.name }}</span><i data-lucide="chevron-down" class="account-pool-proxy-chevron" aria-hidden="true"></i></button>
+                                <small>{{ '不可用' if entry.login_proxy.unavailable else entry.login_proxy.source }}</small>
+                            </div>
+                        </td>
+                        <td data-label="归属 / 订阅">
                             <div class="account-pool-team-badges">
                                 {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>
                                 {% elif entry.is_owner or entry.status in ['joined', 'conflict'] or selectable_teams %}<small class="text-muted">席位待确认</small>
-                                {% else %}<small class="text-muted">个人账户</small>{% endif %}
+                                {% else %}<span class="account-pool-plan-badge{% if not entry.personal_plan %} is-unknown{% endif %}"{% if entry.personal_plan == 'Pro' %} data-pool-tooltip="当前登录信息仅返回 Pro，具体档位待确认"{% endif %}>{{ entry.personal_plan or '订阅待确认' }}</span><small class="text-muted account-pool-personal-label">个人账户</small>{% endif %}
                             </div>
                         </td>
                         <td data-label="验活状态">
-                            <div class="account-pool-liveness" data-entry-id="{{ entry.id }}" data-status="{{ entry.liveness_status or '' }}" data-checked-at="{{ entry.liveness_checked_at.isoformat() if entry.liveness_checked_at else '' }}" title="{{ '正常' if entry.liveness_status == 'alive' else entry.liveness_message or '尚未验活' }}" aria-busy="false">
+                            <div class="account-pool-liveness" data-entry-id="{{ entry.id }}" data-status="{{ entry.liveness_status or '' }}" data-message="{{ (entry.liveness_message or '') if entry.liveness_status != 'alive' else '' }}" data-checked-at="{{ entry.liveness_checked_at.isoformat() if entry.liveness_checked_at else '' }}" aria-busy="false">
                                 <div class="account-pool-liveness-actions">
                                     <span class="status-badge {% if entry.liveness_status == 'alive' %}status-active{% elif entry.liveness_status %}status-error{% else %}status-banned{% endif %}" role="status" aria-live="polite">{{ '正常' if entry.liveness_status == 'alive' else '异常' if entry.liveness_status else '未检测' }}</span>
+                                    <button type="button" class="account-pool-liveness-reason" data-pool-tooltip="{{ entry.liveness_message if entry.liveness_status and entry.liveness_status != 'alive' and entry.liveness_message else '验活失败，未返回具体原因' }}" tabindex="0" aria-label="查看验活失败原因"{% if not entry.liveness_status or entry.liveness_status == 'alive' %} hidden{% endif %}><i data-lucide="circle-alert" aria-hidden="true"></i></button>
                                     <button type="button" class="account-pool-entry-liveness" data-entry-id="{{ entry.id }}" data-email="{{ entry.email }}" aria-label="刷新并验活 {{ entry.email }}">刷新</button>
                                 </div>
-                                <small class="account-pool-liveness-message"{% if entry.liveness_status == 'alive' %} hidden{% endif %}>{{ '' if entry.liveness_status == 'alive' else entry.liveness_message or '点击刷新检查此账号' }}</small>
                                 <small class="account-pool-liveness-time"{% if not entry.liveness_checked_at %} hidden{% endif %}>{{ entry.liveness_checked_at|format_datetime }}</small>
                             </div>
                         </td>
@@ -283,6 +305,7 @@
 </div>
 
 {% include "admin/account_pool/_details_modal.html" %}
+{% include "admin/account_pool/_proxy_dialog.html" %}
 {% endblock %}
 
 {% block extra_js %}
@@ -291,7 +314,8 @@
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
 <script src="/static/js/cpa-export.js?v=20261030-batch"></script>
-<script src="/static/js/account-pool.js?v=20261030-cpa"></script>
+<script src="/static/js/account-pool.js?v=20261122-pool-toolbar"></script>
+<script src="/static/js/account-pool-proxy.js?v=20261122-1"></script>
 <script src="/static/js/account-pool-quota.js?v=20261024-liveness-refresh"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>

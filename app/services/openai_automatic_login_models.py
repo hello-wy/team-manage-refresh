@@ -30,3 +30,4 @@ class AutomaticLoginRequest:
     identifier: str
     phone_verification: bool = False
     on_progress: ProgressCallback | None = None
+    read_subscription: bool = False

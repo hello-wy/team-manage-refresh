@@ -1,0 +1,85 @@
+/* Both import methods stay visible; each card owns its form validation. */
+#importTeamModal > .modal {
+    max-width: 980px;
+}
+
+.team-import-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 20px;
+}
+
+.team-import-card {
+    min-width: 0;
+    padding: 22px;
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-lg, 16px);
+    background: var(--bg-card);
+}
+
+.team-import-card .import-mode-card {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+}
+
+.team-import-card .oauth-quick-head {
+    padding-bottom: 18px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border-base);
+}
+
+.team-import-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+    color: var(--text-main);
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.team-import-card-title svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: var(--primary);
+}
+
+.team-import-card .oauth-quick-fields label {
+    margin: 8px 0 0;
+}
+
+.team-import-card .oauth-quick-btn-row,
+.team-import-card-actions {
+    margin-top: 20px;
+}
+
+.team-import-card .import-mode-toggle-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 0;
+    text-align: left;
+}
+
+body.admin-theme .team-import-card {
+    border: var(--ca-border);
+    border-radius: var(--ca-r-md);
+    background: var(--ca-surface);
+    box-shadow: var(--ca-shadow-sm);
+}
+
+@media (max-width: 720px) {
+    .team-import-cards {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+    }
+
+    .team-import-card {
+        padding: 18px;
+    }
+}

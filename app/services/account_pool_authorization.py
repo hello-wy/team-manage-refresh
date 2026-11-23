@@ -21,8 +21,9 @@ from app.services.openai_automatic_login import (
     OpenAIAutomaticLoginError,
 )
 from app.services.openai_workspace import token_claims, token_plan_type, token_workspace_id
+from app.services.openai_subscription import personal_subscription
 from app.services.member_identity import credential_identity
-from app.services.account_pool_profile import login_result_values
+from app.services.account_pool_profile import credential_personal_plan, login_result_values
 from app.services.operation_progress import ProgressCallback
 from app.utils.time_utils import get_now
 from app.services.account_pool_workspace_sync import (
@@ -130,6 +131,9 @@ class AccountPoolAuthorizationService:
                 raise AccountPoolAuthorizationError("Team ID 或名称超出存储长度")
             options.append({"id": workspace_id, "name": name,
                             "is_personal": bool(item.get("is_personal"))})
+            plan = personal_subscription(item)
+            if plan and options[-1]["is_personal"]:
+                options[-1]["personal_plan"] = plan
         return options
 
     async def save_result(
@@ -215,6 +219,7 @@ class AccountPoolAuthorizationService:
             oauth_draft=draft,
             db_session=session,
             identifier=f"account-pool-login-{entry.id}",
+            read_subscription=True,
         )
 
     def _result(self, email: str, result: dict[str, Any], requested_id: str) -> AccountPoolLoginResult:
@@ -227,6 +232,7 @@ class AccountPoolAuthorizationService:
         if token_email and token_email != email:
             raise AccountPoolAuthorizationError("自动登录返回了其他账号的凭据")
         workspace = dict(result.get("workspace") or {})
+        personal_plan = personal_subscription(result.get("subscription") or {})
         token_id = token_workspace_id(access_token)
         if requested_id and token_id and requested_id != token_id:
             raise AccountPoolAuthorizationError("登录返回的空间与所选 Team 不一致")
@@ -235,6 +241,7 @@ class AccountPoolAuthorizationService:
             actual_id = actual_id or token_id
         plan_type = token_plan_type(claims, identity)
         is_personal = self._is_personal_workspace(workspace, plan_type)
+        personal_plan = personal_plan or credential_personal_plan(result)
         status = "personal_account" if is_personal else (
             "workspace_ok" if actual_id else "no_workspace"
         )
@@ -246,13 +253,19 @@ class AccountPoolAuthorizationService:
                 else str(workspace.get("workspace_name") or "")
             ),
             "is_personal": is_personal,
-            "plan_type": plan_type or ("free" if is_personal else "team"),
+            "plan_type": plan_type or ("personal" if is_personal else "team"),
         })
+        if is_personal:
+            workspace["personal_plan"] = personal_subscription({
+                "plan_type": personal_plan, "entitlement": workspace,
+            })
         exported = {
             key: str(result.get(key) or "")
             for key in ("access_token", "refresh_token", "id_token")
         }
         exported["client_id"] = CLIENT_ID
+        if is_personal and workspace.get("personal_plan"):
+            exported["personal_plan"] = workspace["personal_plan"]
         payload = build_openai_export_payload(
             email=email,
             account_id=actual_id,
@@ -271,9 +284,11 @@ class AccountPoolAuthorizationService:
 
     @staticmethod
     def _is_personal_workspace(workspace: dict[str, Any], plan_type: str) -> bool:
+        if plan_type and plan_type != "personal" and not personal_subscription({"plan_type": plan_type}):
+            return False
         if workspace.get("is_personal") or workspace.get("status") == "personal_account":
             return True
-        return plan_type in {"free", "plus", "pro", "personal"}
+        return plan_type == "personal" or bool(personal_subscription({"plan_type": plan_type}))
 
     @staticmethod
     def _validate_tokens(result: dict[str, Any], claims: dict[str, Any]) -> None:

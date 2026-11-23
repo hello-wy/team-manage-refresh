@@ -28,6 +28,7 @@ from app.routes import official_keys
 from app.routes import cpa_export
 from app.routes import account_pool_team_checkout
 from app.routes import proxies
+from app.routes import account_pool_proxy
 from app.routes import stock_16688, account_pool_batch, account_pool_credentials, account_pool_totp, account_pool_phone, redeem, auth, admin, api, user, warranty, rotation
 from app.config import settings
 from app.database import init_db, close_db, AsyncSessionLocal, engine
@@ -740,6 +741,7 @@ app.include_router(account_pool_phone.router)
 app.include_router(account_pool_batch.router)
 app.include_router(account_pool_team_checkout.router)
 app.include_router(proxies.router)
+app.include_router(account_pool_proxy.router)
 app.include_router(api.router)
 
 

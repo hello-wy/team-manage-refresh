@@ -3,19 +3,13 @@
     const root = document.getElementById('proxyPage');
     if (!root) return;
     const $ = id => document.getElementById(id);
-    const state = {proxies: [], accounts: [], default: {mode: 'inherit', proxy_id: null}, legacy: {}, tab: 'nodes', loaded: false};
-    const pending = new Map();
+    const state = {proxies: []};
     const testing = new Set();
     let editing = null;
     let testingAll = false;
     let savingEditor = false;
-    let defaultSelection = null;
-    let savingDefault = false;
-    const savingAccounts = new Set();
     const icons = () => window.lucide?.createIcons();
     const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
-    const routeValue = route => route.mode === 'proxy' ? `proxy:${route.proxy_id}` : route.mode;
-    const routePayload = value => value.startsWith('proxy:') ? {mode: 'proxy', proxy_id: Number(value.slice(6))} : {mode: value, proxy_id: null};
     const time = value => value ? value.replace('T', ' ').slice(0, 19) : '尚未检测';
     const toast = (message, error = false) => window.showToast?.(message, error ? 'error' : 'success');
 
@@ -32,34 +26,11 @@
         return data;
     }
 
-    function options(selected, isDefault = false) {
-        const choices = [{value: 'inherit', label: isDefault ? '沿用系统代理设置' : '使用默认出口'}, {value: 'direct', label: '服务器直连'}];
-        state.proxies.forEach(proxy => choices.push({value: `proxy:${proxy.id}`, label: `${proxy.name}${proxy.enabled ? '' : '（已停用）'}`, disabled: !proxy.enabled}));
-        return choices.map(choice => `<option value="${esc(choice.value)}"${selected === choice.value ? ' selected' : ''}${choice.disabled ? ' disabled' : ''}>${esc(choice.label)}</option>`).join('');
-    }
-
-    function effective(route) {
-        if (route.mode === 'inherit') route = state.default;
-        if (route.mode === 'inherit') return {label: state.legacy.enabled ? '系统代理' : '服务器直连', address: state.legacy.enabled ? state.legacy.address : '当前没有使用代理'};
-        if (route.mode === 'direct') return {label: '服务器直连', address: '使用服务器网络出口'};
-        const proxy = state.proxies.find(item => item.id === route.proxy_id);
-        return {label: proxy ? proxy.name : '代理不存在', address: proxy?.enabled ? [proxy.exit_ip, proxy.country, proxy.city].filter(Boolean).join(' · ') || proxy.test_message || '等待检测出口' : '节点已停用，账号请求将被阻止', error: !proxy?.enabled || ['offline', 'error'].includes(proxy?.test_status)};
-    }
-
     function metrics() {
         $('proxyTotal').textContent = state.proxies.length;
         $('proxyOnline').textContent = state.proxies.filter(proxy => proxy.enabled && proxy.test_status === 'online').length;
-        $('proxyBound').textContent = state.accounts.filter(account => account.mode === 'proxy').length;
+        $('proxyDisabled').textContent = state.proxies.filter(proxy => !proxy.enabled).length;
         $('proxyNodeCount').textContent = state.proxies.length;
-        $('proxyAccountCount').textContent = state.accounts.length;
-    }
-
-    function renderDefault() {
-        $('proxyDefaultSelect').innerHTML = options(defaultSelection ?? routeValue(state.default), true);
-        $('proxyDefaultSelect').disabled = savingDefault;
-        $('proxyDefaultSave').disabled = savingDefault;
-        const exit = effective({mode: 'inherit'});
-        $('proxyDefaultHint').textContent = `${exit.label} · ${exit.address}`;
     }
 
     function renderNodes() {
@@ -84,33 +55,16 @@
         icons();
     }
 
-    function renderAccounts() {
-        const needle = $('proxySearch').value.trim().toLowerCase();
-        const accounts = state.accounts.filter(account => account.email.toLowerCase().includes(needle));
-        $('proxyAccountsBody').innerHTML = accounts.map(account => {
-            const value = pending.get(account.email) || routeValue(account);
-            const exit = effective(account);
-            const status = account.status === 'alive' ? '验证正常' : account.status ? '验活异常' : '未检测';
-            return `<tr data-email="${esc(account.email)}" data-dirty="${pending.has(account.email)}">
-                <td><strong>${esc(account.email)}</strong></td><td><div class="proxy-cell"><span>${esc(account.source)}</span><small>${esc(status)}</small></div></td>
-                <td><select class="form-control" aria-label="${esc(account.email)} 的登录出口"${savingAccounts.has(account.email) ? ' disabled' : ''}>${options(value)}</select></td>
-                <td><div class="proxy-cell"><strong${exit.error ? ' class="proxy-form-error"' : ''}>${esc(exit.label)}</strong><small>${esc(exit.address)}</small></div></td>
-                <td class="proxy-actions-heading"><button class="btn btn-secondary btn-sm" type="button" data-action="save-route"${pending.has(account.email) && !savingAccounts.has(account.email) ? '' : ' disabled'}>保存</button></td>
-            </tr>`;
-        }).join('');
-        $('proxyAccountsEmpty').hidden = accounts.length > 0;
-    }
-
-    function render() { metrics(); renderDefault(); renderNodes(); renderAccounts(); }
+    function render() { metrics(); renderNodes(); }
 
     async function load() {
         $('proxyPageMessage').hidden = false;
         $('proxyPageMessage').classList.remove('error');
-        $('proxyPageMessage').textContent = '正在加载代理与账号…';
+        $('proxyPageMessage').textContent = '正在加载代理…';
         $('proxyRetry').hidden = true;
         try {
             const data = await api('/data');
-            Object.assign(state, {proxies: data.proxies, accounts: data.accounts, default: data.default, legacy: data.legacy, loaded: true});
+            state.proxies = data.proxies;
             $('proxyPageMessage').hidden = true;
             render();
         } catch (error) {
@@ -118,20 +72,6 @@
             $('proxyPageMessage').classList.add('error');
             $('proxyRetry').hidden = false;
         }
-    }
-
-    function switchTab(tab) {
-        state.tab = tab;
-        for (const name of ['nodes', 'accounts']) {
-            const button = $(name === 'nodes' ? 'proxyNodesTab' : 'proxyAccountsTab');
-            button.setAttribute('aria-selected', String(name === tab));
-            button.tabIndex = name === tab ? 0 : -1;
-            $(name === 'nodes' ? 'proxyNodesPanel' : 'proxyAccountsPanel').hidden = name !== tab;
-        }
-        $('proxySearch').value = '';
-        $('proxySearch').placeholder = tab === 'nodes' ? '搜索节点名称、地址…' : '搜索账号邮箱…';
-        $('proxyTestAll').hidden = tab !== 'nodes';
-        if (state.loaded) { renderNodes(); renderAccounts(); }
     }
 
     function editor(proxy) {
@@ -163,18 +103,10 @@
             state.proxies = state.proxies.map(proxy => proxy.id === id ? data.proxy : proxy);
             if (!testingAll) toast(data.proxy.test_message || '检测完成', data.proxy.test_status !== 'online');
         } catch (error) { toast(error.message, true); }
-        finally { testing.delete(id); metrics(); renderNodes(); renderAccounts(); renderDefault(); }
+        finally { testing.delete(id); metrics(); renderNodes(); }
     }
 
-    $('proxyNodesTab').addEventListener('click', () => switchTab('nodes'));
-    $('proxyAccountsTab').addEventListener('click', () => switchTab('accounts'));
-    root.querySelector('[role="tablist"]').addEventListener('keydown', event => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault();
-        switchTab(event.key === 'Home' ? 'nodes' : event.key === 'End' ? 'accounts' : state.tab === 'nodes' ? 'accounts' : 'nodes');
-        $(state.tab === 'nodes' ? 'proxyNodesTab' : 'proxyAccountsTab').focus();
-    });
-    $('proxySearch').addEventListener('input', () => state.tab === 'nodes' ? renderNodes() : renderAccounts());
+    $('proxySearch').addEventListener('input', renderNodes);
     $('proxyAdd').addEventListener('click', () => editor());
     $('proxyEmptyAdd').addEventListener('click', () => editor());
     $('proxyRetry').addEventListener('click', load);
@@ -229,50 +161,5 @@
         testingAll = false; $('proxyTestAll').querySelector('span').textContent = '检测全部'; renderNodes(); toast('代理检测已完成，请查看各节点结果');
     });
 
-    $('proxyDefaultSelect').addEventListener('change', event => {
-        defaultSelection = event.target.value === routeValue(state.default) ? null : event.target.value;
-    });
-    $('proxyDefaultForm').addEventListener('submit', async event => {
-        event.preventDefault();
-        if (savingDefault) return;
-        const route = routePayload($('proxyDefaultSelect').value);
-        savingDefault = true; renderDefault();
-        try { await api('/default', {method: 'PUT', body: JSON.stringify(route)}); state.default = route; defaultSelection = null; renderAccounts(); toast('默认登录出口已保存'); }
-        catch (error) { toast(error.message, true); }
-        finally { savingDefault = false; renderDefault(); }
-    });
-
-    $('proxyAccountsBody').addEventListener('change', event => {
-        if (!event.target.matches('select')) return;
-        const row = event.target.closest('tr');
-        const account = state.accounts.find(item => item.email === row.dataset.email);
-        const dirty = event.target.value !== routeValue(account);
-        if (dirty) pending.set(account.email, event.target.value); else pending.delete(account.email);
-        row.dataset.dirty = String(dirty); row.querySelector('button').disabled = !dirty;
-    });
-
-    $('proxyAccountsBody').addEventListener('click', async event => {
-        const button = event.target.closest('button[data-action="save-route"]');
-        if (!button) return;
-        const row = button.closest('tr');
-        const account = state.accounts.find(item => item.email === row.dataset.email);
-        if (savingAccounts.has(account.email)) return;
-        const route = routePayload(row.querySelector('select').value);
-        savingAccounts.add(account.email);
-        button.disabled = true; row.querySelector('select').disabled = true;
-        try {
-            await api('/accounts', {method: 'PUT', body: JSON.stringify({...route, email: account.email})});
-            Object.assign(account, route); pending.delete(account.email);
-            state.proxies.forEach(proxy => { proxy.account_count = state.accounts.filter(item => item.mode === 'proxy' && item.proxy_id === proxy.id).length; });
-            metrics(); renderAccounts(); renderNodes(); toast('账号登录出口已保存');
-        } catch (error) { toast(error.message, true); }
-        finally { savingAccounts.delete(account.email); renderAccounts(); }
-    });
-
-    const requestedAccount = new URLSearchParams(window.location.search).get('account');
-    if (requestedAccount || window.location.hash === '#accounts') {
-        switchTab('accounts');
-        if (requestedAccount) $('proxySearch').value = requestedAccount;
-    }
     load();
 })();

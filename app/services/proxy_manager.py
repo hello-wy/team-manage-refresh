@@ -75,6 +75,37 @@ async def known_accounts(db):
     return sorted(accounts.values(), key=lambda item: item["email"])
 
 
+async def attach_login_proxy_labels(db, entries):
+    """Describe the effective route in bulk without exposing proxy credentials."""
+    if not entries:
+        return entries
+    emails = {entry["email"].strip().lower() for entry in entries}
+    routes = {route.email: route for route in (await db.scalars(
+        select(AccountProxyRoute).where(AccountProxyRoute.email.in_(emails | {DEFAULT_ROUTE}))
+    )).all()}
+    proxy_ids = {route.proxy_id for route in routes.values() if route.proxy_id is not None}
+    proxies = {proxy.id: proxy for proxy in (await db.execute(select(
+        ProxyEndpoint.id, ProxyEndpoint.name, ProxyEndpoint.enabled,
+    ).where(ProxyEndpoint.id.in_(proxy_ids)))).all()} if proxy_ids else {}
+    legacy = await settings_service.get_proxy_config(db)
+    for entry in entries:
+        route = routes.get(entry["email"].strip().lower())
+        inherited = route is None
+        route = route or routes.get(DEFAULT_ROUTE)
+        view = {"name": "服务器直连", "source": "跟随默认" if inherited else "指定直连", "unavailable": False}
+        if route and route.mode == "proxy":
+            proxy = proxies.get(route.proxy_id)
+            view.update(name=proxy.name if proxy else "代理不存在",
+                        source="跟随默认" if inherited else "指定代理",
+                        unavailable=proxy is None or not proxy.enabled)
+        elif route is None and legacy["enabled"]:
+            view.update(name="系统代理", unavailable=not bool(legacy["proxy"]))
+        view["detail"] = ("代理已停用或配置不可用，点击更换账号代理" if view["unavailable"] else
+                          f'{view["source"]} · {view["name"]}，点击配置登录出口')
+        entry["login_proxy"] = view
+    return entries
+
+
 async def save_route(db, email, mode, proxy_id):
     email = email.strip().lower()
     if email != DEFAULT_ROUTE and email not in {r["email"] for r in await known_accounts(db)}:
@@ -136,7 +167,7 @@ async def resolve_login_proxy(db, identifier, *, email=None):
             return None
         proxy = await db.get(ProxyEndpoint, route.proxy_id)
         if proxy is None or not proxy.enabled:
-            raise ProxyRoutingError("账号指定的代理已停用或不存在，请先在代理管理中调整出口")
+            raise ProxyRoutingError("账号指定的代理已停用或不存在，请先在账号号池更换代理")
         try:
             return validate_managed_proxy(encryption_service.decrypt_token(proxy.url_encrypted))
         except Exception as exc:

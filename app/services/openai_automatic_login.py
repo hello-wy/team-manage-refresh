@@ -24,6 +24,8 @@ from app.services.openai_automatic_login_models import (
 from app.services.openai_sentinel import OpenAISentinelError
 from app.services.openai_workspace_discovery import discover_workspaces
 from app.services.openai_workspace import inspect_workspace_claims, resolve_workspace_id, token_workspace_id
+from app.services.openai_workspace import token_claims, token_plan_type
+from app.services.openai_subscription import personal_subscription, query_personal_subscription
 from app.services.openai_auth_totp import complete_totp
 from app.services.operation_progress import report_progress
 from app.services.proxy_manager import ProxyRoutingError
@@ -84,13 +86,17 @@ class OpenAIAutomaticLoginService:
             workspace["workspace_id"] = actual_id
             workspace["status"] = "workspace_ok"
         result["workspace"] = workspace
+        if request.read_subscription:
+            plan = await self._personal_subscription(session, result)
+            if plan:
+                result["subscription"] = {"personal_plan": plan}
         result["verified_totp_factor_id"] = verified_totp_factor_id
         result["phone_number"] = phone_number
         result["phone_rental_error"] = phone_rental_error
         return result
 
     async def verify_credentials(self, request: AutomaticLoginRequest) -> dict[str, Any]:
-        """Verify password/TOTP without selecting a workspace or exchanging tokens."""
+        """Verify credentials, optionally reading a personal subscription in this session."""
         await self._dependencies.clear_session(request.identifier)
         try:
             session = await self._login_session(request)
@@ -106,12 +112,72 @@ class OpenAIAutomaticLoginService:
             current_url, _ = await self._submit_password_and_totp(
                 session, request, current_url, device_id, sentinel_token
             )
-            return await discover_workspaces(
+            scan = await discover_workspaces(
                 session, current_url, device_id=device_id, sentinel_token=sentinel_token,
                 expected_state=request.oauth_draft["state"],
             )
+            if request.read_subscription:
+                await self._scan_personal_subscription(
+                    request, session, scan, current_url, device_id, sentinel_token,
+                )
+            return scan
         finally:
             await self._dependencies.clear_session(request.identifier)
+
+    async def _personal_subscription(self, session, result):
+        token = str(result.get("access_token") or "")
+        claims = token_claims(token)
+        if not claims:
+            return ""
+        workspace = result.get("workspace") or {}
+        token_id = token_workspace_id(token)
+        if workspace.get("workspace_id") and token_id and workspace["workspace_id"] != token_id:
+            return ""
+        primary_plan = token_plan_type(claims)
+        plan = personal_subscription(claims)
+        # A Team workspace's usage must not be presented as a personal plan.
+        if primary_plan and primary_plan != "personal" and not personal_subscription({"plan_type": primary_plan}):
+            return ""
+        identity_token = str(result.get("id_token") or "")
+        identity_id = token_workspace_id(identity_token)
+        identity_plan = personal_subscription(token_claims(identity_token)) if (
+            not identity_id or not token_id or identity_id == token_id
+        ) else ""
+        if not (plan or primary_plan == "personal" or workspace.get("is_personal")
+                or workspace.get("status") == "personal_account" or identity_plan):
+            return ""
+        return await query_personal_subscription(session, token, token_id) or plan or identity_plan
+
+    async def _scan_personal_subscription(self, request, session, scan, current_url, device_id, sentinel_token):
+        personal = [item for item in scan.get("available_workspaces", [])
+                    if isinstance(item, dict) and item.get("is_personal")]
+        if len(personal) != 1 and not _is_callback(current_url):
+            return
+        try:
+            callback_url = current_url
+            workspace = {}
+            if not _is_callback(callback_url):
+                callback_url, workspace = await self._select_workspace(
+                    session, current_url, personal[0]["id"], device_id, sentinel_token,
+                )
+                workspace = {**workspace, "is_personal": True, "status": "personal_account"}
+            if not _is_callback(callback_url):
+                return
+            result = await self._exchange(request, callback_url)
+            token_id = token_workspace_id(str(result.get("access_token") or ""))
+            if not workspace:
+                selected = next((item for item in personal if item.get("id") == token_id), {})
+                workspace = {**selected, "workspace_id": token_id}
+            result["workspace"] = workspace
+            plan = await self._personal_subscription(session, result)
+            if plan:
+                scan["personal_plan"] = plan
+                for item in personal:
+                    if item.get("id") == token_id:
+                        item["personal_plan"] = plan
+        except Exception:
+            # Subscription lookup is optional; successful credential verification stays valid.
+            logger.info("验活通过，个人订阅获取未完成: identifier=%s", request.identifier)
 
     async def _login_session(self, request):
         try:
@@ -306,9 +372,10 @@ class OpenAIAutomaticLoginService:
             {},
         )
         workspace.update({
-            "status": "workspace_ok",
+            "status": "personal_account" if selected.get("is_personal") else "workspace_ok",
             "workspace_id": selected_id,
             "workspace_name": str(selected.get("name") or ""),
+            "is_personal": bool(selected.get("is_personal")),
         })
         return selected_url, workspace
 

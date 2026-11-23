@@ -14,12 +14,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.database import Base, get_db
 from app.dependencies.auth import require_admin
 from app.models import AccountPoolEntry, AccountProxyRoute, MemberAuthorization, ProxyEndpoint, Team
-from app.routes import proxies
+from app.routes import proxies, account_pool_proxy
 from app.services.chatgpt import ChatGPTService
 from app.services.encryption import encryption_service
 from app.services.proxy_manager import (
     GEO_CHECK_URL, IP_CHECK_URL, ProxyProbe, ProxyRoutingError, identifier_email,
-    public_proxy, resolve_login_proxy, save_route, validate_managed_proxy,
+    attach_login_proxy_labels, public_proxy, resolve_login_proxy, save_route, validate_managed_proxy,
 )
 from app.services.settings import settings_service
 
@@ -84,6 +84,39 @@ class DatabaseCase(unittest.IsolatedAsyncioTestCase):
 
 
 class ProxyRoutingTests(DatabaseCase):
+    async def test_pool_labels_follow_account_default_and_system_routes_without_credentials(self):
+        async with self.sessions() as db:
+            await settings_service.update_proxy_config(db, True, "http://global.example:80")
+            rows = [{"email": self.account.email}, {"email": self.other.email}]
+            await attach_login_proxy_labels(db, rows)
+            self.assertEqual(rows[0]["login_proxy"]["name"], "系统代理")
+            await save_route(db, "*", "proxy", self.proxy.id)
+            await save_route(db, self.account.email, "direct", None)
+            await attach_login_proxy_labels(db, rows)
+            self.assertEqual(rows[0]["login_proxy"]["name"], "服务器直连")
+            self.assertEqual(rows[0]["login_proxy"]["source"], "指定直连")
+            self.assertEqual(rows[1]["login_proxy"]["name"], self.proxy.name)
+            self.assertEqual(rows[1]["login_proxy"]["source"], "跟随默认")
+            await save_route(db, self.account.email, "proxy", self.proxy.id)
+            await save_route(db, "*", "direct", None)
+            await attach_login_proxy_labels(db, rows)
+            self.assertEqual(rows[0]["login_proxy"]["source"], "指定代理")
+            self.assertEqual(rows[1]["login_proxy"]["name"], "服务器直连")
+            self.assertNotIn("private-password", json.dumps(rows))
+            self.assertNotIn("proxy-user", json.dumps(rows))
+
+    async def test_pool_keeps_disabled_proxy_name_and_marks_it_unavailable(self):
+        async with self.sessions() as db:
+            await save_route(db, self.account.email, "proxy", self.proxy.id)
+            proxy = await db.get(ProxyEndpoint, self.proxy.id)
+            proxy.enabled = False
+            await db.commit()
+            rows = await attach_login_proxy_labels(db, [{"email": self.account.email}])
+            self.assertEqual(rows[0]["login_proxy"]["name"], self.proxy.name)
+            self.assertTrue(rows[0]["login_proxy"]["unavailable"])
+            with self.assertRaises(ProxyRoutingError):
+                await resolve_login_proxy(db, self.account.email)
+
     async def test_account_override_default_and_explicit_direct(self):
         async with self.sessions() as db:
             await settings_service.update_proxy_config(db, True, "http://global.example:80")
@@ -303,6 +336,7 @@ class ProxyApiTests(DatabaseCase):
         self.app = FastAPI()
         self.app.add_middleware(SessionMiddleware, secret_key="only-for-tests")
         self.app.include_router(proxies.router)
+        self.app.include_router(account_pool_proxy.router)
 
         async def db_override():
             async with self.sessions() as db:
@@ -321,18 +355,72 @@ class ProxyApiTests(DatabaseCase):
         self.assertIn('id="adminWorkspaceFrame"', shell.text)
         response = await self.client.get("/admin/proxies", headers={"Sec-Fetch-Dest": "iframe"})
         self.assertEqual(response.status_code, 200)
-        for control in ("proxyPage", "proxyEditorForm", "proxyDefaultForm", "proxyAccountsPanel"):
+        for control in ("proxyPage", "proxyEditorForm", "proxyNodesPanel"):
             self.assertIn(f'id="{control}"', response.text)
+        for removed in ("proxyDefaultForm", "proxyAccountsPanel", "proxyAccountsTab"):
+            self.assertNotIn(f'id="{removed}"', response.text)
         self.assertNotIn("private-password", response.text)
 
     async def test_all_management_routes_require_admin(self):
         self.app.dependency_overrides.pop(require_admin)
         for method, path in [("GET", "/data"), ("GET", ""), ("POST", "/nodes"),
                              ("PUT", "/nodes/1"), ("DELETE", "/nodes/1"),
-                             ("POST", "/nodes/1/test"), ("PUT", "/default"), ("PUT", "/accounts")]:
+                             ("POST", "/nodes/1/test")]:
             with self.subTest(path=path, method=method):
                 response = await self.client.request(method, "/admin/proxies" + path, json={})
                 self.assertEqual(response.status_code, 401)
+        for method, path in [("GET", "proxy-options"), ("PUT", "proxy-default"),
+                             ("PUT", f"{self.account.id}/proxy")]:
+            response = await self.client.request(method, "/admin/account-pool/" + path, json={})
+            self.assertEqual(response.status_code, 401)
+
+    async def test_pool_options_return_only_the_requested_account_and_masked_nodes(self):
+        await self.client.put("/admin/account-pool/proxy-default",
+                              json={"mode": "proxy", "proxy_id": self.proxy.id})
+        response = await self.client.get("/admin/account-pool/proxy-options",
+                                         params={"entry_id": self.account.id})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["account"], {"email": self.account.email, "mode": "inherit", "proxy_id": None})
+        self.assertEqual(data["default"], {"mode": "proxy", "proxy_id": self.proxy.id})
+        self.assertNotIn("accounts", data)
+        self.assertNotIn("private-password", response.text)
+        self.assertIn("no-store", response.headers["cache-control"])
+        data = (await self.client.get("/admin/account-pool/proxy-options")).json()
+        self.assertIsNone(data["account"])
+
+    async def test_pool_route_saves_for_record_and_can_restore_default(self):
+        path = f"/admin/account-pool/{self.account.id}/proxy"
+        response = await self.client.put(path, json={"mode": "proxy", "proxy_id": self.proxy.id})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["login_proxy"]["name"], self.proxy.name)
+        async with self.sessions() as db:
+            self.assertEqual(await resolve_login_proxy(db, self.account.email), PROXY_URL)
+            self.assertIsNone(await db.get(AccountProxyRoute, self.other.email))
+        await self.client.put(path, json={"mode": "inherit"})
+        async with self.sessions() as db:
+            self.assertIsNone(await db.get(AccountProxyRoute, self.account.email))
+
+    async def test_pool_routes_support_owner_rows_and_reject_missing_or_deleted_entries(self):
+        response = await self.client.put(f"/admin/account-pool/{-self.team.id}/proxy",
+                                         json={"mode": "direct"})
+        self.assertEqual(response.status_code, 200)
+        response = await self.client.get("/admin/account-pool/proxy-options",
+                                         params={"entry_id": -self.team.id})
+        self.assertEqual(response.json()["account"]["email"], self.team.email)
+        async with self.sessions() as db:
+            account = await db.get(AccountPoolEntry, self.other.id)
+            from app.utils.time_utils import get_now
+            account.deleted_at = get_now()
+            await db.commit()
+        for entry_id in (0, 99999, self.other.id):
+            response = await self.client.put(f"/admin/account-pool/{entry_id}/proxy", json={"mode": "direct"})
+            self.assertEqual(response.status_code, 404)
+
+    async def test_proxy_management_has_no_account_route_write_endpoints(self):
+        for path in ("accounts", "default"):
+            response = await self.client.put(f"/admin/proxies/{path}", json={"mode": "direct"})
+            self.assertEqual(response.status_code, 404)
 
     async def test_inventory_and_creation_never_return_proxy_password(self):
         response = await self.client.post("/admin/proxies/nodes", json={"name": "出口 2", "url": PROXY_URL})
@@ -346,7 +434,8 @@ class ProxyApiTests(DatabaseCase):
         response = await self.client.get("/admin/proxies/data")
         self.assertNotIn("private-password", response.text)
         self.assertIn("no-store", response.headers["cache-control"])
-        self.assertEqual(len(response.json()["accounts"]), 3)
+        self.assertNotIn("accounts", response.json())
+        self.assertNotIn("default", response.json())
 
     async def test_edit_with_empty_address_preserves_credentials_and_changed_address_resets_test(self):
         async with self.sessions() as db:
@@ -363,14 +452,14 @@ class ProxyApiTests(DatabaseCase):
         self.assertIsNone(response.json()["proxy"]["exit_ip"])
 
     async def test_bound_proxy_cannot_be_deleted_and_can_be_removed_after_unbind(self):
-        await self.client.put("/admin/proxies/accounts", json={"email": self.account.email, "mode": "proxy", "proxy_id": self.proxy.id})
+        await self.client.put(f"/admin/account-pool/{self.account.id}/proxy", json={"mode": "proxy", "proxy_id": self.proxy.id})
         response = await self.client.delete(f"/admin/proxies/nodes/{self.proxy.id}")
         self.assertEqual(response.status_code, 409)
-        await self.client.put("/admin/proxies/accounts", json={"email": self.account.email, "mode": "inherit"})
+        await self.client.put(f"/admin/account-pool/{self.account.id}/proxy", json={"mode": "inherit"})
         self.assertEqual((await self.client.delete(f"/admin/proxies/nodes/{self.proxy.id}")).status_code, 200)
 
     async def test_default_route_also_prevents_deletion(self):
-        response = await self.client.put("/admin/proxies/default", json={"mode": "proxy", "proxy_id": self.proxy.id})
+        response = await self.client.put("/admin/account-pool/proxy-default", json={"mode": "proxy", "proxy_id": self.proxy.id})
         self.assertEqual(response.status_code, 200)
         self.assertEqual((await self.client.delete(f"/admin/proxies/nodes/{self.proxy.id}")).status_code, 409)
 
@@ -379,7 +468,7 @@ class ProxyApiTests(DatabaseCase):
             with self.subTest(url=url):
                 response = await self.client.post("/admin/proxies/nodes", json={"name": "无效代理", "url": url})
                 self.assertEqual(response.status_code, 400)
-        response = await self.client.put("/admin/proxies/accounts", json={"email": self.account.email, "mode": "direct", "proxy_id": self.proxy.id})
+        response = await self.client.put(f"/admin/account-pool/{self.account.id}/proxy", json={"mode": "direct", "proxy_id": self.proxy.id})
         self.assertEqual(response.status_code, 400)
 
 

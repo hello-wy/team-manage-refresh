@@ -14,103 +14,110 @@
                 </div>
 
                 <div id="singleImport" class="import-panel">
-                    <form id="singleImportForm" onsubmit="handleSingleImport(event)">
-                        <input type="hidden" name="poolType" value="{% if active_page == 'welfare' %}welfare{% else %}normal{% endif %}">
-                        <div id="oauthQuickSection" class="import-mode-card oauth-quick-card">
-                            <div class="oauth-quick-head">
-                                <label>一键获取 Token</label>
-                                <p class="oauth-quick-subtitle">获取授权链接 → 粘贴回调 → 点击导入，自动解析并导入 Team。</p>
+                    <div class="team-import-cards">
+                        <form id="singleImportForm" class="team-import-card" onsubmit="handleSingleImport(event)">
+                            <input type="hidden" name="poolType" value="{% if active_page == 'welfare' %}welfare{% else %}normal{% endif %}">
+                            <div id="oauthQuickSection" class="import-mode-card oauth-quick-card">
+                                <div class="oauth-quick-head">
+                                    <h4 class="team-import-card-title"><i data-lucide="key-round" aria-hidden="true"></i>一键获取 Token</h4>
+                                    <p class="oauth-quick-subtitle">获取授权链接 → 粘贴回调 → 点击导入，自动解析并导入 Team。</p>
+                                </div>
+
+                                <div class="oauth-quick-action-row">
+                                    <button type="button" id="btnOneClickToken" class="btn btn-primary oauth-main-btn">获取授权链接</button>
+                                </div>
+
+                                <div class="oauth-quick-fields">
+                                    <label for="oauthAuthorizeUrlOutput">授权链接</label>
+                                    <input type="text" id="oauthAuthorizeUrlOutput" class="form-control" placeholder="获取后自动复制" readonly>
+                                    <label for="oauthCallbackInput">回调 URL</label>
+                                    <textarea id="oauthCallbackInput" class="form-control" rows="4" placeholder="登录后粘贴完整回调 URL"></textarea>
+                                </div>
+
+                                <div class="oauth-quick-btn-row">
+                                    <button type="submit" id="btnQuickImportTeam" class="btn btn-primary">导入</button>
+                                </div>
+
+                                <div class="import-mode-toggle-wrap">
+                                    <button type="button" id="switchToManualFill" class="import-mode-toggle-btn">已有 Token？直接填写</button>
+                                </div>
                             </div>
 
-                            <div class="oauth-quick-action-row">
-                                <button type="button" id="btnOneClickToken" class="btn btn-primary oauth-main-btn">获取授权链接</button>
+                            <div id="manualTokenSection" class="import-mode-card" style="display: none;">
+                                <div class="oauth-quick-head">
+                                    <h4 class="team-import-card-title"><i data-lucide="key-round" aria-hidden="true"></i>填写 Token</h4>
+                                    <p class="oauth-quick-subtitle">使用已有 Token 导入 Team。</p>
+                                </div>
+                                <div class="form-group">
+                                    <label>Access Token (AT) <span class="required">*</span></label>
+                                    <input type="text" name="accessToken" class="form-control"
+                                        placeholder="eyJhbGciOiJSUzI1Ni..." required>
+                                    <small class="form-text">必填项，以 eyJ 开头的 JWT Token</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>ID Token</label>
+                                    <input type="text" name="idToken" class="form-control" placeholder="eyJhbGciOiJSUzI1Ni...">
+                                    <small class="form-text">建议填写，一键获取 Token 时会自动带上，用于推送到 CliproxyAPI</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Refresh Token (RT)</label>
+                                    <input type="text" name="refreshToken" class="form-control" placeholder="rt-...">
+                                    <small class="form-text">可选，用于自动刷新 AT</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Session Token</label>
+                                    <input type="text" name="sessionToken" class="form-control" placeholder="eyJ...">
+                                    <small class="form-text">可选，作为备选刷新方式</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Client ID</label>
+                                    <input type="text" name="clientId" class="form-control" placeholder="Client ID">
+                                    <small class="form-text">使用 Refresh Token 时必填</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>邮箱</label>
+                                    <input type="email" name="email" class="form-control" placeholder="admin@example.com">
+                                    <small class="form-text">可选，如果不填写将从 Token 中自动提取</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Account ID</label>
+                                    <input type="text" name="accountId" class="form-control"
+                                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                                    <small class="form-text">可选，如果不填写将从 API 自动获取</small>
+                                </div>
+                                <div class="import-mode-toggle-wrap">
+                                    <button type="submit" class="btn btn-primary">导入 Team</button>
+                                    <button type="button" id="switchToQuickToken" class="import-mode-toggle-btn">返回一键获取 Token</button>
+                                </div>
                             </div>
+                        </form>
 
-                            <div class="oauth-quick-fields">
-                                <input type="text" id="oauthAuthorizeUrlOutput" class="form-control" placeholder="授权链接会自动复制，这里仅作备份显示" readonly>
-                                <textarea id="oauthCallbackInput" class="form-control" rows="3" placeholder="登录后粘贴完整回调 URL"></textarea>
+                        <form id="teamCredentialImportForm" class="team-import-card" data-import-mode="credentials"
+                            onsubmit="handleSingleImport(event)">
+                            <div id="teamCredentialLoginSection" class="import-mode-card">
+                                <div class="oauth-quick-head">
+                                    <h4 class="team-import-card-title"><i data-lucide="shield-check" aria-hidden="true"></i>邮箱密码 2FA 登录</h4>
+                                    <p class="oauth-quick-subtitle">填写 Team 所有者账号，登录后直接导入。</p>
+                                </div>
+                                <div class="form-group">
+                                    <label for="teamImportLoginCredentials">账号登录信息 <span class="required">*</span></label>
+                                    <textarea id="teamImportLoginCredentials" name="loginCredentials" class="form-control" rows="3"
+                                        placeholder="邮箱----密码----2FA 密钥" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
+                                    <small class="form-text">粘贴一个账号，使用 ---- 分隔，登录时自动提取邮箱、密码和 2FA。2FA 支持 Base32 密钥或 otpauth:// 链接。</small>
+                                    <small class="form-text">凭据仅用于本次登录，不会保存到账号号池。</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="teamImportLoginAccountId">Account ID</label>
+                                    <input type="text" id="teamImportLoginAccountId" name="loginAccountId" class="form-control"
+                                        placeholder="有多个 Team 时填写目标 Account ID">
+                                    <small class="form-text">留空时仅适用于登录后只有一个可用 Team 的账号。</small>
+                                </div>
+                                <div class="team-import-card-actions">
+                                    <button type="submit" id="btnCredentialImportTeam" class="btn btn-primary">登录并导入 Team</button>
+                                </div>
                             </div>
-
-                            <div class="oauth-quick-btn-row">
-                                <button type="submit" id="btnQuickImportTeam" class="btn btn-primary">导入</button>
-                            </div>
-
-                            <div class="import-mode-toggle-wrap">
-                                <button type="button" id="switchToManualFill" class="import-mode-toggle-btn">已有 Token？直接填写</button>
-                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="credentials">使用邮箱、密码和 2FA 登录</button>
-                            </div>
-                        </div>
-
-                        <div id="manualTokenSection" class="import-mode-card" style="display: none;">
-                            <div class="manual-import-action-top" style="margin-bottom: 0.85rem;">
-                                <button type="submit" class="btn btn-primary">导入 Team</button>
-                            </div>
-                            <div class="form-group">
-                                <label>Access Token (AT) <span class="required">*</span></label>
-                                <input type="text" name="accessToken" class="form-control"
-                                    placeholder="eyJhbGciOiJSUzI1Ni..." required>
-                                <small class="form-text">必填项，以 eyJ 开头的 JWT Token</small>
-                            </div>
-                            <div class="form-group">
-                                <label>ID Token</label>
-                                <input type="text" name="idToken" class="form-control" placeholder="eyJhbGciOiJSUzI1Ni...">
-                                <small class="form-text">建议填写，一键获取 Token 时会自动带上，用于推送到 CliproxyAPI</small>
-                            </div>
-                            <div class="form-group">
-                                <label>Refresh Token (RT)</label>
-                                <input type="text" name="refreshToken" class="form-control" placeholder="rt-...">
-                                <small class="form-text">可选，用于自动刷新 AT</small>
-                            </div>
-                            <div class="form-group">
-                                <label>Session Token</label>
-                                <input type="text" name="sessionToken" class="form-control" placeholder="eyJ...">
-                                <small class="form-text">可选，作为备选刷新方式</small>
-                            </div>
-                            <div class="form-group">
-                                <label>Client ID</label>
-                                <input type="text" name="clientId" class="form-control" placeholder="Client ID">
-                                <small class="form-text">使用 Refresh Token 时必填</small>
-                            </div>
-                            <div class="form-group">
-                                <label>邮箱</label>
-                                <input type="email" name="email" class="form-control" placeholder="admin@example.com">
-                                <small class="form-text">可选，如果不填写将从 Token 中自动提取</small>
-                            </div>
-                            <div class="form-group">
-                                <label>Account ID</label>
-                                <input type="text" name="accountId" class="form-control"
-                                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-                                <small class="form-text">可选，如果不填写将从 API 自动获取</small>
-                            </div>
-                            <div class="import-mode-toggle-wrap">
-                                <button type="button" id="switchToQuickToken" class="import-mode-toggle-btn">返回一键获取 Token</button>
-                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="credentials">使用邮箱、密码和 2FA 登录</button>
-                            </div>
-                        </div>
-
-                        <div id="teamCredentialLoginSection" class="import-mode-card" style="display: none;">
-                            <div class="form-group">
-                                <label for="teamImportLoginCredentials">账号登录信息 <span class="required">*</span></label>
-                                <textarea id="teamImportLoginCredentials" name="loginCredentials" class="form-control" rows="3"
-                                    placeholder="邮箱----密码----2FA 密钥" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
-                                <small class="form-text">粘贴一个账号，使用 ---- 分隔，登录时自动提取邮箱、密码和 2FA。2FA 支持 Base32 密钥或 otpauth:// 链接。</small>
-                                <small class="form-text">凭据仅用于本次登录，不会保存到账号号池。</small>
-                            </div>
-                            <div class="form-group">
-                                <label for="teamImportLoginAccountId">Account ID</label>
-                                <input type="text" id="teamImportLoginAccountId" name="loginAccountId" class="form-control"
-                                    placeholder="有多个 Team 时填写目标 Account ID">
-                                <small class="form-text">留空时仅适用于登录后只有一个可用 Team 的账号。</small>
-                            </div>
-                            <div class="manual-import-action-top" style="margin-bottom: 0.85rem;">
-                                <button type="submit" id="btnCredentialImportTeam" class="btn btn-primary">登录并导入 Team</button>
-                            </div>
-                            <div class="import-mode-toggle-wrap">
-                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="quick">返回一键获取 Token</button>
-                                <button type="button" class="import-mode-toggle-btn" data-team-import-mode="manual">返回填写 Token</button>
-                            </div>
-                        </div>
-                    </form>
+                        </form>
+                    </div>
                 </div>
 
                 <div id="batchImport" class="import-panel" style="display: none;">

@@ -519,6 +519,8 @@ async def account_pool_page(
         rotation_filter=rotation_filter, liveness_filter=liveness_filter, sort_order=sort_order,
     )
     listing["entries"] = await _attach_account_pool_cached_usage(db, listing["entries"])
+    from app.services.proxy_manager import attach_login_proxy_labels
+    listing["entries"] = await attach_login_proxy_labels(db, listing["entries"])
     listing["entries"] = await attach_cpa_export_jobs(db, listing["entries"])
     if not listing["rotation_filter"]:
         listing["entries"] = await attach_rotation_status(db, listing["entries"])

@@ -14,6 +14,8 @@ function runtime() {
         ['accountPoolAutoRotate', {checked: true}],
         ['accountPoolBatchProgress', {hidden: true, textContent: ''}],
     ]);
+    const dialog = {open: true, close() {this.open = false;}};
+    elements.set('accountPoolImportDialog', dialog);
     const cleared = [], toasts = [], timers = [];
     const code = {dataset: {email: 'first@example.com'}, secret: 'OLDSECRET'};
     const context = vm.createContext({
@@ -27,12 +29,12 @@ function runtime() {
     vm.runInContext(script('account-pool.js'), context);
     context.refreshAccountPoolTable = async () => {};
     vm.runInContext(script('account-pool-batch.js'), context);
-    return {context, elements, storage, cleared, toasts, timers, code};
+    return {context, elements, storage, cleared, toasts, timers, code, dialog};
 }
 
 for (const checked of [true, false]) {
     test(`import sends automatic rotation preference: ${checked}`, async () => {
-        const {context, elements} = runtime();
+        const {context, elements, dialog} = runtime();
         elements.get('accountPoolAutoRotate').checked = checked;
         let posted;
         context.fetch = async (url, options) => {
@@ -43,8 +45,44 @@ for (const checked of [true, false]) {
         assert.equal(posted.rotate_2fa, checked);
         assert.equal(elements.get('accountPoolEmails').value, '');
         assert.equal(elements.get('accountPoolSubmitBtn').disabled, false);
+        assert.equal(dialog.open, false);
     });
 }
+
+test('failed import keeps the dialog and pasted accounts for correction', async () => {
+    const {context, elements, dialog, toasts} = runtime();
+    context.fetch = async () => ({ok: false, json: async () => ({success: false, error: '账号格式错误'})});
+    await context.submitAccountPoolForm({preventDefault() {}});
+    assert.equal(dialog.open, true);
+    assert.equal(elements.get('accountPoolEmails').value, 'new@example.com----password----SECRET');
+    assert.equal(elements.get('accountPoolSubmitBtn').disabled, false);
+    assert.ok(toasts.some(([message]) => message === '账号格式错误'));
+});
+
+test('opening and cancelling import restores focus and preserves the draft', () => {
+    const {context, elements, dialog} = runtime();
+    const handlers = {}, input = elements.get('accountPoolEmails');
+    let focused = '';
+    elements.set('accountPoolImportToggle', {
+        addEventListener(event, handler) {handlers.open = handler;},
+        focus() {focused = 'toggle';},
+    });
+    input.focus = () => {focused = 'input';};
+    dialog.open = false;
+    dialog.showModal = () => {dialog.open = true;};
+    dialog.addEventListener = (event, handler) => {handlers[event] = handler;};
+    dialog.querySelectorAll = () => [{addEventListener(event, handler) {handlers.cancel = handler;}}];
+    dialog.close = () => {dialog.open = false; handlers.close();};
+    context.initAccountPoolImport();
+    handlers.open();
+    assert.equal(dialog.open, true);
+    assert.equal(focused, 'input');
+    handlers.cancel();
+    assert.equal(dialog.open, false);
+    assert.equal(focused, 'toggle');
+    handlers.open();
+    assert.equal(input.value, 'new@example.com----password----SECRET');
+});
 
 test('import success is kept when rotation enqueue fails', async () => {
     const {context, elements, toasts} = runtime();
