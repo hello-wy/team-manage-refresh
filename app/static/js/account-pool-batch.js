@@ -19,6 +19,8 @@ function updateAccountPoolSelectionUi() {
         'accountPoolBatchRotate', 'accountPoolBatchDelete', 'accountPoolBatchClear']) {
         document.getElementById(id).disabled = count === 0;
     }
+    const cpa = document.getElementById('accountPoolBatchCpa');
+    cpa.disabled = count === 0 || cpa.hasAttribute('aria-busy');
     const liveness = document.getElementById('accountPoolBatchLiveness');
     if (liveness) liveness.disabled = count === 0 || accountPoolLivenessBatchRunning || accountPoolLivenessTargetsLoading;
     const boxes = [...document.querySelectorAll('.account-pool-row-select:not(:disabled)')];
@@ -267,6 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('accountPoolBatchJson').addEventListener('click', downloadAccountPoolBatchJson);
     document.getElementById('accountPoolBatchSub2api').addEventListener('click', exportAccountPoolBatchSub2api);
+    document.getElementById('accountPoolBatchCpa').addEventListener('click', window.exportAccountPoolBatchCpa);
     document.getElementById('accountPoolBatchRotate').addEventListener('click', rotateAccountPoolBatch);
     document.getElementById('accountPoolBatchDelete').addEventListener('click', deleteAccountPoolBatch);
     document.getElementById('accountPoolBatchHistory').addEventListener('click', () => {

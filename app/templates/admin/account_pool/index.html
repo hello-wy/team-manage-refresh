@@ -143,12 +143,14 @@
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchLiveness" disabled title="验活所有勾选的账号，可跨页选择"><i data-lucide="shield-check"></i> 批量验活</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchJson" disabled><i data-lucide="download"></i> 合并 JSON</button>
             <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchSub2api" disabled><i data-lucide="upload"></i> 导出到 Sub2API</button>
+            <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchCpa" disabled><img class="cpa-icon" src="/static/cpa-icon.jpg" alt="" aria-hidden="true"> 批量导出到 CPA</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchRotate" disabled><i data-lucide="key-round"></i> 更换 2FA</button>
             <button type="button" class="btn btn-sm btn-danger" id="accountPoolBatchDelete" disabled><i data-lucide="trash-2"></i> 删除</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchClear" disabled>清除选择</button>
         </div>
         <div id="accountPoolLivenessProgress" class="account-pool-batch-progress" role="status" aria-live="polite" hidden></div>
         <div id="accountPoolBatchProgress" class="account-pool-batch-progress" role="status" aria-live="polite" hidden></div>
+        <div id="accountPoolBatchCpaProgress" class="account-pool-batch-progress" role="status" aria-live="polite" hidden></div>
         <div id="accountPoolTableRegion" class="account-pool-table-region" data-current-page="{{ current_page }}" data-total-pages="{{ total_pages }}">
         {% if entries %}
         <div class="table-container mobile-card-table-container" style="margin-top: 1rem;">
@@ -313,11 +315,11 @@
 <script src="/static/js/account-pool-team-checkout.js?v=20261029-2"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
-<script src="/static/js/cpa-export.js?v=20261030-batch"></script>
+<script src="/static/js/cpa-export.js?v=20261126-pool-batch"></script>
 <script src="/static/js/account-pool.js?v=20261122-pool-toolbar"></script>
 <script src="/static/js/account-pool-proxy.js?v=20261122-1"></script>
 <script src="/static/js/account-pool-quota.js?v=20261024-liveness-refresh"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
 <script src="/static/js/account-pool-rotate-2fa.js?v=20260927-owner-actions"></script>
-<script src="/static/js/account-pool-batch.js?v=20261024-check-all"></script>
+<script src="/static/js/account-pool-batch.js?v=20261126-cpa"></script>
 {% endblock %}

@@ -60,16 +60,72 @@
         }
     }
 
+    function showPoolBatchProgress(lines) {
+        const panel = document.getElementById('accountPoolBatchCpaProgress');
+        panel.textContent = lines.join('\n');
+        panel.hidden = false;
+    }
+
+    async function readPoolJob(jobId) {
+        const job = await request(`/admin/account-pool/cpa-export-jobs/${jobId}`);
+        if (!IN_PROGRESS.has(job.status) && job.status !== 'completed' && job.status !== 'failed') {
+            throw new Error(`未知 CPA 导出状态：${job.status}`);
+        }
+        return job;
+    }
+
+    async function watchPoolBatch(jobs) {
+        let pending = jobs;
+        let completed = 0;
+        const failures = [];
+        while (pending.length) {
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+            const results = await Promise.all(pending.map(async job => ({...job, ...await readPoolJob(job.id)})));
+            completed += results.filter(job => job.status === 'completed').length;
+            for (const job of results.filter(job => job.status === 'failed')) {
+                failures.push(`${job.email}${job.workspace_id ? `（${job.workspace_id}）` : ''}：${job.error}`);
+            }
+            pending = results.filter(job => IN_PROGRESS.has(job.status));
+            showPoolBatchProgress([
+                `CPA 导出：成功 ${completed}，失败 ${failures.length}，进行中 ${pending.length}`,
+                ...failures,
+            ]);
+        }
+    }
+
+    async function exportAccountPoolBatchCpa(event) {
+        const button = event.currentTarget;
+        const ids = selectedAccountPoolIds();
+        if (!await confirmAccountPoolAction(`确定重新登录选中的 ${ids.length} 个账号并导出到配置的 CPA 吗？`)) return;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        let jobs = [];
+        try {
+            const response = await requestAccountPoolBatch('cpa', ids);
+            ({jobs} = await response.json());
+            jobs.forEach(job => watchedJobs.add(job.id));
+            showPoolBatchProgress([`已提交 ${jobs.length} 个 CPA 导出任务`]);
+            await watchPoolBatch(jobs);
+            await refreshAccountPoolTable();
+        } catch (error) {
+            showPoolBatchProgress([error.message]);
+            showToast(error.message, 'error');
+        } finally {
+            jobs.forEach(job => watchedJobs.delete(job.id));
+            button.removeAttribute('aria-busy');
+            updateAccountPoolSelectionUi();
+        }
+    }
+
     async function watchJob(jobId, email) {
         if (watchedJobs.has(jobId)) return;
         watchedJobs.add(jobId);
         try {
             while (true) {
                 await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
-                const job = await request(`/admin/account-pool/cpa-export-jobs/${jobId}`);
+                const job = await readPoolJob(jobId);
                 if (IN_PROGRESS.has(job.status)) continue;
                 if (job.status === 'failed') throw new Error(job.error || 'CPA 导出失败');
-                if (job.status !== 'completed') throw new Error(`未知 CPA 导出状态：${job.status}`);
                 showToast(`${email} 已导出到 CPA：${job.filename}`, 'success');
                 break;
             }
@@ -99,5 +155,6 @@
     });
     window.pushTeamToCpa = pushTeamToCpa;
     window.batchPushTeamsToCpa = batchPushTeamsToCpa;
+    window.exportAccountPoolBatchCpa = exportAccountPoolBatchCpa;
     window.initCpaExportJobs = initJobs;
 })();

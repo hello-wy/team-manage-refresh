@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.cpa_export_model import CpaExportJob
 from app.database import Base, get_db
 from app.dependencies.auth import require_admin
-from app.models import AccountPoolEntry, Sub2apiExportRecord
+from app.models import AccountPoolEntry, AccountPoolWorkspace, Sub2apiExportRecord
 from app.routes import cpa_export
 from app.services.account_pool_authorization import AccountPoolLoginResult
 from app.services.cpa import CpaExportError
@@ -78,6 +78,38 @@ class CpaExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.json()["error"], "CPA HTTP 401")
         self.assertIsNone(status.json()["filename"])
 
+    async def test_batch_queues_each_workspace_and_continues_after_upload_failure(self):
+        async with self.sessions() as session:
+            session.add(AccountPoolEntry(id=2, email="second@example.com", workspace_id="workspace-c"))
+            session.add_all([
+                AccountPoolWorkspace(account_pool_id=1, workspace_id=workspace_id,
+                                     status="ok", export_json_encrypted="saved")
+                for workspace_id in ("workspace-a", "workspace-b")
+            ])
+            await session.commit()
+        self.cpa.import_member.side_effect = [CpaExportError("CPA HTTP 401"),
+                                             {"filename": "second.json"}, {"filename": "third.json"}]
+        with self.assertLogs("app.services.account_pool_export_job", level="ERROR"):
+            response = await self.client.post("/admin/account-pool/batch/cpa", json={"ids": [1, 1, 2]})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        jobs = response.json()["jobs"]
+        self.assertCountEqual([(job["email"], job["workspace_id"]) for job in jobs], [
+            ("member@example.com", "workspace-a"), ("member@example.com", "workspace-b"),
+            ("second@example.com", "workspace-c"),
+        ])
+        statuses = [(await self.client.get(f"/admin/account-pool/cpa-export-jobs/{job['id']}")).json()
+                    for job in jobs]
+        self.assertEqual([item["status"] for item in statuses], ["failed", "completed", "completed"])
+        self.assertEqual(statuses[0]["error"], "CPA HTTP 401")
+
+    async def test_batch_validates_selection_before_creating_any_jobs(self):
+        response = await self.client.post("/admin/account-pool/batch/cpa", json={"ids": [1, 999]})
+        self.assertEqual(response.status_code, 400)
+        self.authorization.login_entry.assert_not_awaited()
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(CpaExportJob)), 0)
+
     async def test_changed_credentials_prevent_upload(self):
         self.authorization.save_result.return_value = False
         with self.assertLogs("app.services.account_pool_export_job", level="ERROR"):
@@ -98,5 +130,7 @@ class CpaExportTests(unittest.IsolatedAsyncioTestCase):
         from starlette.middleware.sessions import SessionMiddleware
         self.app.add_middleware(SessionMiddleware, secret_key="test-session-signing-key")
         response = await self.client.post("/admin/account-pool/1/export-cpa", json={"workspace_id": "workspace-b"})
+        self.assertIn(response.status_code, (401, 403))
+        response = await self.client.post("/admin/account-pool/batch/cpa", json={"ids": [1]})
         self.assertIn(response.status_code, (401, 403))
         self.authorization.login_entry.assert_not_awaited()

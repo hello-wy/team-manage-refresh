@@ -15,6 +15,18 @@ from app.utils.time_utils import get_now
 logger = logging.getLogger(__name__)
 
 
+async def batch_export_targets(session, entries):
+    grouped = {entry.id: [] for entry in entries}
+    snapshots = (await session.execute(select(AccountPoolWorkspace).where(
+        AccountPoolWorkspace.account_pool_id.in_(grouped),
+        AccountPoolWorkspace.export_json_encrypted.is_not(None)
+    ))).scalars().all()
+    for snapshot in snapshots:
+        grouped[snapshot.account_pool_id].append(snapshot.workspace_id)
+    return [(entry, selected_workspace(entry, workspace_id))
+            for entry in entries for workspace_id in (grouped[entry.id] or [""])]
+
+
 class AccountPoolBatchService:
     def __init__(self, sessions, totp, cipher):
         self._sessions = sessions
@@ -61,17 +73,11 @@ class AccountPoolBatchService:
 
     async def enqueue_exports(self, session, ids):
         entries = await self.entries(session, ids)
-        snapshots = (await session.execute(select(AccountPoolWorkspace).where(
-            AccountPoolWorkspace.account_pool_id.in_(ids),
-            AccountPoolWorkspace.export_json_encrypted.is_not(None)
-        ))).scalars().all()
-        grouped = {entry.id: [] for entry in entries}
-        for snapshot in snapshots:
-            grouped[snapshot.account_pool_id].append(snapshot.workspace_id)
+        targets = await batch_export_targets(session, entries)
         jobs = [AccountPoolExportJob(account_pool_id=entry.id,
-                                     workspace_id=selected_workspace(entry, workspace_id),
+                                     workspace_id=workspace_id,
                                      status="pending")
-                for entry in entries for workspace_id in (grouped[entry.id] or [""])]
+                for entry, workspace_id in targets]
         session.add_all(jobs)
         await session.commit()
         return jobs

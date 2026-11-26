@@ -2,6 +2,7 @@
 from sqlalchemy import func, select
 
 from app.cpa_export_model import CpaExportJob
+from app.services.account_pool_batch import AccountPoolBatchService, batch_export_targets
 from app.services.account_pool_export_job import AccountPoolExportJobService
 
 
@@ -22,6 +23,22 @@ class AccountPoolCpaExportService(AccountPoolExportJobService):
     def __init__(self, sessions, authorization, *, cpa):
         super().__init__(sessions, authorization)
         self._cpa = cpa
+
+    async def enqueue_batch(self, session, ids):
+        entries = await AccountPoolBatchService.entries(session, list(dict.fromkeys(ids)))
+        targets = await batch_export_targets(session, entries)
+        jobs = [CpaExportJob(account_pool_id=entry.id, workspace_id=workspace_id, status="pending")
+                for entry, workspace_id in targets]
+        session.add_all(jobs)
+        await session.flush()
+        queued = [{"id": job.id, "email": entry.email, "workspace_id": workspace_id}
+                  for job, (entry, workspace_id) in zip(jobs, targets)]
+        await session.commit()
+        return queued
+
+    async def run_batch(self, job_ids):
+        for job_id in job_ids:
+            await self.run(job_id)
 
     async def _import(self, session, job, result):
         imported = await self._cpa.import_member(result.payload, session)

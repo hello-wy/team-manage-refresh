@@ -86,6 +86,18 @@ async def push_teams(payload: CpaBatchExportRequest, *, db=Depends(get_db), serv
     }, status_code=200 if succeeded else 400, headers=NO_STORE)
 
 
+@router.post("/account-pool/batch/cpa")
+async def push_pool_batch(payload: CpaBatchExportRequest, background_tasks: BackgroundTasks, *,
+                          db=Depends(get_db), service=Depends(get_pool_export_service)):
+    try:
+        jobs = await service.enqueue_batch(db, payload.ids)
+    except ValueError as exc:
+        await db.rollback()
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=400, headers=NO_STORE)
+    background_tasks.add_task(service.run_batch, [job["id"] for job in jobs])
+    return JSONResponse({"success": True, "jobs": jobs}, status_code=202, headers=NO_STORE)
+
+
 @router.post("/account-pool/{entry_id}/export-cpa")
 async def push_pool(entry_id: int, payload: CpaExportRequest, background_tasks: BackgroundTasks, *,
                     db=Depends(get_db), service=Depends(get_pool_export_service)):
