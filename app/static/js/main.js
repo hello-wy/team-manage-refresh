@@ -117,6 +117,9 @@ function getFriendlyAdminErrorMessage(rawMessage, statusCode = 0, scene = 'commo
     const message = normalizeRawErrorMessage(rawMessage);
     const lower = message.toLowerCase();
     const includesAny = (...keywords) => keywords.some(keyword => lower.includes(String(keyword).toLowerCase()));
+    if (includesAny('workspace_subscription_delinquent', 'delinquent subscription')) {
+        return 'Team 订阅账单异常，官方拒绝邀请成员；请由母号检查并处理账单后重试';
+    }
 
     if (scene === 'oauth') {
         if (includesAny('state') && includesAny('mismatch', '不匹配', 'invalid')) {

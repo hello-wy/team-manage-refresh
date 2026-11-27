@@ -109,6 +109,26 @@ class MemberInvitationTests(unittest.IsolatedAsyncioTestCase):
                                     upstream_user_id="target-user" if status == "joined" else None))
             await db.commit()
 
+    async def test_delinquent_subscription_stops_batch_and_releases_reserved_seat(self):
+        self.service.chatgpt_service.send_invite.return_value = {
+            "success": False, "status_code": 401,
+            "error": "Team has a delinquent subscription",
+            "error_code": "workspace_subscription_delinquent",
+        }
+        async with self.sessions() as db:
+            result = await self.service.add_team_members(
+                1, ["one@example.com", "two@example.com", "three@example.com"], db, "premium",
+            )
+            self.assertFalse((await db.execute(select(TeamSeatHold))).scalars().all())
+            self.assertFalse((await db.execute(select(TeamEmailMapping))).scalars().all())
+        self.service.chatgpt_service.send_invite.assert_awaited_once()
+        self.assertFalse(result["success"])
+        self.assertEqual(result["summary"]["invited"], 0)
+        self.assertEqual(result["summary"]["failed"], 1)
+        self.assertEqual(result["summary"]["not_processed"], 2)
+        self.assertIn("订阅账单异常", result["message"])
+        self.assertEqual(result["results"][0]["error_code"], "workspace_subscription_delinquent")
+
     async def _invite_target(self):
         async with self.sessions() as db:
             return await self.service.add_team_members(1, ["target@example.com"], db, "premium")

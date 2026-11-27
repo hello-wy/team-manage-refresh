@@ -9,7 +9,6 @@
                                     aria-label="加入 Team"
                                     data-entry-id="{{ entry.id }}"
                                     data-email="{{ entry.email }}"
-                                    data-seat-type="{{ 'premium' if entry.seat_type == 'premium' else 'default' }}"
                                     {% if entry.status != 'unassigned' %}disabled{% endif %}
                                 >
                                     <i data-lucide="user-plus" aria-hidden="true"></i>

@@ -263,18 +263,19 @@ function accountPoolPickerSeat(team, kind) {
 }
 
 function accountPoolPickerCard(team, action, seatType) {
+    const hasSeatType = ['default', 'standard', 'premium', 'prolite'].includes(seatType);
     const kind = ['premium', 'prolite'].includes(seatType) ? 'premium' : 'standard';
     const requested = accountPoolPickerSeat(team, kind);
-    const disabled = action === 'invite' && (['expired', 'banned'].includes(team.status)
+    const disabled = action === 'invite' && (!hasSeatType || ['expired', 'banned'].includes(team.status)
         || !requested || requested.remaining < 1);
     const statusLabel = action !== 'invite' || ['expired', 'banned'].includes(team.status)
         ? accountPoolTeamStatusLabel(team)
-        : !requested ? '席位待同步'
+        : !hasSeatType ? '请先选择席位类型' : !requested ? '席位待同步'
         : requested.remaining < 1 ? (kind === 'premium' ? '高级席位不足' : '标准席位不足') : '可邀请';
     const seats = ['standard', 'premium'].map(type => {
         const seat = accountPoolPickerSeat(team, type);
         const label = type === 'standard' ? '标准' : '高级';
-        return '<span class="account-pool-picker-seat' + (type === kind ? ' is-requested' : '') + '">' + label +
+        return '<span class="account-pool-picker-seat' + (hasSeatType && type === kind ? ' is-requested' : '') + '">' + label +
             (seat ? ' 剩余 ' + seat.remaining + ' / ' + seat.paid : ' · 待同步') + '</span>';
     }).join('');
     return '<button type="button" class="account-pool-team-picker-option" data-team-id="' + team.id + '"' +
@@ -285,15 +286,27 @@ function accountPoolPickerCard(team, action, seatType) {
         (team.seat_error ? '<small class="account-pool-picker-error">' + escapeHtml(team.seat_error) + '</small>' : '') + '</button>';
 }
 
-function openAccountPoolTeamPicker(entryId, email, teams, action = 'automatic_login', seatType = 'default') {
+function openAccountPoolTeamPicker(entryId, email, teams, action = 'automatic_login', seatType = '') {
     const requestId = ++accountPoolTeamPickerRequestId;
     const options = document.getElementById('accountPoolTeamPickerOptions');
     document.getElementById('accountPoolTeamPickerEmail').textContent = email;
     const title = document.getElementById('accountPoolTeamPickerTitle');
-    if (title) title.textContent = action === 'invite'
-        ? '加入 Team · ' + (['premium', 'prolite'].includes(seatType) ? '高级席位' : '标准席位') : '选择目标 Team';
+    const seatPicker = document.getElementById('accountPoolInviteSeatPicker');
+    const seatSelect = document.getElementById('accountPoolInviteSeatType');
+    if (seatPicker) seatPicker.hidden = action !== 'invite';
+    if (seatSelect) {
+        seatSelect.disabled = false;
+        seatSelect.value = ['default', 'premium'].includes(seatType) ? seatType : '';
+        seatSelect.onchange = () => {
+            if (requestId !== accountPoolTeamPickerRequestId) return;
+            seatType = seatSelect.value;
+            render();
+        };
+    }
     function render() {
         if (requestId !== accountPoolTeamPickerRequestId) return;
+        if (title) title.textContent = action === 'invite'
+            ? '加入 Team' + (seatType ? ' · ' + (seatType === 'premium' ? '高级席位' : '标准席位') : '') : '选择目标 Team';
         options.innerHTML = teams.length ? teams.map(team => accountPoolPickerCard(team, action, seatType)).join('')
             : '<div class="text-muted">暂无可选择的 Team。</div>';
         options.querySelectorAll('[data-team-id]').forEach(button => {
@@ -339,6 +352,10 @@ function openAccountPoolTeamPicker(entryId, email, teams, action = 'automatic_lo
 }
 
 async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) {
+    if (!['default', 'premium'].includes(seatType)) {
+        showToast('请先选择标准或高级席位', 'error');
+        return;
+    }
     if (!await confirmAccountPoolAction(`确定邀请 ${email} 加入所选 Team 吗？`)) return;
     const original = button.innerHTML;
     button.disabled = true;
@@ -348,7 +365,7 @@ async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) 
         const response = await fetch(`/admin/account-pool/${entryId}/invite`, {
             method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({team_id: teamId, seat_type: seatType || 'default'})
+            body: JSON.stringify({team_id: teamId, seat_type: seatType})
         });
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || payload.message || '邀请失败');
@@ -366,6 +383,11 @@ async function openAccountPoolInvitePicker(entryId, email, seatType) {
     const requestId = ++accountPoolTeamPickerRequestId;
     document.getElementById('accountPoolTeamPickerEmail').textContent = email;
     document.getElementById('accountPoolTeamPickerOptions').textContent = '正在读取 Team...';
+    const seatPicker = document.getElementById('accountPoolInviteSeatPicker');
+    const seatSelect = document.getElementById('accountPoolInviteSeatType');
+    if (seatPicker) seatPicker.hidden = false;
+    if (seatSelect) { seatSelect.value = seatType || ''; seatSelect.disabled = true; seatSelect.onchange = null; }
+    document.getElementById('accountPoolTeamPickerTitle').textContent = '加入 Team';
     showModal('accountPoolTeamPickerModal');
     try {
         const response = await fetch('/admin/account-pool/teams', {credentials: 'same-origin'});
@@ -952,7 +974,7 @@ function initAccountPoolRowActions({refreshQuotas = true} = {}) {
             openAccountPoolInvitePicker(
                 button.dataset.entryId,
                 button.dataset.email,
-                button.dataset.seatType || 'default',
+                '',
             );
         });
     });

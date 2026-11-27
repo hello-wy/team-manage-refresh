@@ -7,7 +7,7 @@ const pickerSource = poolSource.slice(poolSource.indexOf('function accountPoolTe
 const team = (id, standard, premium) => ({id, team_name: 'Team ' + id, email: 'owner@example.com', status: 'full',
     seat_balance_needs_refresh: false, seat_snapshot: {standard_paid: 10, standard_remaining: standard, premium_paid: 3, premium_remaining: premium}});
 function pickerRuntime(fetch) {
-    const elements = Object.fromEntries(['accountPoolTeamPickerOptions', 'accountPoolTeamPickerEmail', 'accountPoolTeamPickerTitle']
+    const elements = Object.fromEntries(['accountPoolTeamPickerOptions', 'accountPoolTeamPickerEmail', 'accountPoolTeamPickerTitle', 'accountPoolInviteSeatPicker', 'accountPoolInviteSeatType']
         .map(id => [id, {innerHTML: '', textContent: '', querySelectorAll: () => [], appendChild() {}}]));
     const context = vm.createContext({window: {}, document: {getElementById: id => elements[id], createElement: () => ({addEventListener() {}})},
         escapeHtml: value => String(value).replaceAll('<', '&lt;'), showModal() {}, hideModal() {}, fetch});
@@ -40,7 +40,47 @@ test('late seat requests cannot replace a newly opened Team picker', async () =>
     assert.match(env.elements.accountPoolTeamPickerOptions.innerHTML, /data-team-id="2"/);
     assert.doesNotMatch(env.elements.accountPoolTeamPickerOptions.innerHTML, /data-team-id="1"/);
 });
+test('invitation requires an explicit seat and updates Team availability when switched', () => {
+    const {context:c, elements} = pickerRuntime();
+    c.openAccountPoolTeamPicker(1, 'member@example.com', [team(1, 2, 0), team(2, 0, 2)], 'invite');
+    const select = elements.accountPoolInviteSeatType;
+    assert.equal(select.value, '');
+    assert.equal(elements.accountPoolInviteSeatPicker.hidden, false);
+    assert.equal((elements.accountPoolTeamPickerOptions.innerHTML.match(/ disabled/g) || []).length, 2);
+    assert.doesNotMatch(elements.accountPoolTeamPickerOptions.innerHTML, /is-requested/);
+    select.value = 'premium'; select.onchange();
+    assert.match(elements.accountPoolTeamPickerOptions.innerHTML, /data-team-id="1" disabled/);
+    assert.doesNotMatch(elements.accountPoolTeamPickerOptions.innerHTML, /data-team-id="2" disabled/);
+    select.value = 'default'; select.onchange();
+    assert.doesNotMatch(elements.accountPoolTeamPickerOptions.innerHTML, /data-team-id="1" disabled/);
+    assert.match(elements.accountPoolTeamPickerOptions.innerHTML, /data-team-id="2" disabled/);
+    c.openAccountPoolTeamPicker(2, 'other@example.com', [team(2, 2, 2)], 'invite');
+    assert.equal(select.value, '');
+    c.openAccountPoolTeamPicker(2, 'other@example.com', [team(2, 2, 2)], 'automatic_login');
+    assert.equal(elements.accountPoolInviteSeatPicker.hidden, true);
+});
+test('invite request preserves the chosen premium seat and blocks an unspecified seat', async () => {
+    const requests = [];
+    const context = vm.createContext({window:{}, showToast(){}, refreshAccountPoolTable:async()=>{},
+        confirmAccountPoolAction:async()=>true,
+        fetch:async(url, options)=>{requests.push(JSON.parse(options.body)); return {ok:true,json:async()=>({success:true})};}});
+    vm.runInContext(poolSource.slice(poolSource.indexOf('async function inviteAccountPoolEntry'), poolSource.indexOf('async function openAccountPoolInvitePicker')), context);
+    await context.inviteAccountPoolEntry(1, 'member@example.com', 2, '', {});
+    assert.equal(requests.length, 0);
+    await context.inviteAccountPoolEntry(1, 'member@example.com', 2, 'premium', {});
+    assert.deepEqual(requests, [{team_id:2, seat_type:'premium'}]);
+});
 const main = readFileSync('app/static/js/main.js', 'utf8');
+test('billing rejection is explained without treating its HTTP 401 as a login failure', () => {
+    const context = vm.createContext({});
+    vm.runInContext(main.slice(main.indexOf('function extractErrorText'), main.indexOf('function cleanupLegacyThemeSettingsSection')), context);
+    for (const error of ['workspace_subscription_delinquent', {detail: {code: 'workspace_subscription_delinquent', message: 'Team has a delinquent subscription'}}]) {
+        const message = context.getFriendlyAdminErrorMessage(error, 401, 'member');
+        assert.match(message, /订阅账单异常/);
+        assert.match(message, /检查并处理账单/);
+        assert.doesNotMatch(message, /登录.*失效|重新登录/);
+    }
+});
 const selectionSource = main.slice(main.indexOf('function getMemberInviteEmails'), main.indexOf('function appendMemberPoolOptions'));
 function selectionRuntime(inputs) {
     let validations = 0;
