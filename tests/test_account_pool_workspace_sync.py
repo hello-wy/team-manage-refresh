@@ -203,7 +203,9 @@ class AccountPoolWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         ]}
         await self.authorization.refresh_team_list(self.db, entry.id)
         cell = await self.seat_cell(entry.email)
-        self.assertIn("席位待确认", cell)
+        self.assertIn("外部 Team", cell)
+        self.assertIn("该 Team 未接入本系统管理", cell)
+        self.assertNotIn("席位待确认", cell)
         self.assertNotIn("个人账户", cell)
         self.remote.get_members.assert_not_awaited()
 
