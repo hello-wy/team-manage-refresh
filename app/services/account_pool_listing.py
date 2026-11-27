@@ -161,6 +161,7 @@ def _workspace_options(entry, saved, teams) -> list[dict[str, Any]]:
                      or readable_name(record.name if record else None, workspace_id)
                      or "Team 名称待同步"),
             "is_personal": bool(item.get("is_personal")),
+            "managed": team is not None,
             "status": record.status if record else "未获取 JSON",
             "json_saved": bool(record and record.export_json_encrypted),
             "json_updated_at": record.json_updated_at if record else None,
@@ -199,6 +200,22 @@ def team_usage_view(usage: AccountPoolTeamUsage | None) -> dict[str, Any] | None
         "short_reset_at": usage.short_reset_at,
         "weekly_reset_at": usage.weekly_reset_at,
     }
+
+
+def _unconfirmed_subscription(row):
+    """Distinguish membership evidence from saved OAuth workspace choices."""
+    if row["seat_type"] in ("standard", "premium"):
+        return None
+    if row["is_owner"] or any(option["status"] == "joined" for option in row["team_options"]):
+        return {"label": "席位待确认", "detail": "已确认 Team 归属，但成员记录尚未返回实际席位类型；请刷新 Team 成员列表。"}
+    if row["team_options"]:
+        return {"label": "待接受邀请", "detail": "账号尚未确认加入 Team，接受邀请并同步成员后才能确认实际席位。"}
+    team_workspaces = [option for option in row["workspace_options"] if not option["is_personal"]]
+    if any(option["managed"] for option in team_workspaces):
+        return {"label": "归属待核对", "detail": "保存的登录工作区包含已接入的 Team，但当前没有已入组成员记录；历史工作区不代表当前仍在组，请刷新账号核对。"}
+    if team_workspaces:
+        return {"label": "外部 Team", "detail": "登录曾发现 Team 工作区，但该 Team 未接入本系统管理，无法从成员列表同步实际席位；验活正常不代表席位已确认。"}
+    return None
 
 
 def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, teams, job, usages) -> dict[str, Any]:
@@ -327,5 +344,6 @@ async def build_pool_entry_data(
         if row["is_owner"]:
             joined_names = [team["name"] for team in row["owner_teams"]]
         row["display_team_name"] = " / ".join(dict.fromkeys(joined_names)) or "个人账户"
+        row["unconfirmed_subscription"] = _unconfirmed_subscription(row)
 
     return rows

@@ -173,7 +173,6 @@
                     {% set usage = entry.usage or {} %}
                     {% set team_usage = entry.team_usage or {} %}
                     {% set current_team_label = entry.display_team_name %}
-                    {% set selectable_teams = entry.workspace_options|rejectattr('is_personal')|list %}
                     <tr data-account-pool-row="{{ entry.id }}" data-email="{{ entry.email }}">
                         <td class="account-pool-select-cell table-select-cell" data-label="选择"><input type="checkbox" class="account-pool-row-select" value="{{ entry.id }}" aria-label="选择 {{ entry.email }}" {% if entry.is_owner %}disabled title="所有者不参与批量操作"{% endif %}></td>
                         <td data-label="账号">
@@ -189,7 +188,7 @@
                         <td data-label="归属 / 订阅">
                             <div class="account-pool-team-badges">
                                 {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>
-                                {% elif entry.is_owner or entry.status in ['joined', 'conflict'] or selectable_teams %}<small class="text-muted">席位待确认</small>
+                                {% elif entry.unconfirmed_subscription %}<small class="text-muted" tabindex="0" data-pool-tooltip="{{ entry.unconfirmed_subscription.detail }}">{{ entry.unconfirmed_subscription.label }}</small>
                                 {% else %}<span class="account-pool-plan-badge{% if not entry.personal_plan %} is-unknown{% endif %}"{% if entry.personal_plan == 'Pro' %} data-pool-tooltip="当前登录信息仅返回 Pro，具体档位待确认"{% endif %}>{{ entry.personal_plan or '订阅待确认' }}</span><small class="text-muted account-pool-personal-label">个人账户</small>{% endif %}
                             </div>
                         </td>
