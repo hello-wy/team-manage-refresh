@@ -532,6 +532,8 @@ body.admin-theme .account-pool-invite-button:disabled {
     background: var(--bg-card, var(--bg-primary)); color: var(--text-primary);
     font: inherit; cursor: pointer; transition: border-color .15s, background .15s;
 }
+.account-pool-invite-seat { margin: 1rem 0; }
+.account-pool-invite-seat[hidden] { display: none !important; }
 .account-pool-team-picker-option:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-soft); }
 .account-pool-team-picker-option:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .account-pool-team-picker-option:disabled { cursor: not-allowed; background: color-mix(in srgb, var(--text-muted) 8%, var(--bg-primary)); opacity: .65; }

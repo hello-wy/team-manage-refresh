@@ -21,6 +21,15 @@
         </div>
         <div class="modal-body">
             <p id="accountPoolTeamPickerEmail" class="text-muted"></p>
+            <div id="accountPoolInviteSeatPicker" class="form-group account-pool-invite-seat" hidden>
+                <label for="accountPoolInviteSeatType">邀请席位类型</label>
+                <select id="accountPoolInviteSeatType" class="form-control" required>
+                    <option value="">请选择标准或高级席位</option>
+                    <option value="default">标准席位</option>
+                    <option value="premium">高级席位</option>
+                </select>
+                <small class="form-text">先选择席位类型，再选择有对应余额的 Team。</small>
+            </div>
             <div id="accountPoolTeamPickerOptions" class="account-pool-team-picker-options"></div>
         </div>
     </div>

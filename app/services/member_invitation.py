@@ -173,7 +173,8 @@ class MemberInvitationService:
             await self.teams._release_member_seat(team.account_id, "invite", target.email, self.db)
         await self.teams._handle_api_error(result, team, self.db)
         messages = {"account_deactivated": "账号已封禁 (account_deactivated)",
-                    "token_invalidated": "Token 已失效 (token_invalidated)"}
+                    "token_invalidated": "Token 已失效 (token_invalidated)",
+                    "workspace_subscription_delinquent": "Team 订阅账单异常，官方拒绝邀请成员；请由母号检查并处理账单后重试（workspace_subscription_delinquent）"}
         code = result.get("error_code") or "invite_failed"
         return self.teams._admin_error(code, messages.get(code) or f"发送邀请失败: {result['error']}")
 

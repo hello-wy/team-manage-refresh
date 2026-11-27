@@ -5,7 +5,8 @@ from app.utils.seats import normalize_seat_type
 
 COUNTERS = ("unique", "invited", "invalid", "duplicate", "already_exists", "no_seat", "failed", "not_processed")
 FATAL_ERRORS = frozenset({"team_not_found", "team_sync_failed", "token_refresh_failed",
-                          "team_banned", "account_deactivated", "token_invalidated"})
+                          "team_banned", "account_deactivated", "token_invalidated",
+                          "workspace_subscription_delinquent"})
 SEAT_ERRORS = frozenset({"team_full", "seat_limit_exceeded"})
 
 

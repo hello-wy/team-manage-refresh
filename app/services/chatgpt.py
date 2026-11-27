@@ -193,6 +193,8 @@ class ChatGPTService:
                         if isinstance(error_data, dict):
                             error_info = error_data.get("error")
                             error_code = error_info.get("code") if isinstance(error_info, dict) else error_data.get("code")
+                            if not error_code and isinstance(detail, dict):
+                                error_code = detail.get("code")
                     except Exception:
                         pass
                     
