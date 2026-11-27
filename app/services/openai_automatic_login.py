@@ -394,7 +394,13 @@ class OpenAIAutomaticLoginService:
     async def _exchange(
         self, request: AutomaticLoginRequest, callback_url: str
     ) -> dict[str, Any]:
-        query = parse_qs(urlparse(callback_url).query)
+        callback = urlparse(callback_url)
+        expected = urlparse(request.oauth_draft["redirect_uri"])
+        if (callback.scheme, callback.netloc, callback.path) != (expected.scheme, expected.netloc, expected.path):
+            raise OpenAIAutomaticLoginError("自动登录 OAuth 回调地址不匹配")
+        query = parse_qs(callback.query)
+        if query.get("error") or len(query.get("code", [])) != 1 or len(query.get("state", [])) != 1:
+            raise OpenAIAutomaticLoginError("自动登录未返回唯一的 OAuth 授权码和 state")
         state = (query.get("state") or [""])[0]
         code = (query.get("code") or [""])[0]
         if not secrets.compare_digest(state, request.oauth_draft["state"]):

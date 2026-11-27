@@ -136,6 +136,7 @@ async def identifier_email(db, identifier):
         return identifier.strip().lower()
     for prefix, model in (
         ("account-pool-login-", AccountPoolEntry),
+        ("account-pool-bps-", AccountPoolEntry),
         ("account-pool-liveness-", AccountPoolEntry),
         ("team-refresh-login-", Team),
         ("member-auto-login-", MemberAuthorization),

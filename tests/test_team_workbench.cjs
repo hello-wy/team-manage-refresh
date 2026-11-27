@@ -101,7 +101,7 @@ function seatsHarness() {
         return elements.get(id);
     };
     const context = vm.createContext({
-        document: {getElementById: element, addEventListener(name, fn) { if (name === 'click') onClick = fn; }},
+        document: {getElementById: element, querySelectorAll: () => [], addEventListener(name, fn) { if (name === 'click') onClick = fn; }},
         window: {}, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
         canAllocateMemberSeat: () => available,
         selectMemberTab: tab => tabs.push(tab), updateMemberInviteAvailability: () => validations++,

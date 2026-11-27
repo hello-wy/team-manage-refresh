@@ -1,4 +1,4 @@
-/* CPA shares account preparation with Sub2API; only its upload destination differs. */
+/* CPA BPS obtains a dedicated BPS grant before uploading to the configured CPA instance. */
 (() => {
     const watchedJobs = new Set();
     const POLL_INTERVAL_MS = 2000;
@@ -9,31 +9,31 @@
         const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', ...options});
         const result = await response.json();
         if (!response.ok || result.success === false) {
-            throw new Error(result.error || result.detail || `CPA 请求失败（HTTP ${response.status}）`);
+            throw new Error(result.error || result.detail || `CPA BPS 请求失败（HTTP ${response.status}）`);
         }
         return result;
     }
 
     async function pushTeamToCpa(teamId, email) {
-        if (!await confirmPageAction(`确定将 Team ${email || teamId} 的母号导出到 CPA 吗？`)) return;
+        if (!await confirmPageAction(`确定将 Team ${email || teamId} 的母号导出到 CPA BPS 吗？`)) return;
         try {
-            showToast('正在导出到 CPA...', 'info');
+            showToast('正在导出到 CPA BPS...', 'info');
             const result = await request(`/admin/teams/${teamId}/push-cpa`, {method: 'POST'});
-            showToast(`已导出到 CPA：${result.data.filename}`, 'success');
+            showToast(`已导出到 CPA BPS：${result.data.filename}`, 'success');
         } catch (error) {
             showToast(error.message, 'error');
         }
     }
 
     function batchPushTeamsToCpa() {
-        return handleBatchAction('/admin/teams/batch-push-cpa', '批量导出到 CPA', {
+        return handleBatchAction('/admin/teams/batch-push-cpa', '批量导出到 CPA BPS', {
             onSuccessToast(result) {
                 const failures = result.results.filter(item => !item.success);
                 const details = failures.map(item => `Team ${item.team_id}: ${item.error}`);
                 return {
                     message: [result.message, ...details].join('。'),
                     type: failures.length ? 'warning' : 'success',
-                    title: '批量 CPA 导出结果', duration: BATCH_RESULT_TOAST_DURATION_MS,
+                    title: '批量 CPA BPS 导出结果', duration: BATCH_RESULT_TOAST_DURATION_MS,
                 };
             },
         });
@@ -41,7 +41,7 @@
 
     async function pushPoolToCpa(button) {
         const {entryId, email, workspaceId} = button.dataset;
-        if (!await confirmAccountPoolAction(`确定重新登录 ${email} 并导出到配置的 CPA 吗？`)) return;
+        if (!await confirmAccountPoolAction(`确定重新登录 ${email} 并导出到配置的 CPA BPS 吗？`)) return;
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
         try {
@@ -49,7 +49,7 @@
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({workspace_id: workspaceId || ''}),
             });
-            showToast(`${email} 的 CPA 导出任务已开始`, 'success');
+            showToast(`${email} 的 CPA BPS 导出任务已开始`, 'success');
             watchJob(result.job_id, email);
             await refreshAccountPoolTable();
         } catch (error) {
@@ -69,7 +69,7 @@
     async function readPoolJob(jobId) {
         const job = await request(`/admin/account-pool/cpa-export-jobs/${jobId}`);
         if (!IN_PROGRESS.has(job.status) && job.status !== 'completed' && job.status !== 'failed') {
-            throw new Error(`未知 CPA 导出状态：${job.status}`);
+            throw new Error(`未知 CPA BPS 导出状态：${job.status}`);
         }
         return job;
     }
@@ -87,7 +87,7 @@
             }
             pending = results.filter(job => IN_PROGRESS.has(job.status));
             showPoolBatchProgress([
-                `CPA 导出：成功 ${completed}，失败 ${failures.length}，进行中 ${pending.length}`,
+                `CPA BPS 导出：成功 ${completed}，失败 ${failures.length}，进行中 ${pending.length}`,
                 ...failures,
             ]);
         }
@@ -96,7 +96,7 @@
     async function exportAccountPoolBatchCpa(event) {
         const button = event.currentTarget;
         const ids = selectedAccountPoolIds();
-        if (!await confirmAccountPoolAction(`确定重新登录选中的 ${ids.length} 个账号并导出到配置的 CPA 吗？`)) return;
+        if (!await confirmAccountPoolAction(`确定重新登录选中的 ${ids.length} 个账号并导出到配置的 CPA BPS 吗？`)) return;
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
         let jobs = [];
@@ -104,7 +104,7 @@
             const response = await requestAccountPoolBatch('cpa', ids);
             ({jobs} = await response.json());
             jobs.forEach(job => watchedJobs.add(job.id));
-            showPoolBatchProgress([`已提交 ${jobs.length} 个 CPA 导出任务`]);
+            showPoolBatchProgress([`已提交 ${jobs.length} 个 CPA BPS 导出任务`]);
             await watchPoolBatch(jobs);
             await refreshAccountPoolTable();
         } catch (error) {
@@ -125,8 +125,8 @@
                 await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
                 const job = await readPoolJob(jobId);
                 if (IN_PROGRESS.has(job.status)) continue;
-                if (job.status === 'failed') throw new Error(job.error || 'CPA 导出失败');
-                showToast(`${email} 已导出到 CPA：${job.filename}`, 'success');
+                if (job.status === 'failed') throw new Error(job.error || 'CPA BPS 导出失败');
+                showToast(`${email} 已导出到 CPA BPS：${job.filename}`, 'success');
                 break;
             }
         } catch (error) {
@@ -136,7 +136,7 @@
             try {
                 await refreshAccountPoolTable();
             } catch (error) {
-                showToast(`更新 CPA 导出状态失败：${error.message}`, 'error');
+                showToast(`更新 CPA BPS 导出状态失败：${error.message}`, 'error');
             }
             watchedJobs.delete(jobId);
         }

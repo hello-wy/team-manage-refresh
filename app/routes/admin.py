@@ -616,6 +616,7 @@ async def account_pool_team_options(
         item = dict(row._mapping)
         item["team_name"] = readable_name(row.team_name, row.account_id) or f"Team #{row.id}"
         teams.append(item)
+    await attach_seat_snapshots(db, teams)
     return {"teams": teams}
 
 

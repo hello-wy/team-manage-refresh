@@ -247,44 +247,95 @@ function accountPoolTeamLabel(team) {
     return `${team.team_name || team.name || `Team #${team.id}`} · ID ${team.id}`;
 }
 
+let accountPoolTeamPickerRequestId = 0;
+
 function accountPoolTeamStatusLabel(team) {
-    const labels = {active: '可用', full: '已满', expired: '已过期', error: '异常', banned: '已封禁'};
-    const status = labels[team.status] || team.status || '未知状态';
-    const members = Number.isFinite(Number(team.current_members)) && Number.isFinite(Number(team.max_members))
-        ? ` · ${team.current_members}/${team.max_members} 席位`
-        : '';
-    return `${status}${members}`;
+    const labels = {active: '可用', full: '按席位余额邀请', expired: '已过期', error: '异常', banned: '已封禁'};
+    return labels[team.status] || team.status || '未知状态';
+}
+
+function accountPoolPickerSeat(team, kind) {
+    const snapshot = team.seat_snapshot;
+    if (!snapshot || team.seat_balance_needs_refresh) return null;
+    const paid = snapshot[kind + '_paid'], remaining = snapshot[kind + '_remaining'];
+    return Number.isInteger(paid) && Number.isInteger(remaining) && remaining >= 0 && remaining <= paid
+        ? {paid, remaining} : null;
+}
+
+function accountPoolPickerCard(team, action, seatType) {
+    const kind = ['premium', 'prolite'].includes(seatType) ? 'premium' : 'standard';
+    const requested = accountPoolPickerSeat(team, kind);
+    const disabled = action === 'invite' && (['expired', 'banned'].includes(team.status)
+        || !requested || requested.remaining < 1);
+    const statusLabel = action !== 'invite' || ['expired', 'banned'].includes(team.status)
+        ? accountPoolTeamStatusLabel(team)
+        : !requested ? '席位待同步'
+        : requested.remaining < 1 ? (kind === 'premium' ? '高级席位不足' : '标准席位不足') : '可邀请';
+    const seats = ['standard', 'premium'].map(type => {
+        const seat = accountPoolPickerSeat(team, type);
+        const label = type === 'standard' ? '标准' : '高级';
+        return '<span class="account-pool-picker-seat' + (type === kind ? ' is-requested' : '') + '">' + label +
+            (seat ? ' 剩余 ' + seat.remaining + ' / ' + seat.paid : ' · 待同步') + '</span>';
+    }).join('');
+    return '<button type="button" class="account-pool-team-picker-option" data-team-id="' + team.id + '"' +
+        (disabled ? ' disabled' : '') + '><span class="account-pool-picker-heading"><strong>' +
+        escapeHtml(accountPoolTeamLabel(team)) + '</strong><small>' + escapeHtml(statusLabel) +
+        '</small></span><small>' + escapeHtml(team.email || 'Team 邮箱未知') + '</small>' +
+        (action === 'invite' ? '<span class="account-pool-picker-seats">' + seats + '</span>' : '') +
+        (team.seat_error ? '<small class="account-pool-picker-error">' + escapeHtml(team.seat_error) + '</small>' : '') + '</button>';
 }
 
 function openAccountPoolTeamPicker(entryId, email, teams, action = 'automatic_login', seatType = 'default') {
+    const requestId = ++accountPoolTeamPickerRequestId;
     const options = document.getElementById('accountPoolTeamPickerOptions');
     document.getElementById('accountPoolTeamPickerEmail').textContent = email;
     const title = document.getElementById('accountPoolTeamPickerTitle');
-    if (title) title.textContent = action === 'invite' ? '选择加入的 Team' : '选择目标 Team';
-    if (!teams.length) {
-        options.innerHTML = '<div class="text-muted">暂无可选择的 Team。</div>';
-        showModal('accountPoolTeamPickerModal');
-        return;
-    }
-    options.innerHTML = teams.map(team => `
-        <button type="button" class="btn btn-secondary account-pool-team-picker-option" data-team-id="${team.id}">
-            <span>${escapeHtml(accountPoolTeamLabel(team))}</span>
-            <small>${escapeHtml(team.email || 'Team 邮箱未知')} · ${escapeHtml(accountPoolTeamStatusLabel(team))}</small>
-        </button>
-    `).join('');
-    options.querySelectorAll('[data-team-id]').forEach(button => {
-        button.addEventListener('click', () => {
-            hideModal('accountPoolTeamPickerModal');
-            const teamId = Number(button.dataset.teamId);
-            if (action === 'invite') {
-                inviteAccountPoolEntry(entryId, email, teamId, seatType, button);
-            } else {
-                runAccountPoolAutomaticLogin(entryId, email, teamId, button);
-            }
+    if (title) title.textContent = action === 'invite'
+        ? '加入 Team · ' + (['premium', 'prolite'].includes(seatType) ? '高级席位' : '标准席位') : '选择目标 Team';
+    function render() {
+        if (requestId !== accountPoolTeamPickerRequestId) return;
+        options.innerHTML = teams.length ? teams.map(team => accountPoolPickerCard(team, action, seatType)).join('')
+            : '<div class="text-muted">暂无可选择的 Team。</div>';
+        options.querySelectorAll('[data-team-id]').forEach(button => {
+            button.addEventListener('click', () => {
+                if (button.disabled) return;
+                hideModal('accountPoolTeamPickerModal');
+                ++accountPoolTeamPickerRequestId;
+                const teamId = Number(button.dataset.teamId);
+                if (action === 'invite') inviteAccountPoolEntry(entryId, email, teamId, seatType, button);
+                else runAccountPoolAutomaticLogin(entryId, email, teamId, button);
+            });
         });
-    });
+        if (action === 'invite' && teams.some(team => team.seat_error)) {
+            const retry = document.createElement('button');
+            retry.type = 'button'; retry.className = 'btn btn-secondary'; retry.textContent = '重新读取席位余额';
+            retry.addEventListener('click', () => openAccountPoolInvitePicker(entryId, email, seatType));
+            options.appendChild(retry);
+        }
+    }
+    render();
     showModal('accountPoolTeamPickerModal');
-    if (window.lucide) lucide.createIcons();
+    if (action === 'invite') {
+        const pending = teams.filter(team => team.seat_balance_needs_refresh || !team.seat_snapshot);
+        const worker = async () => {
+            while (pending.length && requestId === accountPoolTeamPickerRequestId) {
+                const team = pending.shift();
+                try {
+                    const response = await fetch('/admin/teams/' + team.id + '/seats/balance', {method: 'POST', credentials: 'same-origin'});
+                    const result = await response.json();
+                    if (!response.ok || !result.success) throw new Error(result.error || '席位余额读取失败');
+                    const balance = result.seat_balance?.balance || {};
+                    team.seat_snapshot = Object.fromEntries(['standard', 'premium'].flatMap(type =>
+                        ['paid', 'remaining'].map(key => [type + '_' + key, balance[type]?.known ? balance[type][key] : null])));
+                    team.seat_balance_needs_refresh = false;
+                    team.seat_error = '';
+                } catch (error) { team.seat_error = error.message || '席位余额读取失败，请重试'; }
+                render();
+            }
+        };
+        const workers = Math.min(3, pending.length);
+        for (let index = 0; index < workers; index++) worker();
+    }
 }
 
 async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) {
@@ -312,14 +363,18 @@ async function inviteAccountPoolEntry(entryId, email, teamId, seatType, button) 
 }
 
 async function openAccountPoolInvitePicker(entryId, email, seatType) {
+    const requestId = ++accountPoolTeamPickerRequestId;
+    document.getElementById('accountPoolTeamPickerEmail').textContent = email;
     document.getElementById('accountPoolTeamPickerOptions').textContent = '正在读取 Team...';
     showModal('accountPoolTeamPickerModal');
     try {
         const response = await fetch('/admin/account-pool/teams', {credentials: 'same-origin'});
         if (!response.ok) throw new Error('读取 Team 失败');
         const payload = await response.json();
+        if (requestId !== accountPoolTeamPickerRequestId) return;
         openAccountPoolTeamPicker(entryId, email, payload.teams, 'invite', seatType);
     } catch (error) {
+        if (requestId !== accountPoolTeamPickerRequestId) return;
         hideModal('accountPoolTeamPickerModal');
         showToast(error.message, 'error');
     }

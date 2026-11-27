@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AccountPoolEntry, AccountPoolWorkspace, MemberAuthorization, Team
 from app.services.encryption import encryption_service
-from app.services.settings import settings_service
+from app.services.proxy_manager import ProxyRoutingError, resolve_login_proxy
 from app.services.wham_usage import parse_usage
 from app.utils.proxy import build_curl_cffi_proxies
 
@@ -101,9 +101,9 @@ class AccountPoolUsageService:
         return (token, team_space_id) if token else None
 
     @staticmethod
-    async def _proxies(db: AsyncSession) -> dict[str, str] | None:
-        config = await settings_service.get_proxy_config(db)
-        return build_curl_cffi_proxies(config["proxy"]) if config["enabled"] else None
+    async def _proxies(db: AsyncSession, email: str = "") -> dict[str, str] | None:
+        proxy = await resolve_login_proxy(db, email, email=email)
+        return build_curl_cffi_proxies(proxy) if proxy else None
 
     async def _check_token(self, token_data: tuple[str, str] | None,
                            proxies: dict[str, str] | None = None) -> dict[str, Any]:
@@ -194,12 +194,13 @@ class AccountPoolUsageService:
                 (key, token or self._authorization_token(auth_by_key.get((email, space)), space))
                 for (key, email, space), (_, token) in zip(normalized, token_data)
             ]
-        missing = [(email, space) for (_, email, space), (_, token)
-                   in zip(normalized, token_data) if space and not token]
-        if missing:
+        # The Team service maintains the owner's current token. Pool exports
+        # are historical snapshots and can be expired even after a quota sync.
+        owner_candidates = [(email, space) for _, email, space in normalized if space]
+        if owner_candidates:
             teams = (await db.execute(select(Team).where(
-                func.lower(func.trim(Team.email)).in_({email for email, _ in missing}),
-                Team.account_id.in_({space for _, space in missing}),
+                func.lower(func.trim(Team.email)).in_({email for email, _ in owner_candidates}),
+                Team.account_id.in_({space for _, space in owner_candidates}),
             ).order_by(Team.id))).scalars().all()
             owner_tokens = {}
             for team in teams:
@@ -208,7 +209,7 @@ class AccountPoolUsageService:
                 if token:
                     owner_tokens.setdefault(key, token)
             token_data = [
-                (key, token or owner_tokens.get((email, space)))
+                (key, owner_tokens.get((email, space)) or token)
                 for (key, email, space), (_, token) in zip(normalized, token_data)
             ]
         return token_data
@@ -222,12 +223,22 @@ class AccountPoolUsageService:
         if not normalized:
             return {}
         token_data = await self._tokens_for_accounts(db, normalized)
-        proxies = await self._proxies(db)
+        proxies_by_email, routing_errors = {}, {}
+        # Resolve routes serially: AsyncSession cannot execute concurrent queries.
+        for email in dict.fromkeys(email for _, email, _ in normalized):
+            try:
+                proxies_by_email[email] = await self._proxies(db, email)
+            except ProxyRoutingError as exc:
+                routing_errors[email] = {"status": "error", "error": str(exc)}
+        email_by_key = {key: email for key, email, _ in normalized}
         semaphore = asyncio.Semaphore(self.concurrency)
 
         async def check(key: Any, credentials: tuple[str, str] | None):
+            email = email_by_key[key]
+            if email in routing_errors:
+                return key, routing_errors[email]
             async with semaphore:
-                return key, await self._check_token(credentials, proxies)
+                return key, await self._check_token(credentials, proxies_by_email[email])
 
         values = await asyncio.gather(*(check(key, credentials) for key, credentials in token_data))
         return dict(values)

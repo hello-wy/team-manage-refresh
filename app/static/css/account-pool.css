@@ -527,15 +527,20 @@ body.admin-theme .account-pool-invite-button:disabled {
 }
 
 .account-pool-team-picker-option {
-    display: grid;
-    gap: 0.2rem;
-    justify-items: start;
-    text-align: left;
+    display: grid; gap: .6rem; width: 100%; padding: .9rem 1rem;
+    text-align: left; border: 1px solid var(--border-base); border-radius: 8px;
+    background: var(--bg-card, var(--bg-primary)); color: var(--text-primary);
+    font: inherit; cursor: pointer; transition: border-color .15s, background .15s;
 }
-
-.account-pool-team-picker-option small {
-    color: var(--text-muted);
-}
+.account-pool-team-picker-option:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-soft); }
+.account-pool-team-picker-option:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.account-pool-team-picker-option:disabled { cursor: not-allowed; background: color-mix(in srgb, var(--text-muted) 8%, var(--bg-primary)); opacity: .65; }
+.account-pool-team-picker-option small { color: var(--text-muted); overflow-wrap: anywhere; }
+.account-pool-picker-heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .4rem; }
+.account-pool-picker-seats { display: flex; flex-wrap: wrap; gap: .5rem; }
+.account-pool-picker-seat { padding: .25rem .5rem; border: 1px solid var(--border-base); border-radius: 6px; font-size: .8rem; }
+.account-pool-picker-seat.is-requested { border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.account-pool-team-picker-option .account-pool-picker-error { color: var(--danger); }
 
 .account-pool-empty {
     padding: 3rem 1rem;
@@ -744,3 +749,21 @@ body.admin-theme .account-pool-invite-button:disabled {
 }
 
 .account-pool-rotation[data-kind="blocked"] .account-pool-rotation-reason { color: var(--danger); }
+
+/* One badge shape, explicit colors for each subscription / lifecycle state. */
+.account-pool-affiliation { display: grid; gap: .3rem; justify-items: start; max-width: 100%; }
+.account-pool-affiliation small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-pool-team-badges { align-items: flex-start; flex-direction: column; gap: .5rem; }
+.account-pool-plan-badge { --badge-color: var(--primary); color: var(--badge-color); border-color: color-mix(in srgb, var(--badge-color) 30%, var(--border-base)); background: color-mix(in srgb, var(--badge-color) 9%, var(--bg-card, var(--bg-primary))); }
+.account-pool-plan-badge[data-plan="plus"] { --badge-color: #067a63; }
+.account-pool-plan-badge[data-plan="pro"], .account-pool-plan-badge[data-plan="pro100"] { --badge-color: #7651bc; }
+.account-pool-plan-badge[data-plan="pro200"] { --badge-color: #a13a83; }
+.account-pool-plan-badge[data-plan="pro500"] { --badge-color: #a45111; }
+.account-pool-plan-badge[data-plan="standard"] { --badge-color: #23709c; }
+.account-pool-plan-badge[data-plan="premium"] { --badge-color: #a45111; }
+.account-pool-plan-badge[data-plan="unknown"] { --badge-color: var(--text-muted); }
+.account-pool-plan-badge[data-plan="invited"], .account-pool-rotation[data-state="invited"] .account-pool-rotation-badge { --badge-color: #9c6312; }
+.account-pool-rotation[data-state="waiting_exit"] .account-pool-rotation-badge { --badge-color: #ac4e32; }
+.account-pool-rotation[data-state="idle"] .account-pool-rotation-badge { --badge-color: #067a63; }
+.account-pool-rotation[data-state="excluded"] .account-pool-rotation-badge { --badge-color: #7651bc; }
+.account-pool-rotation[data-kind="blocked"] .account-pool-rotation-badge { --badge-color: var(--danger); }

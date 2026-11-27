@@ -2351,56 +2351,71 @@ function canAllocateMemberSeat(seatType, required = 1) {
 
 function getMemberInviteEmails(form) {
     const values = parseMemberEmails(form.memberEmails?.value || '');
-    const poolEmail = String(form.querySelector('#memberPoolEmail')?.value || '').trim();
-    if (poolEmail) values.push(poolEmail);
+    form.querySelectorAll('#memberPoolEmail input[type="checkbox"]:checked').forEach(input => values.push(input.value));
     return [...new Map(values.map(email => [email.toLowerCase(), email])).values()];
 }
 
 function handleMemberPoolSelection() {
+    const count = document.querySelectorAll('#memberPoolEmail input:checked').length;
+    const label = document.getElementById('memberPoolSelectedCount');
+    if (label) label.textContent = '已选 ' + count + ' 个';
     updateMemberInviteAvailability();
 }
 
-function appendMemberPoolOptions(select, label, entries) {
-    if (!entries.length) return;
-    const group = document.createElement('optgroup');
-    group.label = label;
-    entries.forEach(entry => {
-        const option = new Option(entry.email, entry.email);
-        group.appendChild(option);
+function selectMemberPoolEmails(selected) {
+    document.querySelectorAll('#memberPoolEmail input[type="checkbox"]').forEach(input => {
+        if (!selected || !input.closest('.member-pool-option').hidden) input.checked = selected;
     });
-    select.appendChild(group);
+    handleMemberPoolSelection();
+}
+
+function filterMemberPoolEmails(value) {
+    const query = value.trim().toLowerCase();
+    document.querySelectorAll('#memberPoolEmail .member-pool-option').forEach(row => {
+        row.hidden = !row.textContent.toLowerCase().includes(query);
+    });
+}
+
+function appendMemberPoolOptions(picker, label, entries, selected = new Set()) {
+    if (!entries.length) return;
+    const group = document.createElement('div'); group.className = 'member-pool-group';
+    const heading = document.createElement('strong'); heading.textContent = label; group.appendChild(heading);
+    entries.forEach(entry => {
+        const row = document.createElement('label'); row.className = 'member-pool-option';
+        const input = document.createElement('input'); input.type = 'checkbox'; input.value = entry.email;
+        input.checked = selected.has(entry.email.toLowerCase()); input.addEventListener('change', handleMemberPoolSelection);
+        const text = document.createElement('span'); text.textContent = entry.email;
+        row.appendChild(input); row.appendChild(text); group.appendChild(row);
+    });
+    picker.appendChild(group);
 }
 
 async function loadMemberPoolOptions(teamId) {
-    const select = document.getElementById('memberPoolEmail');
+    const picker = document.getElementById('memberPoolEmail');
     const hint = document.getElementById('memberPoolEmailHint');
-    if (!select || !hint) return;
+    if (!picker || !hint) return;
+    const selected = new Set(picker.dataset.teamId === String(teamId)
+        ? Array.from(picker.querySelectorAll('input:checked'), input => input.value.toLowerCase()) : []);
+    picker.dataset.teamId = String(teamId);
     const requestId = ++memberPoolOptionsRequestId;
-    select.disabled = true;
-    select.innerHTML = '<option value="">正在读取可用账号...</option>';
-    hint.textContent = '上方显示 7 天内加入过的账号，下方显示当前可邀请账号。';
-
-    const result = await apiCall(`/admin/account-pool/options?team_id=${encodeURIComponent(teamId)}`);
+    picker.disabled = true; picker.textContent = '正在读取可用账号...';
+    hint.textContent = '可以批量勾选账号；与上方手填邮箱合并并自动去重。';
+    const result = await apiCall('/admin/account-pool/options?team_id=' + encodeURIComponent(teamId));
     if (requestId !== memberPoolOptionsRequestId || window.currentTeamId !== teamId) return;
     if (!result.success || !result.data?.success) {
-        select.innerHTML = '<option value="">号池账号读取失败</option>';
+        picker.textContent = '号池账号读取失败';
         hint.textContent = result.error || result.data?.error || '号池账号读取失败，请重新打开成员管理。';
-        return;
+        handleMemberPoolSelection(); return;
     }
-
     const entries = (result.data.entries || []).filter(entry => !memberExistingEmails.has(entry.email.toLowerCase()));
-    select.innerHTML = '<option value="">不使用号池账号</option>';
-    const recentlyJoined = entries.filter(entry => entry.recently_joined);
-    const availableEntries = entries.filter(entry => !entry.recently_joined);
-    appendMemberPoolOptions(select, '7 天内加入过', recentlyJoined);
-    appendMemberPoolOptions(select, '7 天内未加入过', availableEntries);
-    select.disabled = entries.length === 0;
-    hint.textContent = availableEntries.length
-        ? `可选 ${entries.length} 个；上方 ${recentlyJoined.length} 个账号为 7 天内加入过。`
-        : recentlyJoined.length
-            ? `可选 ${recentlyJoined.length} 个；这些账号均为 7 天内加入过。`
-            : '当前没有可邀请的号池账号。';
-    updateMemberInviteAvailability();
+    picker.innerHTML = '';
+    appendMemberPoolOptions(picker, '7 天内加入过', entries.filter(entry => entry.recently_joined), selected);
+    appendMemberPoolOptions(picker, '7 天内未加入过', entries.filter(entry => !entry.recently_joined), selected);
+    picker.disabled = entries.length === 0;
+    if (!entries.length) picker.textContent = '当前没有可邀请的号池账号。';
+    hint.textContent = '可选 ' + entries.length + ' 个账号，所选账号统一使用本次席位类型。';
+    filterMemberPoolEmails(document.getElementById('memberPoolSearch')?.value || '');
+    handleMemberPoolSelection();
 }
 
 function updateMemberSeatButton(select) {

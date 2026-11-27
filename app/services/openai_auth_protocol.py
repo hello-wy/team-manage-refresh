@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from app.services.openai_workspace import inspect_workspace_claims, merge_workspace_scans
 
+from app.services.openai_oauth_clients import BPS_REDIRECT_URI
+
 AUTH_ORIGIN = "https://auth.openai.com"
 CALLBACK_HOST = "localhost:1455"
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -35,7 +37,9 @@ def next_url(response: Any) -> str:
 def is_callback(url: str) -> bool:
     parsed = urlparse(str(url or ""))
     query = parse_qs(parsed.query)
-    return parsed.netloc == CALLBACK_HOST and bool(query.get("code"))
+    bps = urlparse(BPS_REDIRECT_URI)
+    is_bps = (parsed.scheme, parsed.netloc, parsed.path) == (bps.scheme, bps.netloc, bps.path)
+    return (parsed.netloc == CALLBACK_HOST or is_bps) and bool(query.get("code") or query.get("error"))
 
 
 def auth_headers(

@@ -18,6 +18,7 @@ from app.models import (
 )
 
 from app.utils.team_names import readable_name, team_display_name
+from app.utils.seats import normalize_seat_type
 from app.services.account_pool_profile import credential_personal_plan
 from app.services.encryption import encryption_service
 from app.services.openai_subscription import personal_subscription, workspace_personal_subscription
@@ -136,6 +137,7 @@ def _team_options(mappings) -> list[dict[str, Any]]:
             "name": team_display_name(team),
             "email": team.email,
             "status": mapping.status,
+            "seat_type": normalize_seat_type(mapping.seat_type),
         })
     return options
 
@@ -231,7 +233,10 @@ def _row(entry: AccountPoolEntry, mappings, histories, workspace_team, saved, te
     elif invited:
         status = "invited"
     current = active[0] if len(team_options) == 1 else (None, None)
-    seat_type = next((mapping.seat_type for mapping, _ in joined if mapping.seat_type), None)
+    # Never attach one Team's seat to another Team (or an ambiguous membership).
+    seat_type = normalize_seat_type(joined[0][0].seat_type) if len({team.id for _, team in joined}) == 1 else None
+    if seat_type not in ("standard", "premium"):
+        seat_type = None
     current_team = current[1] if status == "joined" else None
     current_usage = usages.get(current_team.id) if current_team else None
     row = {
@@ -339,6 +344,8 @@ async def build_pool_entry_data(
         if not row["quota_workspace_id"] and owned[row["email"]]:
             team = owned[row["email"]][0]
             row["quota_workspace_id"], row["quota_team_id"] = team.account_id, team.id
+            row["seat_type"] = next((option["seat_type"] for option in row["team_options"]
+                                     if option["id"] == team.id and option["seat_type"] in ("standard", "premium")), None)
         # 列表展示实际成员归属，历史导出空间仅用于导出选择。
         joined_names = [option["name"] for option in row["team_options"] if option["status"] == "joined"]
         if row["is_owner"]:
