@@ -30,11 +30,19 @@ async def refresh_pool_quotas(db, entries, *, usage_service, authorization_servi
             if not space_id or usages.get(key, {}).get("status") != "invalid":
                 continue
             # Team owners use the Team token and must not be re-authenticated as pool members.
-            is_owner = (await db.execute(select(Team.id).where(
+            owner = (await db.execute(select(Team).where(
                 Team.account_id == space_id,
                 func.lower(func.trim(Team.email)) == email.lower(),
-            ))).first()
-            if is_owner:
+            ))).scalars().first()
+            if owner:
+                teams = getattr(authorization_service, "_teams", None)
+                if teams is not None:
+                    try:
+                        token = await teams.ensure_access_token(owner, db, force_refresh=True)
+                        if token:
+                            usages.update(await usage_service.check_many(db, [key]))
+                    except Exception:
+                        usages[key] = {"status": "invalid", "error": "母号授权刷新失败，请刷新 Team 登录状态"}
                 continue
             account = (await db.execute(select(AccountPoolEntry).where(
                 func.lower(func.trim(AccountPoolEntry.email)) == email.lower(),

@@ -134,6 +134,7 @@ class ProxyRoutingTests(DatabaseCase):
         async with self.sessions() as db:
             await save_route(db, self.account.email, "proxy", self.proxy.id)
             for key in [f"account-pool-login-{self.account.id}", f"account-pool-liveness-{self.account.id}",
+                        f"account-pool-bps-{self.account.id}",
                         f"member-auto-login-{self.member.id}", f"member-oauth-{self.member.id}",
                         f"member-delete-{self.member.id}", "team-import-login-member@example.com", "MEMBER@EXAMPLE.COM"]:
                 with self.subTest(key=key):

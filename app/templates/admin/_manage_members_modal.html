@@ -130,15 +130,19 @@
                         <small id="memberInviteQuotaHint" class="form-text" aria-live="polite">正在读取余额...</small>
                     </div>
                     <div class="form-group member-pool-picker">
-                        <label for="memberPoolEmail">从账号号池选择</label>
-                        <select id="memberPoolEmail" class="form-control" onchange="handleMemberPoolSelection(this)" disabled>
-                            <option value="">正在读取可用账号...</option>
-                        </select>
-                        <small id="memberPoolEmailHint" class="form-text" aria-live="polite">上方显示 7 天内加入过的账号，下方显示 7 天内没有加入过的账号，均可选择。</small>
+                        <label for="memberPoolSearch">从账号号池批量选择</label>
+                        <input id="memberPoolSearch" class="form-control" type="search" placeholder="搜索邮箱" oninput="filterMemberPoolEmails(this.value)">
+                        <div class="member-pool-toolbar">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="selectMemberPoolEmails(true)">全选筛选结果</button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="selectMemberPoolEmails(false)">清空选择</button>
+                            <span id="memberPoolSelectedCount" role="status" aria-live="polite">已选 0 个</span>
+                        </div>
+                        <fieldset id="memberPoolEmail" class="member-pool-options" aria-label="可邀请的号池账号" disabled>正在读取可用账号...</fieldset>
+                        <small id="memberPoolEmailHint" class="form-text" aria-live="polite">可以批量勾选账号；与上方手填邮箱合并并自动去重。</small>
                     </div>
                     <div class="member-invite-actions">
                         <button type="submit" class="btn btn-primary" id="addMemberSubmitBtn" disabled>
-                            <i data-lucide="user-plus"></i> 发送邀请
+                            <i data-lucide="user-plus"></i> 批量发送邀请
                         </button>
                     </div>
                 </form>

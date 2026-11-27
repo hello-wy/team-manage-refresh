@@ -63,7 +63,7 @@ class CpaExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.json()["status"], "completed")
         self.assertEqual(status.json()["filename"], "verified.json")
         self.authorization.login_entry.assert_awaited_once_with(unittest.mock.ANY, 1, "workspace-b")
-        self.assertFalse(self.authorization.save_result.await_args.kwargs["update_current"])
+        self.authorization.save_result.assert_not_awaited()
         async with self.sessions() as session:
             rows = await attach_cpa_export_jobs(session, [{"id": 1}])
             self.assertEqual(rows[0]["cpa_export_job"].status, "completed")
@@ -111,7 +111,13 @@ class CpaExportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await session.scalar(select(func.count()).select_from(CpaExportJob)), 0)
 
     async def test_changed_credentials_prevent_upload(self):
-        self.authorization.save_result.return_value = False
+        result = self.authorization.login_entry.return_value
+        async def changed(session, entry_id, workspace_id):
+            entry = await session.get(AccountPoolEntry, entry_id)
+            entry.password_encrypted = "changed-during-login"
+            await session.commit()
+            return result
+        self.authorization.login_entry.side_effect = changed
         with self.assertLogs("app.services.account_pool_export_job", level="ERROR"):
             response = await self.client.post("/admin/account-pool/1/export-cpa", json={"workspace_id": "workspace-b"})
         self.cpa.import_member.assert_not_awaited()
@@ -134,3 +140,10 @@ class CpaExportTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post("/admin/account-pool/batch/cpa", json={"ids": [1]})
         self.assertIn(response.status_code, (401, 403))
         self.authorization.login_entry.assert_not_awaited()
+
+    async def test_completed_status_does_not_reappear_on_page_refresh(self):
+        from app.main import templates
+        template = templates.get_template("admin/account_pool/_cpa_status.html")
+        for status in ("pending", "running", "failed", "completed"):
+            html = template.render(entry={"cpa_export_job": {"id": 1, "status": status}})
+            self.assertEqual('data-cpa-job-id="1"' in html, status != "completed")

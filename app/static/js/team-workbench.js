@@ -15,7 +15,7 @@
     }
 
     function menuItems(trigger) {
-        const items = [['push', 'send', '推送母号到 sub2api'], ['cpa', 'cpa', '导出到 CPA'], ['export', 'download', '导出 JSON'], null,
+        const items = [['push', 'send', '推送母号到 sub2api'], ['cpa', 'cpa', '导出到 CPA BPS'], ['export', 'download', '导出 JSON'], null,
             ['delete', 'trash-2', '删除 Team', false, 'is-danger']];
         return `<div class="team-row-menu-header" role="presentation"><span class="team-row-menu-title">Team 操作</span>
             <span class="team-row-menu-email">${escapeHtml(trigger.dataset.email)}</span></div>`

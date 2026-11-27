@@ -145,17 +145,11 @@ class TeamSub2apiExportTests(unittest.IsolatedAsyncioTestCase):
             await self.service.push(99, self.db)
         self.login.login.assert_not_awaited()
 
-    async def test_cpa_uses_same_real_recovery_without_sub2api_side_effects(self):
-        cpa = SimpleNamespace(import_member=AsyncMock(return_value={"filename": "codex-owner.json"}))
+    async def test_codex_preparation_is_rejected_by_cpa_bps(self):
+        from app.services.cpa import CpaExportError
+        cpa = SimpleNamespace(import_member=AsyncMock(side_effect=lambda payload, db: build_auth_file(payload)))
         service = TeamCpaExportService(preparation=self.service, cpa=cpa)
-        result = await service.push(1, self.db)
-        self.assertTrue(result["relogin_attempted"])
-        self.login.login.assert_awaited_once()
+        with self.assertRaisesRegex(CpaExportError, "独立的 BPS"):
+            await service.push(1, self.db)
         self.target.import_member.assert_not_awaited()
         self.records.record_success.assert_not_awaited()
-        _, auth_file = build_auth_file(cpa.import_member.await_args.args[0])
-        self.assertEqual(auth_file["account_id"], WORKSPACE)
-        self.assertEqual(auth_file["refresh_token"], "recovered-refresh")
-        record = (await self.db.execute(select(MemberAuthorization))).scalar_one()
-        self.assertIsNone(record.sub2api_exported_at)
-        self.assertNotIn("recovered-refresh", json.dumps(result))

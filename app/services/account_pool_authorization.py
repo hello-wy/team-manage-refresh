@@ -32,6 +32,8 @@ from app.services.account_pool_workspace_sync import (
 
 
 class AccountPoolAuthorizationService:
+    client_id = CLIENT_ID
+
     def __init__(self, credential_service, login_service, auth_client, *, team_service):
         self._credentials = credential_service
         self._login = login_service
@@ -263,7 +265,7 @@ class AccountPoolAuthorizationService:
             key: str(result.get(key) or "")
             for key in ("access_token", "refresh_token", "id_token")
         }
-        exported["client_id"] = CLIENT_ID
+        exported["client_id"] = self.client_id
         if is_personal and workspace.get("personal_plan"):
             exported["personal_plan"] = workspace["personal_plan"]
         payload = build_openai_export_payload(

@@ -105,3 +105,28 @@ class AccountPoolSeatStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["unconfirmed_subscription"]["label"], "席位待确认")
         self.assertIsNone(row["seat_type"])
         self.assertNotIn(">标准</span>", html)
+
+    async def test_each_team_keeps_its_own_seat_badge_for_multiple_memberships(self):
+        self.db.add(Team(id=2, email="second-owner@example.com", account_id="second-space",
+                         team_name="Second Team", access_token_encrypted="unused"))
+        self.db.add_all([TeamEmailMapping(team_id=1, email=self.entry.email, status="joined", seat_type="standard"),
+                         TeamEmailMapping(team_id=2, email=self.entry.email, status="joined", seat_type="premium")])
+        row, html = await self.row_and_html()
+        self.assertEqual(row["status"], "conflict")
+        self.assertIsNone(row["seat_type"])
+        self.assertEqual({item["id"]: item["seat_type"] for item in row["team_options"]}, {1: "standard", 2: "premium"})
+        cell = html.partition('<td data-label="归属 / 订阅">')[2].split('</td>')[0]
+        self.assertRegex(cell, r'(?s)data-plan="standard".*?Managed Team.*?data-plan="premium".*?Second Team')
+
+    async def test_team_picker_returns_per_type_snapshot_not_only_legacy_counts(self):
+        from app.routes.admin import account_pool_team_options
+        from app.models import RotationSeatSnapshot
+        from app.utils.time_utils import get_now
+        self.db.add(RotationSeatSnapshot(team_id=1, standard_paid=10, standard_remaining=2,
+                                        premium_paid=3, premium_remaining=0, observed_at=get_now()))
+        await self.db.commit()
+        data = await account_pool_team_options(db=self.db, current_user={"username": "admin"})
+        item = data["teams"][0]
+        self.assertFalse(item["seat_balance_needs_refresh"])
+        self.assertEqual(item["seat_snapshot"]["standard_remaining"], 2)
+        self.assertEqual(item["seat_snapshot"]["premium_remaining"], 0)

@@ -1,7 +1,9 @@
-"""CPA destinations reuse the same credential preparation as Sub2API exports."""
+"""Export independent BPS grants to CPA without changing Codex credentials."""
 from sqlalchemy import func, select
 
 from app.cpa_export_model import CpaExportJob
+from app.models import AccountPoolEntry
+from app.services.bps_authorization import login_for_bps_export
 from app.services.account_pool_batch import AccountPoolBatchService, batch_export_targets
 from app.services.account_pool_export_job import AccountPoolExportJobService
 
@@ -39,6 +41,10 @@ class AccountPoolCpaExportService(AccountPoolExportJobService):
     async def run_batch(self, job_ids):
         for job_id in job_ids:
             await self.run(job_id)
+
+    async def _login_and_save(self, session, job):
+        entry = await session.get(AccountPoolEntry, job.account_pool_id)
+        return await login_for_bps_export(self._authorization, session, entry, job.workspace_id)
 
     async def _import(self, session, job, result):
         imported = await self._cpa.import_member(result.payload, session)

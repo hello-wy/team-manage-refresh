@@ -103,6 +103,8 @@
             document.getElementById('inviteSeatType').value = seatType;
             document.getElementById('memberEmails').value = '';
             document.getElementById('memberPoolEmail').value = '';
+            document.querySelectorAll('#memberPoolEmail input:checked').forEach(input => { input.checked = false; });
+            if (typeof handleMemberPoolSelection === 'function') handleMemberPoolSelection();
             selectMemberTab('invite');
             updateMemberInviteAvailability();
             document.getElementById('memberEmails').focus({preventScroll: true});

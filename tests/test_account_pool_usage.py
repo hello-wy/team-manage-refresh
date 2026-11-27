@@ -247,6 +247,34 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(batch[keys[2]]["status"], "unavailable")
             self.service._check_token.assert_any_await(("owner-token", "team-a"), None)
 
+    async def test_owner_current_team_token_takes_priority_over_stale_pool_exports(self):
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(email="owner@example.com", workspace_id="team-a",
+                                     export_json_encrypted=self.payload("team-a"))
+            db.add_all([entry, Team(email="owner@example.com", account_id="team-a",
+                                   access_token_encrypted=encryption_service.encrypt_token("fresh-owner-token"))])
+            await db.flush()
+            db.add(AccountPoolWorkspace(account_pool_id=entry.id, workspace_id="team-a", status="workspace_ok",
+                                        export_json_encrypted=self.payload("team-a")))
+            await db.commit()
+            tokens = await self.service._tokens_for_accounts(db, [("key", "owner@example.com", "team-a")])
+            self.assertEqual(tokens, [("key", ("fresh-owner-token", "team-a"))])
+
+    async def test_quota_uses_each_account_proxy_and_never_falls_back_from_disabled_proxy(self):
+        from app.services.proxy_manager import ProxyRoutingError
+        from app.services import account_pool_usage
+        async with self.sessions() as db:
+            self.service._check_token = AsyncMock(return_value={"status": "ok"})
+            routes = AsyncMock(side_effect=["http://proxy-a:8080", None, ProxyRoutingError("代理已停用")])
+            with patch.object(account_pool_usage, "resolve_login_proxy", routes):
+                result = await self.service.check_many(db, ["a@example.com", "b@example.com", "c@example.com"])
+            self.assertEqual(self.service._check_token.await_count, 2)
+            self.assertEqual(self.service._check_token.await_args_list[0].args[1]["all"], "http://proxy-a:8080")
+            self.assertIsNone(self.service._check_token.await_args_list[1].args[1])
+            self.assertEqual(result["c@example.com"], {"status": "error", "error": "代理已停用"})
+            self.assertEqual([call.kwargs["email"] for call in routes.await_args_list],
+                             ["a@example.com", "b@example.com", "c@example.com"])
+
     async def test_joined_members_without_workspace_scan_use_their_team_authorization(self):
         async with self.sessions() as db:
             entry = AccountPoolEntry(email="member@example.com")
@@ -357,3 +385,23 @@ class AccountPoolUsageFallbackTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    async def test_invalid_owner_quota_refreshes_team_grant_without_member_login(self):
+        from types import SimpleNamespace
+        from app.services.account_pool_quota import refresh_pool_quotas
+        async with self.sessions() as db:
+            entry = AccountPoolEntry(email="owner@example.com")
+            team = Team(email=entry.email, account_id="team-a", access_token_encrypted="unused")
+            db.add_all([entry, team]); await db.commit()
+            row = (await build_pool_entry_data(db, [entry]))[0]
+            key = (entry.email, team.account_id)
+            usage = SimpleNamespace(check_many=AsyncMock(side_effect=[
+                {key: {"status": "invalid", "error": "Token 无效"}},
+                {key: {"status": "ok", "5h": None, "1week": {
+                    "used": 0, "limit": 100, "remaining": 100, "reset_at": "1893459600", "state": "available"}}}]))
+            teams = SimpleNamespace(ensure_access_token=AsyncMock(return_value="fresh-owner"))
+            auth = SimpleNamespace(_teams=teams, login_entry=AsyncMock(), save_result=AsyncMock())
+            result = await refresh_pool_quotas(db, [row], usage_service=usage, authorization_service=auth)
+            teams.ensure_access_token.assert_awaited_once_with(team, db, force_refresh=True)
+            auth.login_entry.assert_not_awaited(); auth.save_result.assert_not_awaited()
+            self.assertEqual(result[0]["usage"]["status"], "ok")

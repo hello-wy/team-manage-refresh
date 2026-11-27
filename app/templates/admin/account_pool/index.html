@@ -17,7 +17,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/cpa-export.css?v=20261030-1">
-<link rel="stylesheet" href="/static/css/account-pool.css?v=20261122-proxy-dialog">
+<link rel="stylesheet" href="/static/css/account-pool.css?v=20261128-pool-bps">
 <link rel="stylesheet" href="/static/css/quota.css?v=20260925-1">
 {% endblock %}
 
@@ -143,7 +143,7 @@
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchLiveness" disabled title="验活所有勾选的账号，可跨页选择"><i data-lucide="shield-check"></i> 批量验活</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchJson" disabled><i data-lucide="download"></i> 合并 JSON</button>
             <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchSub2api" disabled><i data-lucide="upload"></i> 导出到 Sub2API</button>
-            <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchCpa" disabled><img class="cpa-icon" src="/static/cpa-icon.jpg" alt="" aria-hidden="true"> 批量导出到 CPA</button>
+            <button type="button" class="btn btn-sm btn-primary" id="accountPoolBatchCpa" disabled><img class="cpa-icon" src="/static/cpa-icon.jpg" alt="" aria-hidden="true"> 批量导出到 CPA BPS</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchRotate" disabled><i data-lucide="key-round"></i> 更换 2FA</button>
             <button type="button" class="btn btn-sm btn-danger" id="accountPoolBatchDelete" disabled><i data-lucide="trash-2"></i> 删除</button>
             <button type="button" class="btn btn-sm btn-secondary" id="accountPoolBatchClear" disabled>清除选择</button>
@@ -187,9 +187,18 @@
                         </td>
                         <td data-label="归属 / 订阅">
                             <div class="account-pool-team-badges">
-                                {% if entry.seat_type in ['premium', 'standard'] %}<span class="status-badge {% if entry.seat_type == 'premium' %}status-pending{% else %}status-active{% endif %}">{{ '高级' if entry.seat_type == 'premium' else '标准' }}</span>
-                                {% elif entry.unconfirmed_subscription %}<small class="text-muted" tabindex="0" data-pool-tooltip="{{ entry.unconfirmed_subscription.detail }}">{{ entry.unconfirmed_subscription.label }}</small>
-                                {% else %}<span class="account-pool-plan-badge{% if not entry.personal_plan %} is-unknown{% endif %}"{% if entry.personal_plan == 'Pro' %} data-pool-tooltip="当前登录信息仅返回 Pro，具体档位待确认"{% endif %}>{{ entry.personal_plan or '订阅待确认' }}</span><small class="text-muted account-pool-personal-label">个人账户</small>{% endif %}
+                                {% if entry.team_options %}
+                                {% for team in entry.team_options %}
+                                <div class="account-pool-affiliation">
+                                    <span class="account-pool-plan-badge" data-plan="{{ team.seat_type if team.status == 'joined' else 'invited' }}"{% if team.seat_type not in ['premium', 'standard'] and team.status == 'joined' %} tabindex="0" data-pool-tooltip="成员记录尚未返回实际席位类型，请刷新 Team 成员列表"{% endif %}>{{ '待接受邀请' if team.status == 'invited' else '高级' if team.seat_type == 'premium' else '标准' if team.seat_type == 'standard' else '席位待确认' }}</span>
+                                    <small class="text-muted" title="{{ team.name }} · Team #{{ team.id }}">{{ team.name }}</small>
+                                </div>
+                                {% endfor %}
+                                {% elif entry.unconfirmed_subscription %}
+                                <span class="account-pool-plan-badge" data-plan="unknown" tabindex="0" data-pool-tooltip="{{ entry.unconfirmed_subscription.detail }}">{{ entry.unconfirmed_subscription.label }}</span>
+                                {% else %}
+                                <span class="account-pool-plan-badge" data-plan="{{ (entry.personal_plan or 'unknown')|lower }}"{% if entry.personal_plan == 'Pro' %} tabindex="0" data-pool-tooltip="当前登录信息仅返回 Pro，具体档位待确认"{% endif %}>{{ entry.personal_plan or '订阅待确认' }}</span><small class="text-muted account-pool-personal-label">个人账户</small>
+                                {% endif %}
                             </div>
                         </td>
                         <td data-label="验活状态">
@@ -211,8 +220,8 @@
                         </td>
                         {% set rotation = entry.rotation or {} %}
                         <td data-label="轮转状态">
-                            <div class="account-pool-rotation" data-kind="{{ rotation.kind }}"{% if rotation.reason %} title="{{ rotation.reason }}"{% endif %}>
-                                {% if rotation.label %}<span class="status-badge {% if rotation.kind in ['ready', 'idle'] %}status-active{% elif rotation.kind == 'blocked' %}status-error{% else %}status-pending{% endif %}">{{ rotation.label }}</span>{% endif %}
+                            <div class="account-pool-rotation" data-kind="{{ rotation.kind }}" data-state="{{ rotation.status or rotation.kind }}"{% if rotation.reason %} title="{{ rotation.reason }}"{% endif %}>
+                                {% if rotation.label %}<span class="account-pool-plan-badge account-pool-rotation-badge">{{ rotation.label }}</span>{% endif %}
                                 {% if rotation.exit_at %}
                                 <small class="account-pool-replacement-countdown" data-exit-at="{{ rotation.exit_at }}">下线倒计时 {{ rotation.exit_at|format_datetime }}</small>
                                 {% else %}
@@ -314,8 +323,8 @@
 <script src="/static/js/account-pool-team-checkout.js?v=20261029-2"></script>
 <script src="/static/js/quota.js?v=20260925-1"></script>
 <script src="/static/js/account-pool-credential-editor.js?v=20261015-owner-create"></script>
-<script src="/static/js/cpa-export.js?v=20261126-pool-batch-fba9de3"></script>
-<script src="/static/js/account-pool.js?v=20261122-pool-toolbar"></script>
+<script src="/static/js/cpa-export.js?v=20261128-pool-bps"></script>
+<script src="/static/js/account-pool.js?v=20261128-pool-bps"></script>
 <script src="/static/js/account-pool-proxy.js?v=20261122-1"></script>
 <script src="/static/js/account-pool-quota.js?v=20261024-liveness-refresh"></script>
 <script src="/static/js/account-pool-workspace.js?v=20260927-owner-actions"></script>
